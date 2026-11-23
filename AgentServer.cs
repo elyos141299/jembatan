@@ -292,7 +292,7 @@ public sealed class AgentServer
             {
                 _onActivity();
                 _log("ping — Muse mengecek koneksi");
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.1\"}");
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.2\"}");
             }
 
             if (req.Method == "GET" && req.Path == "/screenshot")
@@ -351,7 +351,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.1",
+                    ["version"] = "2.2",
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
                     ["screen"] = bounds.Width + "x" + bounds.Height,

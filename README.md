@@ -1,4 +1,4 @@
-# Jembatan v2.1 — catatan pengembang
+# Jembatan v2.2 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -12,7 +12,7 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | Berkas | Isi |
 |---|---|
 | `Program.cs` | Titik masuk aplikasi (STAThread). |
-| `MainForm.cs` | Jendela utama: status, log aktivitas real-time, tombol PUTUSKAN/Sambung lagi. |
+| `MainForm.cs` | Jendela utama: status, log aktivitas real-time, tombol PUTUSKAN/Sambung lagi, checkbox jalan otomatis, dan panel chat Muse (WebView2, sejak v2.2). |
 | `AgentServer.cs` | Layanan agen HTTP (port 8765) + semua endpoint. |
 | `NativeInput.cs` | Mouse/keyboard: user32 `SetCursorPos`/`mouse_event` + `SendKeys`. |
 | `app.manifest` | Manifest aplikasi: DPI-aware PerMonitorV2 (rujukan dari csproj). |
@@ -23,9 +23,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 
 | Metode & path | Body | Hasil |
 |---|---|---|
-| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.1"}` |
+| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.2"}` |
 | `GET /screenshot` | — | PNG layar utama (binary `image/png`) |
-| `GET /sysinfo` | — | `{ok, version:"2.1", pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
+| `GET /sysinfo` | — | `{ok, version:"2.2", pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{title, process}]}` — jendela tingkat atas yang terlihat & berjudul |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
@@ -48,6 +48,34 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.2 (dari v2.1)
+
+- **Panel chat Muse di dalam jendela**: tombol "💬 Chat Muse" di
+  kepala jendela membuka panel kanan (SplitContainer; panel kiri
+  ±380px berisi tampilan lama persis, panel kanan = chat). Jendela
+  melebar ke minimal 1280×800 saat chat dibuka dan kembali ke ukuran
+  ringkas saat ditutup. Isi panel adalah **situs muse.ai yang ditanam
+  lewat WebView2** — website yang sama seperti di browser, bukan
+  salinan; **user login dengan akunnya sendiri di panel itu** dan
+  aplikasi tidak pernah menyentuh kredensial.
+- WebView2 dibuat **malas** (pertama kali chat dibuka), dengan folder
+  data persisten `%LOCALAPPDATA%\Jembatan\WebView2` (cookie/login awet
+  antar jalan), UA Chrome desktop (agar penyedia login tidak menolak
+  browser tertanam), dan `NewWindowRequested` diarahkan ke panel yang
+  sama agar popup/redirect login tidak keluar jendela. Bilah alat
+  kecil di atas panel: "↻ Muat Ulang" dan "🌐 Buka di Chrome".
+- Bila runtime WebView2 tidak ada/gagal, panel hanya menampilkan
+  pesan galat (dan mencatatnya di log) — **semua fitur jembatan tetap
+  jalan penuh**. Menutup panel tidak membuang WebView (dibuat sekali),
+  jadi membuka lagi cepat dan sesi tidak hilang.
+- Dependensi baru satu-satunya: `Microsoft.Web.WebView2` 1.0.2903.40,
+  plus `IncludeNativeLibrariesForSelfExtract` di csproj agar loader
+  native-nya ikut ter-extract dari publish single-file. Runtime
+  WebView2 (Evergreen) mengandalkan yang sudah terpasang di Windows
+  (bawaan Edge/Windows 10-11).
+- Endpoint, port, PUTUSKAN, jalan otomatis, dan shell persisten
+  **tidak berubah sama sekali**.
 
 ## Perubahan v2.1 (dari v2.0)
 
