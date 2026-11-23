@@ -596,7 +596,7 @@ public sealed class AgentServer
                 if (encoder != null)
                 {
                     var ep = new EncoderParameters(1);
-                    ep.Param[0] = new EncoderParameter(Encoder.Quality, 60L);
+                    ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 60L);
                     scaled.Save(ms, encoder, ep);
                 }
                 else
