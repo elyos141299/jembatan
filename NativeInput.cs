@@ -26,16 +26,10 @@ public static class NativeInput
     private const uint RightUp = 0x0010;
     private const uint MiddleDown = 0x0020;
     private const uint MiddleUp = 0x0040;
+    private const uint Wheel = 0x0800;
 
-    public static void Move(int x, int y)
+    private static void ButtonFlags(string button, out uint down, out uint up)
     {
-        SetCursorPos(x, y);
-    }
-
-    public static void Click(int x, int y, string button)
-    {
-        SetCursorPos(x, y);
-        uint down, up;
         switch ((button ?? "left").Trim().ToLowerInvariant())
         {
             case "right":
@@ -45,8 +39,53 @@ public static class NativeInput
             default:
                 down = LeftDown; up = LeftUp; break;
         }
+    }
+
+    public static void Move(int x, int y)
+    {
+        SetCursorPos(x, y);
+    }
+
+    public static void Click(int x, int y, string button)
+    {
+        SetCursorPos(x, y);
+        ButtonFlags(button, out uint down, out uint up);
         mouse_event(down, 0, 0, 0, UIntPtr.Zero);
         Thread.Sleep(45);
+        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Scroll roda mouse di titik (x, y). Delta positif = ke atas,
+    /// negatif = ke bawah (kelipatan 120 = satu "klik" roda, standar Windows).
+    /// </summary>
+    public static void Scroll(int x, int y, int delta)
+    {
+        SetCursorPos(x, y);
+        // dwData untuk wheel bertanda (signed) — kirim sebagai uint.
+        mouse_event(Wheel, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Seret (drag): tekan tombol di titik awal, gerakkan bertahap
+    /// ke titik akhir, lalu lepas. Gerakan dibuat bertahap agar
+    /// aplikasi tujuan menerima event drag dengan wajar.
+    /// </summary>
+    public static void Drag(int x1, int y1, int x2, int y2, string button)
+    {
+        ButtonFlags(button, out uint down, out uint up);
+        SetCursorPos(x1, y1);
+        mouse_event(down, 0, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(60);
+        const int steps = 16;
+        for (int i = 1; i <= steps; i++)
+        {
+            int x = x1 + (x2 - x1) * i / steps;
+            int y = y1 + (y2 - y1) * i / steps;
+            SetCursorPos(x, y);
+            Thread.Sleep(15);
+        }
+        Thread.Sleep(60);
         mouse_event(up, 0, 0, 0, UIntPtr.Zero);
     }
 

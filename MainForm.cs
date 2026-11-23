@@ -122,6 +122,16 @@ public sealed class MainForm : Form
             Location = new Point(14, 84),
         };
         header.Controls.Add(addr);
+
+        var version = new Label
+        {
+            Text = "v2.0",
+            ForeColor = InkDim,
+            AutoSize = true,
+            Location = new Point(612, 84),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+        };
+        header.Controls.Add(version);
         Controls.Add(header);
 
         // Tombol besar PUTUSKAN / Sambung lagi di bawah.

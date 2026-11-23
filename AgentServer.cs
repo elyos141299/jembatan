@@ -25,7 +25,7 @@ namespace Jembatan;
 /// butuh itu — cukup izin Windows Firewall satu kali (user klik Allow).
 /// Protokol HTTP/JSON yang dilayani tetap sama.
 ///
-/// KEAMANAN v1 — TANPA password/token, dengan sadar:
+/// KEAMANAN — TANPA password/token, dengan sadar:
 /// Perlindungan layanan ini adalah jaringan Tailscale milik user sendiri.
 /// Port 8765 hanya bisa dijangkau oleh perangkat yang SUDAH disetujui
 /// user di admin Tailscale-nya (PC ini + VM Muse bernama "muse").
@@ -34,8 +34,9 @@ namespace Jembatan;
 public sealed class AgentServer
 {
     public const int Port = 8765;
-    private const int ExecTimeoutMs = 60000;
-    private const int MaxOutputChars = 8000;
+    private const int DefaultExecTimeoutMs = 60000;
+    private const int MaxExecTimeoutMs = 300000;
+    private const int MaxOutputChars = 100000;
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
     private readonly Action<string> _log;       // tulis ke log jendela
@@ -92,6 +93,14 @@ public sealed class AgentServer
 
     // ---------- HTTP mini ----------
 
+    private sealed class RequestHead
+    {
+        public string Method;
+        public string Path;   // tanpa query string
+        public string Query;  // query string mentah ("" bila tidak ada)
+        public int ContentLength;
+    }
+
     private sealed class Request
     {
         public string Method;
@@ -125,9 +134,29 @@ public sealed class AgentServer
                 var stream = client.GetStream();
                 stream.ReadTimeout = 15000;
                 stream.WriteTimeout = 15000;
-                var req = ReadRequest(stream);
-                if (req == null) return;
-                var resp = Route(req);
+                var head = ReadRequestHead(stream);
+                if (head == null) return;
+
+                // Endpoint streaming v2 ditangani langsung di atas stream —
+                // tidak lewat pola Request/Response biasa.
+                if (head.Method == "GET" && head.Path == "/file")
+                {
+                    HandleFileDownload(stream, head);
+                    return;
+                }
+                if (head.Method == "GET" && head.Path == "/stream")
+                {
+                    HandleStream(stream);
+                    return;
+                }
+                if (head.Method == "POST" && head.Path == "/upload")
+                {
+                    HandleUpload(stream, head);
+                    return;
+                }
+
+                string body = ReadBody(stream, head.ContentLength);
+                var resp = Route(new Request { Method = head.Method, Path = head.Path, Body = body });
                 WriteResponse(stream, resp);
             }
             catch
@@ -137,7 +166,7 @@ public sealed class AgentServer
         }
     }
 
-    private static Request ReadRequest(NetworkStream stream)
+    private static RequestHead ReadRequestHead(NetworkStream stream)
     {
         // Baca header byte demi byte sampai ketemu \r\n\r\n (batas 32 KB).
         var header = new MemoryStream();
@@ -166,26 +195,50 @@ public sealed class AgentServer
                 int.TryParse(line.Substring("Content-Length:".Length).Trim(), out contentLength);
         }
 
-        string body = "";
-        if (contentLength > 0)
+        string path = parts[1];
+        string query = "";
+        int q = path.IndexOf('?');
+        if (q >= 0)
         {
-            if (contentLength > 1048576) contentLength = 1048576; // batas waras 1 MB
-            var buf = new byte[contentLength];
-            int read = 0;
-            while (read < contentLength)
-            {
-                int n = stream.Read(buf, read, contentLength - read);
-                if (n == 0) break;
-                read += n;
-            }
-            body = Encoding.UTF8.GetString(buf, 0, read);
+            query = path.Substring(q + 1);
+            path = path.Substring(0, q);
         }
 
-        string path = parts[1];
-        int q = path.IndexOf('?');
-        if (q >= 0) path = path.Substring(0, q);
+        return new RequestHead
+        {
+            Method = parts[0].ToUpperInvariant(),
+            Path = path,
+            Query = query,
+            ContentLength = contentLength,
+        };
+    }
 
-        return new Request { Method = parts[0].ToUpperInvariant(), Path = path, Body = body };
+    private static string ReadBody(NetworkStream stream, int contentLength)
+    {
+        if (contentLength <= 0) return "";
+        if (contentLength > 1048576) contentLength = 1048576; // batas waras 1 MB untuk body JSON
+        var buf = new byte[contentLength];
+        int read = 0;
+        while (read < contentLength)
+        {
+            int n = stream.Read(buf, read, contentLength - read);
+            if (n == 0) break;
+            read += n;
+        }
+        return Encoding.UTF8.GetString(buf, 0, read);
+    }
+
+    private static string GetQueryParam(string query, string name)
+    {
+        if (string.IsNullOrEmpty(query)) return null;
+        foreach (var pair in query.Split('&'))
+        {
+            int eq = pair.IndexOf('=');
+            string key = eq >= 0 ? pair.Substring(0, eq) : pair;
+            if (string.Equals(WebUtility.UrlDecode(key), name, StringComparison.OrdinalIgnoreCase))
+                return eq >= 0 ? WebUtility.UrlDecode(pair.Substring(eq + 1)) : "";
+        }
+        return null;
     }
 
     private static void WriteResponse(NetworkStream stream, Response resp)
@@ -220,7 +273,7 @@ public sealed class AgentServer
             {
                 _onActivity();
                 _log("ping — Muse mengecek koneksi");
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"1.0\"}");
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.0\"}");
             }
 
             if (req.Method == "GET" && req.Path == "/screenshot")
@@ -253,6 +306,25 @@ public sealed class AgentServer
                             OnUi(() => { NativeInput.Click(x, y, button); return true; });
                             _onActivity();
                             _log($"klik {x},{y} ({button})");
+                            return Ok();
+                        }
+                        case "/scroll":
+                        {
+                            int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
+                            int delta = GetInt(root, "delta", 0);
+                            OnUi(() => { NativeInput.Scroll(x, y, delta); return true; });
+                            _onActivity();
+                            _log($"scroll di {x},{y} (delta {delta})");
+                            return Ok();
+                        }
+                        case "/drag":
+                        {
+                            int x1 = GetInt(root, "x1", 0), y1 = GetInt(root, "y1", 0);
+                            int x2 = GetInt(root, "x2", 0), y2 = GetInt(root, "y2", 0);
+                            string button = GetString(root, "button", "left");
+                            OnUi(() => { NativeInput.Drag(x1, y1, x2, y2, button); return true; });
+                            _onActivity();
+                            _log($"drag {x1},{y1} -> {x2},{y2} ({button})");
                             return Ok();
                         }
                         case "/type":
@@ -311,6 +383,10 @@ public sealed class AgentServer
         if (string.IsNullOrWhiteSpace(command))
             return Response.Json("{\"ok\":false,\"error\":\"command kosong\"}", 400);
 
+        int timeoutMs = GetInt(root, "timeoutMs", DefaultExecTimeoutMs);
+        if (timeoutMs < 1000) timeoutMs = 1000;
+        if (timeoutMs > MaxExecTimeoutMs) timeoutMs = MaxExecTimeoutMs;
+
         _onActivity();
         _log("jalanin: " + command + (args.Length > 0 ? " " + args : ""));
 
@@ -334,7 +410,7 @@ public sealed class AgentServer
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
 
-            bool exited = p.WaitForExit(ExecTimeoutMs);
+            bool exited = p.WaitForExit(timeoutMs);
             if (!exited)
             {
                 try { p.Kill(true); } catch { /* abaikan */ }
@@ -368,6 +444,178 @@ public sealed class AgentServer
         _log("buka: " + path);
         Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
         return Ok();
+    }
+
+    // ---------- Endpoint streaming v2 ----------
+
+    private void HandleFileDownload(NetworkStream stream, RequestHead head)
+    {
+        string path = GetQueryParam(head.Query, "path");
+        _onActivity();
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            _log("unduh berkas GAGAL (tidak ditemukan): " + path);
+            WriteResponse(stream, Response.Json("{\"ok\":false,\"error\":\"berkas tidak ditemukan\"}", 404));
+            return;
+        }
+
+        var info = new FileInfo(path);
+        _log($"unduh berkas: {path} ({info.Length} byte)");
+        var sb = new StringBuilder();
+        sb.Append("HTTP/1.1 200 OK\r\n");
+        sb.Append("Content-Type: application/octet-stream\r\n");
+        sb.Append("Content-Length: ").Append(info.Length).Append("\r\n");
+        sb.Append("Content-Disposition: attachment; filename=\"")
+          .Append(info.Name.Replace("\"", "")).Append("\"\r\n");
+        sb.Append("Connection: close\r\n\r\n");
+        var headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
+        stream.Write(headerBytes, 0, headerBytes.Length);
+
+        // Salin per blok 64 KB — berkas besar tidak dimuat utuh ke memori.
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            var buf = new byte[65536];
+            int n;
+            while ((n = fs.Read(buf, 0, buf.Length)) > 0)
+                stream.Write(buf, 0, n);
+        }
+        stream.Flush();
+    }
+
+    private void HandleUpload(NetworkStream stream, RequestHead head)
+    {
+        string path = GetQueryParam(head.Query, "path");
+        _onActivity();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            WriteResponse(stream, Response.Json("{\"ok\":false,\"error\":\"path kosong\"}", 400));
+            return;
+        }
+
+        string parent;
+        try
+        {
+            parent = Path.GetDirectoryName(Path.GetFullPath(path));
+        }
+        catch (Exception ex)
+        {
+            WriteResponse(stream, Response.JsonObject(new Dictionary<string, object>
+            {
+                ["ok"] = false,
+                ["error"] = "path tidak valid: " + ex.Message,
+            }, 400));
+            return;
+        }
+        if (!string.IsNullOrEmpty(parent))
+            Directory.CreateDirectory(parent);
+
+        // Badan request mentah dialirkan langsung ke berkas, per blok 64 KB.
+        long total = 0;
+        using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            var buf = new byte[65536];
+            long remaining = head.ContentLength;
+            while (remaining > 0)
+            {
+                int want = (int)Math.Min(buf.Length, remaining);
+                int n = stream.Read(buf, 0, want);
+                if (n == 0) break;
+                fs.Write(buf, 0, n);
+                total += n;
+                remaining -= n;
+            }
+        }
+
+        _log($"unggah berkas: {path} ({total} byte)");
+        WriteResponse(stream, Response.JsonObject(new Dictionary<string, object>
+        {
+            ["ok"] = true,
+            ["bytes"] = total,
+        }));
+    }
+
+    private void HandleStream(NetworkStream stream)
+    {
+        _onActivity();
+        _log("stream dimulai");
+        try
+        {
+            // WriteTimeout pendek: klien yang hilang terdeteksi dari gagal tulis.
+            stream.WriteTimeout = 5000;
+            var header = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "Connection: close\r\n\r\n");
+            stream.Write(header, 0, header.Length);
+
+            var crlf = new byte[] { 13, 10 };
+            while (IsRunning)
+            {
+                var jpeg = OnUi(CaptureJpegFrame);
+                var partHead = Encoding.ASCII.GetBytes(
+                    "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
+                    jpeg.Length + "\r\n\r\n");
+                stream.Write(partHead, 0, partHead.Length);
+                stream.Write(jpeg, 0, jpeg.Length);
+                stream.Write(crlf, 0, crlf.Length);
+                stream.Flush();
+                Thread.Sleep(150);
+            }
+        }
+        catch
+        {
+            // Klien memutus stream / listener dimatikan — akhiri dengan diam.
+        }
+        finally
+        {
+            _log("stream berhenti");
+        }
+    }
+
+    private static byte[] CaptureJpegFrame()
+    {
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        using (var bmp = new Bitmap(bounds.Width, bounds.Height))
+        {
+            using (var g = Graphics.FromImage(bmp))
+                g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+
+            int w = bmp.Width, h = bmp.Height;
+            if (w > 1280)
+            {
+                h = (int)(h * (1280.0 / w));
+                w = 1280;
+            }
+            using (var scaled = new Bitmap(bmp, new Size(w, h)))
+            using (var ms = new MemoryStream())
+            {
+                var encoder = GetJpegEncoder();
+                if (encoder != null)
+                {
+                    var ep = new EncoderParameters(1);
+                    ep.Param[0] = new EncoderParameter(Encoder.Quality, 60L);
+                    scaled.Save(ms, encoder, ep);
+                }
+                else
+                {
+                    scaled.Save(ms, ImageFormat.Jpeg);
+                }
+                return ms.ToArray();
+            }
+        }
+    }
+
+    private static ImageCodecInfo GetJpegEncoder()
+    {
+        foreach (var codec in ImageCodecInfo.GetImageEncoders())
+        {
+            if (codec.MimeType == "image/jpeg")
+                return codec;
+        }
+        return null;
     }
 
     private static byte[] CaptureScreenshot()
