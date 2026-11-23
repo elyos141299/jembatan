@@ -15,7 +15,9 @@ namespace Jembatan;
 /// Jendela utama Jembatan. Selama jendela ini terbuka dan status
 /// tersambung, layanan agen (AgentServer) mendengarkan di port 8765
 /// dan Muse bisa bekerja di PC ini lewat jaringan Tailscale user.
-/// Menutup jendela atau menekan PUTUSKAN menghentikan akses seketika.
+/// Menekan PUTUSKAN menghentikan akses seketika. Tombol X hanya
+/// menyembunyikan jendela ke system tray (layanan tetap berjalan);
+/// keluar total lewat menu tray → Keluar.
 /// Semua aktivitas Muse dicatat di log jendela ini, real-time.
 /// </summary>
 public sealed class MainForm : Form
@@ -51,6 +53,12 @@ public sealed class MainForm : Form
     private Size _compactSize;
     private Size _compactMinimumSize;
 
+    // System tray: tombol X hanya menyembunyikan jendela ke tray —
+    // layanan tetap berjalan. Keluar sungguhan hanya lewat menu tray.
+    private NotifyIcon _trayIcon;
+    private bool _exitRequested;
+    private bool _trayTipShown;
+
     public MainForm()
     {
         Text = "Jembatan — Akses Muse";
@@ -63,6 +71,8 @@ public sealed class MainForm : Form
         Font = new Font("Segoe UI", 10f);
 
         BuildLayout();
+        InitTrayIcon();
+        FormClosing += OnMainFormClosing;
 
         _server = new AgentServer(this, Log, OnActivity);
 
@@ -82,7 +92,91 @@ public sealed class MainForm : Form
                 Log("GAGAL memulai layanan: " + ex.Message);
             }
         };
-        FormClosed += (s, e) => _server.Stop();
+        FormClosed += (s, e) =>
+        {
+            _server.Stop();
+            // Buang ikon tray agar tidak meninggalkan ikon hantu.
+            if (_trayIcon != null)
+            {
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+                _trayIcon = null;
+            }
+        };
+    }
+
+    // ---------- System tray ----------
+
+    // Ikon tray selalu tampil selama aplikasi berjalan. Klik ganda
+    // membuka jendela; klik kanan memberi menu Buka / Keluar.
+    private void InitTrayIcon()
+    {
+        Icon icon = null;
+        try { icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+        catch { /* jatuh ke ikon bawaan di bawah */ }
+        if (icon == null) icon = SystemIcons.Application;
+
+        var menu = new ContextMenuStrip();
+        var openItem = new ToolStripMenuItem("Buka Jembatan");
+        openItem.Click += (s, e) => ShowFromTray();
+        var exitItem = new ToolStripMenuItem("Keluar");
+        exitItem.Click += (s, e) => ExitFromTray();
+        menu.Items.Add(openItem);
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(exitItem);
+
+        _trayIcon = new NotifyIcon
+        {
+            Icon = icon,
+            Text = "Jembatan — Akses Muse",
+            ContextMenuStrip = menu,
+            Visible = true,
+        };
+        _trayIcon.DoubleClick += (s, e) => ShowFromTray();
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    // Satu-satunya jalan keluar sungguhan dari dalam aplikasi:
+    // tandai dulu, buang ikon tray, baru tutup — OnMainFormClosing
+    // melihat tanda ini dan membiarkan jendela benar-benar tertutup.
+    private void ExitFromTray()
+    {
+        _exitRequested = true;
+        if (_trayIcon != null)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+            _trayIcon = null;
+        }
+        Close();
+    }
+
+    // Tombol X (dan penutupan oleh user lainnya) TIDAK mematikan
+    // Jembatan: jendela disembunyikan ke tray dan layanan agen terus
+    // berjalan. Penutupan bukan dari user (Windows shutdown, Task
+    // Manager) serta jalan Keluar dari tray dibiarkan lewat.
+    private void OnMainFormClosing(object sender, FormClosingEventArgs e)
+    {
+        if (_exitRequested) return;
+        if (e.CloseReason != CloseReason.UserClosing) return;
+
+        e.Cancel = true;
+        Hide();
+        Log("Jendela disembunyikan ke system tray — Jembatan tetap berjalan.");
+        if (!_trayTipShown)
+        {
+            _trayTipShown = true;
+            _trayIcon?.ShowBalloonTip(5000,
+                "Jembatan tetap berjalan",
+                "Jembatan tetap aktif di system tray. Klik ganda ikon tray untuk membuka lagi, atau klik kanan lalu pilih Keluar untuk berhenti total.",
+                ToolTipIcon.Info);
+        }
     }
 
     private void BuildLayout()
