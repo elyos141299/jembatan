@@ -165,15 +165,33 @@ public sealed class MainForm : Form
         };
         header.Controls.Add(addr);
 
+        // Wadah sisi kanan kepala (perbaikan v2.3.1): panel ini di-Dock
+        // ke tepi kanan kepala sehingga selalu menempel di kanan pada
+        // lebar Panel1 berapa pun (660 tertutup, ±380 chat terbuka).
+        // Dulu tombol chat & label versi memakai Anchor=Right dengan
+        // posisi absolut yang dihitung terhadap lebar awal panel kepala
+        // (200px bawaan konstruksi) — WinForms mengunci jarak tepi kanan
+        // terhadap lebar awal itu, jadi saat kepala melebar ke ukuran
+        // sebenarnya kedua kontrol terdorong ratusan piksel keluar tepi
+        // kanan dan tidak pernah terlihat. Di dalam wadah ter-Dock ini
+        // cukup posisi kiri-atas biasa.
+        var headerRight = new Panel
+        {
+            Dock = DockStyle.Right,
+            Width = 122,
+            BackColor = Bg,
+        };
+        header.Controls.Add(headerRight);
+
         var version = new Label
         {
-            Text = "v2.3",
+            Text = "v2.3.1",
             ForeColor = InkDim,
             AutoSize = true,
-            Location = new Point(612, 164),
-            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            TextAlign = ContentAlignment.MiddleRight,
+            Location = new Point(80, 164),
         };
-        header.Controls.Add(version);
+        headerRight.Controls.Add(version);
 
         // Tombol buka/tutup panel chat Muse (v2.2) — pojok kanan atas.
         _chatButton = new Button
@@ -184,12 +202,11 @@ public sealed class MainForm : Form
             BackColor = Panel,
             ForeColor = Ink,
             Size = new Size(108, 30),
-            Location = new Point(528, 9),
-            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Location = new Point(7, 9),
         };
         _chatButton.FlatAppearance.BorderSize = 0;
         _chatButton.Click += ChatToggleClicked;
-        header.Controls.Add(_chatButton);
+        headerRight.Controls.Add(_chatButton);
 
         // Jalan otomatis saat Windows menyala (v2.1) — status awalnya
         // diisi InitStartOptions() saat jendela dimuat; handler perubahan
