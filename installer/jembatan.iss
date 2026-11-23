@@ -5,7 +5,7 @@
 [Setup]
 AppId={{7D1C9A42-5B3E-4F08-9E6A-2C4D8B0F5A71}
 AppName=Jembatan
-AppVersion=2.2
+AppVersion=2.3
 AppPublisher=Muse
 DefaultDirName={autopf}\Jembatan
 DefaultGroupName=Jembatan

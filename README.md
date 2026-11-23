@@ -1,4 +1,4 @@
-# Jembatan v2.2 — catatan pengembang
+# Jembatan v2.3 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -11,8 +11,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 
 | Berkas | Isi |
 |---|---|
-| `Program.cs` | Titik masuk aplikasi (STAThread). |
-| `MainForm.cs` | Jendela utama: status, log aktivitas real-time, tombol PUTUSKAN/Sambung lagi, checkbox jalan otomatis, dan panel chat Muse (WebView2, sejak v2.2). |
+| `Program.cs` | Titik masuk aplikasi (STAThread): penjaga satu instans (mutex) + kenaikan hak sendiri bila Mode Administrator aktif. |
+| `Settings.cs` | Pengaturan di `HKCU\Software\Jembatan` (Mode Administrator) + pembantu hak administrator (cek elevasi, relaunch `runas`). |
+| `MainForm.cs` | Jendela utama: status, log aktivitas real-time, tombol PUTUSKAN/Sambung lagi, checkbox jalan otomatis & Mode Administrator, penanda mode, dan panel chat Muse (WebView2, sejak v2.2). |
 | `AgentServer.cs` | Layanan agen HTTP (port 8765) + semua endpoint. |
 | `NativeInput.cs` | Mouse/keyboard: user32 `SetCursorPos`/`mouse_event` + `SendKeys`. |
 | `app.manifest` | Manifest aplikasi: DPI-aware PerMonitorV2 (rujukan dari csproj). |
@@ -23,9 +24,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 
 | Metode & path | Body | Hasil |
 |---|---|---|
-| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.2"}` |
+| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3", admin}` — `admin` = hak proses saat ini |
 | `GET /screenshot` | — | PNG layar utama (binary `image/png`) |
-| `GET /sysinfo` | — | `{ok, version:"2.2", pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
+| `GET /sysinfo` | — | `{ok, version:"2.3", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{title, process}]}` — jendela tingkat atas yang terlihat & berjudul |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
@@ -48,6 +49,52 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.3 (dari v2.2)
+
+- **Mode Administrator (akses penuh)** — checkbox kedua di jendela
+  utama, "Mode Administrator (akses penuh)", disimpan sebagai DWORD
+  `AdminMode` di `HKCU\Software\Jembatan` (kelas `Settings`). Nilai
+  belum ada = **AKTIF secara bawaan**, sesuai perintah eksplisit user.
+  Label kecil di kepala jendela menunjukkan level proses apa adanya:
+  "Mode: Administrator" (kuning) atau "Mode: Pengguna biasa" (redup) —
+  dari hak proses sebenarnya, bukan dari pengaturan.
+- **Naik hak sendiri saat dibuka**: manifest tetap `asInvoker`.
+  Di `Program.Main`, bila Mode Administrator aktif tapi proses belum
+  admin, aplikasi menjalankan ulang dirinya dengan Verb `runas` —
+  muncul **satu prompt UAC** — lalu proses lama keluar. Bila user
+  menekan "No", tidak ada pengulangan: aplikasi lanjut sebagai
+  pengguna biasa dan mencatat "Mode Administrator ditolak" di log.
+  Mencentang checkbox-nya dari jendela yang belum admin memicu
+  kenaikan hak yang sama saat itu juga.
+- **Jalan otomatis tanpa prompt**: satu fungsi `SyncAutoStart()`
+  (dipanggil saat jendela dimuat dan tiap checkbox berubah) memilih
+  mekanismenya. Mode Administrator aktif + proses admin + jalan
+  otomatis aktif → dibuat **Tugas Terjadwal bernama "Jembatan"**
+  (`schtasks /Create /SC ONLOGON /RL HIGHEST`) yang menjalankan
+  Jembatan sebagai administrator tiap login Windows **tanpa prompt
+  UAC sama sekali**, dan nilai Run dicabut agar tidak dobel. Di luar
+  keadaan itu, jalan otomatis kembali ke nilai Run `HKCU` seperti
+  v2.1 (tugas terjadwal yang tertinggal dihapus bila proses mampu —
+  butuh admin — dan cukup dicatat di log bila tidak).
+- **Penjaga satu instans**: mutex bernama `JembatanSingleInstance`
+  di `Program.Main` — instans kedua (benturan tugas terjadwal vs
+  buka manual, atau serah-terima naik hak) keluar diam-diam;
+  pengecekan dicoba berulang ±5 detik untuk memberi waktu instans
+  lama mati.
+- **Cara mematikan**: hilangkan centang "Mode Administrator
+  (akses penuh)". Tugas terjadwal dihapus dan jalan otomatis kembali
+  ke nilai Run pada kesempatan proses admin berikutnya; jendela yang
+  sedang terbuka tetap admin sampai Jembatan dibuka ulang — log
+  mencatat persis itu.
+- **Catatan jujur soal risiko**: jembatan yang berjalan sebagai
+  administrator berarti **semua perintah yang lewat jembatan —
+  `/exec`, `/shell`, klik, ketik — berkekuatan administrator penuh**.
+  Tombol PUTUSKAN dan jendela log tetap menjadi kendali user, dan
+  perlindungan jaringan tetap Tailscale, tapi kesalahan langkah
+  berdampak sebesar hak admin itu sendiri. `/ping` dan `/sysinfo`
+  kini menyertakan field `admin` (bool) agar level proses selalu
+  bisa diverifikasi dari luar.
 
 ## Perubahan v2.2 (dari v2.1)
 

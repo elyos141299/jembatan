@@ -1,18 +1,75 @@
 using System;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace Jembatan;
 
 internal static class Program
 {
+    private static Mutex _instanceMutex;
+
+    /// <summary>
+    /// True bila Mode Administrator aktif tapi user menolak prompt UAC
+    /// saat aplikasi dibuka — proses ini lanjut sebagai pengguna biasa
+    /// dan MainForm mencatatnya sekali di log.
+    /// </summary>
+    internal static bool ElevationDeclined { get; private set; }
+
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        // Penjaga satu instans: jalan otomatis (Tugas Terjadwal / Run)
+        // dan pembukaan manual bisa berbenturan — instans kedua keluar
+        // diam-diam. Pengecekan dicoba berulang sebentar karena saat
+        // serah-terima naik hak (relaunch admin) instans lama butuh
+        // waktu singkat untuk mati dan melepas mutex.
+        if (!AcquireSingleInstance())
+            return;
+
+        // Mode Administrator (v2.3): pengaturan AKTIF tapi proses ini
+        // belum admin → coba naikkan hak SEKALI lewat UAC, lalu keluar
+        // (instans admin yang melanjutkan). Manifest tetap asInvoker —
+        // kenaikan hak bersifat kondisional saat runtime, bukan wajib.
+        // Bila user menolak UAC, JANGAN mengulang: lanjut jalan sebagai
+        // pengguna biasa dan catat lewat ElevationDeclined.
+        if (Settings.AdminMode && !Settings.IsElevated())
+        {
+            if (Settings.TryRelaunchElevated(args))
+            {
+                ReleaseSingleInstance();
+                return;
+            }
+            ElevationDeclined = true;
+        }
+
         // Selaras dengan app.manifest (dpiAwareness PerMonitorV2):
         // koordinat layar selalu piksel fisik.
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new MainForm());
+
+        ReleaseSingleInstance();
+    }
+
+    private static bool AcquireSingleInstance()
+    {
+        for (int i = 0; i < 50; i++)
+        {
+            _instanceMutex = new Mutex(true, "JembatanSingleInstance", out bool createdNew);
+            if (createdNew)
+                return true;
+            _instanceMutex.Dispose();
+            _instanceMutex = null;
+            Thread.Sleep(100);
+        }
+        return false;
+    }
+
+    private static void ReleaseSingleInstance()
+    {
+        try { _instanceMutex?.ReleaseMutex(); } catch { /* abaikan */ }
+        try { _instanceMutex?.Dispose(); } catch { /* abaikan */ }
+        _instanceMutex = null;
     }
 }

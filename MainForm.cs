@@ -35,6 +35,8 @@ public sealed class MainForm : Form
     private RichTextBox _logBox;
     private Button _toggleButton;
     private CheckBox _autoStartCheck;
+    private CheckBox _adminCheck;
+    private Label _modeLabel;
     private bool _claudeSeen;
 
     // Panel chat Muse (v2.2): SplitContainer membagi jendela —
@@ -66,7 +68,7 @@ public sealed class MainForm : Form
 
         Load += (s, e) =>
         {
-            InitAutoStart();
+            InitStartOptions();
             try
             {
                 _server.Start();
@@ -119,7 +121,7 @@ public sealed class MainForm : Form
         var header = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 144,
+            Height = 190,
             BackColor = Bg,
             Padding = new Padding(14, 10, 14, 6),
         };
@@ -165,10 +167,10 @@ public sealed class MainForm : Form
 
         var version = new Label
         {
-            Text = "v2.2",
+            Text = "v2.3",
             ForeColor = InkDim,
             AutoSize = true,
-            Location = new Point(612, 116),
+            Location = new Point(612, 164),
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         header.Controls.Add(version);
@@ -190,7 +192,7 @@ public sealed class MainForm : Form
         header.Controls.Add(_chatButton);
 
         // Jalan otomatis saat Windows menyala (v2.1) — status awalnya
-        // diisi InitAutoStart() saat jendela dimuat; handler perubahan
+        // diisi InitStartOptions() saat jendela dimuat; handler perubahan
         // dipasang di sana juga agar pengisian awal tidak menulis registry.
         _autoStartCheck = new CheckBox
         {
@@ -201,6 +203,32 @@ public sealed class MainForm : Form
             Location = new Point(14, 116),
         };
         header.Controls.Add(_autoStartCheck);
+
+        // Mode Administrator (v2.3) — checkbox kedua, tepat di bawah
+        // jalan otomatis. Status awalnya juga diisi InitStartOptions().
+        _adminCheck = new CheckBox
+        {
+            Text = "Mode Administrator (akses penuh)",
+            ForeColor = Ink,
+            BackColor = Bg,
+            AutoSize = true,
+            Location = new Point(14, 140),
+        };
+        header.Controls.Add(_adminCheck);
+
+        // Penanda level proses INI apa adanya (dari hak sebenarnya,
+        // bukan dari pengaturan): hak proses tidak berubah selama
+        // berjalan, jadi teksnya diisi sekali di sini.
+        bool elevatedNow = Settings.IsElevated();
+        _modeLabel = new Label
+        {
+            Text = elevatedNow ? "Mode: Administrator" : "Mode: Pengguna biasa",
+            ForeColor = elevatedNow ? Amber : InkDim,
+            Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+            AutoSize = true,
+            Location = new Point(14, 164),
+        };
+        header.Controls.Add(_modeLabel);
         _split.Panel1.Controls.Add(header);
 
         // Tombol besar PUTUSKAN / Sambung lagi di bawah.
@@ -490,31 +518,24 @@ public sealed class MainForm : Form
         }
     }
 
-    // ---------- Jalan otomatis saat Windows menyala (v2.1) ----------
-    // Ditopang nilai "Jembatan" di HKCU\...\CurrentVersion\Run —
-    // per-user, tanpa admin, selaras dengan installer per-user.
+    // ---------- Jalan otomatis & Mode Administrator (v2.1 + v2.3) ----------
+    // Dua mekanisme jalan otomatis, dipilih oleh SyncAutoStart():
+    //  - Nilai "Jembatan" di HKCU\...\CurrentVersion\Run — jalan
+    //    sebagai pengguna biasa (perilaku v2.1, tanpa admin).
+    //  - Tugas Terjadwal "Jembatan" berhak tertinggi (schtasks) —
+    //    jalan sebagai ADMINISTRATOR saat login, tanpa prompt UAC.
+    //    Hanya bisa dibuat/dihapus oleh proses yang sedang admin.
+    // Mode Administrator sendiri disimpan di HKCU\Software\Jembatan
+    // (kelas Settings); kenaikan hak prosesnya diatur di Program.cs.
 
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "Jembatan";
+    private const string TaskName = "Jembatan";
 
     private static string ExpectedRunCommand()
     {
         // Path exe dikutip agar aman dari spasi di nama folder.
         return "\"" + Application.ExecutablePath + "\"";
-    }
-
-    private static bool IsAutoStartEnabled()
-    {
-        try
-        {
-            using (var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, false))
-            {
-                var v = key?.GetValue(RunValueName) as string;
-                return v != null &&
-                    string.Equals(v.Trim(), ExpectedRunCommand(), StringComparison.OrdinalIgnoreCase);
-            }
-        }
-        catch { return false; }
     }
 
     private static bool HasAutoStartValue()
@@ -540,40 +561,190 @@ public sealed class MainForm : Form
         }
     }
 
-    private void InitAutoStart()
+    // ---------- Tugas Terjadwal "Jembatan" (schtasks) ----------
+
+    private static int RunSchtasks(string arguments, out string output)
     {
-        // Jalan pertama (nilai Run belum ada sama sekali): aktifkan
-        // otomatis — memang itu yang diminta user.
-        if (!HasAutoStartValue())
+        var psi = new ProcessStartInfo
         {
-            try
+            FileName = "schtasks.exe",
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        using (var p = Process.Start(psi))
+        {
+            if (p == null) { output = ""; return -1; }
+            // stderr dibaca async agar kedua pipa tidak saling memblokir.
+            var errTask = p.StandardError.ReadToEndAsync();
+            string stdout = p.StandardOutput.ReadToEnd();
+            if (!p.WaitForExit(15000))
             {
-                SetAutoStart(true);
-                Log("Jalan otomatis saat Windows menyala: AKTIF (diaktifkan di jalan pertama).");
+                try { p.Kill(true); } catch { /* abaikan */ }
+                output = stdout;
+                return -2;
             }
-            catch (Exception ex)
+            string stderr = "";
+            try { stderr = errTask.Result; } catch { /* abaikan */ }
+            output = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+            return p.ExitCode;
+        }
+    }
+
+    private static bool ScheduledTaskExists()
+    {
+        try
+        {
+            return RunSchtasks("/Query /TN \"" + TaskName + "\"", out _) == 0;
+        }
+        catch { return false; }
+    }
+
+    private void EnsureScheduledTask()
+    {
+        // Path exe di dalam nilai /TR harus terbungkus tanda kutip —
+        // pola baku schtasks: /TR "\"C:\...\Jembatan.exe\"".
+        string args = "/Create /TN \"" + TaskName + "\" /TR \"\\\"" +
+                      Application.ExecutablePath + "\\\"\" /SC ONLOGON /RL HIGHEST /F";
+        int code = RunSchtasks(args, out string output);
+        if (code != 0)
+            Log("GAGAL membuat tugas terjadwal admin (kode " + code + "): " + output.Trim());
+    }
+
+    private void DeleteScheduledTask()
+    {
+        int code = RunSchtasks("/Delete /TN \"" + TaskName + "\" /F", out string output);
+        if (code != 0)
+            Log("GAGAL menghapus tugas terjadwal (kode " + code + "): " + output.Trim());
+        else
+            Log("Tugas terjadwal '" + TaskName + "' dihapus.");
+    }
+
+    /// <summary>
+    /// Selaraskan mekanisme jalan otomatis dengan keadaan yang diminta:
+    /// checkbox jalan otomatis + pengaturan Mode Administrator + hak
+    /// proses ini. Dipanggil sekali saat jendela dimuat dan tiap kali
+    /// SALAH SATU checkbox berubah. Semua kegagalan hanya dicatat di
+    /// log — tidak pernah menjatuhkan jendela.
+    /// </summary>
+    private void SyncAutoStart()
+    {
+        bool autoStart = _autoStartCheck.Checked;
+        bool adminWanted = Settings.AdminMode;
+        bool elevated = Settings.IsElevated();
+        try
+        {
+            if (autoStart && adminWanted && elevated)
             {
-                Log("GAGAL mengaktifkan jalan otomatis: " + ex.Message);
+                // Jalan otomatis sebagai admin: tugas terjadwal yang
+                // memegang peran; nilai Run dicabut agar tidak dobel.
+                EnsureScheduledTask();
+                SetAutoStart(false);
+            }
+            else if (autoStart)
+            {
+                // Jalan otomatis sebagai pengguna biasa: nilai Run.
+                SetAutoStart(true);
+                if (ScheduledTaskExists())
+                {
+                    if (elevated) DeleteScheduledTask();
+                    else Log("Tugas terjadwal '" + TaskName + "' masih terdaftar — penghapusannya butuh Jembatan berjalan sebagai administrator.");
+                }
+            }
+            else
+            {
+                SetAutoStart(false);
+                if (ScheduledTaskExists())
+                {
+                    if (elevated) DeleteScheduledTask();
+                    else Log("Tugas terjadwal '" + TaskName + "' masih terdaftar — penghapusannya butuh Jembatan berjalan sebagai administrator.");
+                }
             }
         }
-        _autoStartCheck.Checked = IsAutoStartEnabled();
+        catch (Exception ex)
+        {
+            Log("GAGAL menyelaraskan jalan otomatis: " + ex.Message);
+        }
+    }
+
+    private void InitStartOptions()
+    {
+        bool taskExists = ScheduledTaskExists();
+        // "Jalan pertama" = belum ada jejak apa pun: nilai Run tidak
+        // ada, tugas tidak ada, dan Mode Administrator belum pernah
+        // ditulis. Di jalan pertama jalan otomatis AKTIF secara bawaan
+        // (perilaku v2.1); sesudahnya keadaan registry yang berkuasa,
+        // supaya pilihan MATI dari user tidak dibatalkan diam-diam.
+        bool firstRun = !Settings.HasAdminModeValue && !HasAutoStartValue() && !taskExists;
+        bool autoStart = HasAutoStartValue() || taskExists || firstRun;
+        if (firstRun)
+            Log("Jalan otomatis saat Windows menyala: AKTIF (diaktifkan di jalan pertama).");
+
+        _autoStartCheck.Checked = autoStart;
+        _adminCheck.Checked = Settings.AdminMode;
         // Handler dipasang SETELAH status awal terisi.
         _autoStartCheck.CheckedChanged += AutoStartChanged;
+        _adminCheck.CheckedChanged += AdminModeChanged;
+
+        if (Program.ElevationDeclined)
+            Log("Mode Administrator ditolak — jalan sebagai pengguna biasa");
+
+        SyncAutoStart();
+
+        if (firstRun)
+        {
+            // Tulis nilai Mode Administrator apa adanya supaya jalan
+            // berikutnya tidak lagi dianggap "jalan pertama".
+            try { Settings.AdminMode = Settings.AdminMode; }
+            catch { /* abaikan — bukan hal kritis */ }
+        }
     }
 
     private void AutoStartChanged(object sender, EventArgs e)
     {
-        bool on = _autoStartCheck.Checked;
+        Log(_autoStartCheck.Checked
+            ? "Jalan otomatis saat Windows menyala: AKTIF"
+            : "Jalan otomatis saat Windows menyala: MATI");
+        SyncAutoStart();
+    }
+
+    private void AdminModeChanged(object sender, EventArgs e)
+    {
+        bool on = _adminCheck.Checked;
         try
         {
-            SetAutoStart(on);
-            Log(on
-                ? "Jalan otomatis saat Windows menyala: AKTIF"
-                : "Jalan otomatis saat Windows menyala: MATI");
+            Settings.AdminMode = on;
         }
         catch (Exception ex)
         {
-            Log("GAGAL mengubah jalan otomatis: " + ex.Message);
+            Log("GAGAL menyimpan Mode Administrator: " + ex.Message);
+            return;
+        }
+
+        if (on)
+        {
+            Log("Mode Administrator: AKTIF");
+            if (!Settings.IsElevated())
+            {
+                // Naikkan hak sekarang juga: mulai ulang sebagai admin
+                // lalu tutup instans ini (instans admin yang meneruskan).
+                if (Settings.TryRelaunchElevated(Array.Empty<string>()))
+                {
+                    Close();
+                    return;
+                }
+                Log("Mode Administrator ditolak — jalan sebagai pengguna biasa");
+            }
+            SyncAutoStart();
+        }
+        else
+        {
+            SyncAutoStart();
+            // Proses ini tetap admin sampai ditutup — yang berubah
+            // adalah jalan berikutnya.
+            Log("Mode Administrator dimatikan — berlaku penuh setelah Jembatan dibuka ulang");
         }
     }
 
