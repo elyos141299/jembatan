@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -39,6 +40,75 @@ public static class NativeInput
             default:
                 down = LeftDown; up = LeftUp; break;
         }
+    }
+
+    // ---------- Daftar & fokus jendela (v2.1) ----------
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    private const int SwRestore = 9;
+
+    /// <summary>Satu jendela tingkat atas yang terlihat dan berjudul.</summary>
+    public sealed class WindowInfo
+    {
+        public IntPtr Handle;
+        public string Title;
+        public string Process;
+    }
+
+    /// <summary>Daftar semua jendela tingkat atas yang terlihat & berjudul non-kosong.</summary>
+    public static List<WindowInfo> ListWindows()
+    {
+        var result = new List<WindowInfo>();
+        EnumWindows((hWnd, lParam) =>
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+            var sb = new StringBuilder(512);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            string title = sb.ToString();
+            if (string.IsNullOrWhiteSpace(title)) return true;
+            string proc = "";
+            try
+            {
+                GetWindowThreadProcessId(hWnd, out uint pid);
+                proc = Process.GetProcessById((int)pid).ProcessName;
+            }
+            catch { /* proses sudah mati dsb. — nama proses dikosongkan */ }
+            result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = proc });
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
+    /// <summary>
+    /// Bawa jendela ke depan. Jendela yang diminimalkan dipulihkan dulu
+    /// (SW_RESTORE) sebelum SetForegroundWindow.
+    /// </summary>
+    public static bool FocusWindow(IntPtr hWnd)
+    {
+        if (IsIconic(hWnd)) ShowWindow(hWnd, SwRestore);
+        return SetForegroundWindow(hWnd);
     }
 
     public static void Move(int x, int y)

@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace Jembatan;
 
@@ -28,6 +29,7 @@ public sealed class MainForm : Form
     private Label _statusLabel;
     private RichTextBox _logBox;
     private Button _toggleButton;
+    private CheckBox _autoStartCheck;
     private bool _claudeSeen;
 
     public MainForm()
@@ -47,6 +49,7 @@ public sealed class MainForm : Form
 
         Load += (s, e) =>
         {
+            InitAutoStart();
             try
             {
                 _server.Start();
@@ -82,7 +85,7 @@ public sealed class MainForm : Form
         var header = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 118,
+            Height = 144,
             BackColor = Bg,
             Padding = new Padding(14, 10, 14, 6),
         };
@@ -125,13 +128,26 @@ public sealed class MainForm : Form
 
         var version = new Label
         {
-            Text = "v2.0",
+            Text = "v2.1",
             ForeColor = InkDim,
             AutoSize = true,
             Location = new Point(612, 84),
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         header.Controls.Add(version);
+
+        // Jalan otomatis saat Windows menyala (v2.1) — status awalnya
+        // diisi InitAutoStart() saat jendela dimuat; handler perubahan
+        // dipasang di sana juga agar pengisian awal tidak menulis registry.
+        _autoStartCheck = new CheckBox
+        {
+            Text = "Jalan otomatis saat Windows menyala",
+            ForeColor = Ink,
+            BackColor = Bg,
+            AutoSize = true,
+            Location = new Point(14, 110),
+        };
+        header.Controls.Add(_autoStartCheck);
         Controls.Add(header);
 
         // Tombol besar PUTUSKAN / Sambung lagi di bawah.
@@ -194,6 +210,93 @@ public sealed class MainForm : Form
         {
             _toggleButton.Text = "Sambung lagi";
             _toggleButton.BackColor = Green;
+        }
+    }
+
+    // ---------- Jalan otomatis saat Windows menyala (v2.1) ----------
+    // Ditopang nilai "Jembatan" di HKCU\...\CurrentVersion\Run —
+    // per-user, tanpa admin, selaras dengan installer per-user.
+
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValueName = "Jembatan";
+
+    private static string ExpectedRunCommand()
+    {
+        // Path exe dikutip agar aman dari spasi di nama folder.
+        return "\"" + Application.ExecutablePath + "\"";
+    }
+
+    private static bool IsAutoStartEnabled()
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, false))
+            {
+                var v = key?.GetValue(RunValueName) as string;
+                return v != null &&
+                    string.Equals(v.Trim(), ExpectedRunCommand(), StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch { return false; }
+    }
+
+    private static bool HasAutoStartValue()
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, false))
+            {
+                return key?.GetValue(RunValueName) != null;
+            }
+        }
+        catch { return false; }
+    }
+
+    private static void SetAutoStart(bool enabled)
+    {
+        using (var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, true)
+                          ?? Registry.CurrentUser.CreateSubKey(RunKeyPath))
+        {
+            if (key == null) return;
+            if (enabled) key.SetValue(RunValueName, ExpectedRunCommand());
+            else key.DeleteValue(RunValueName, false);
+        }
+    }
+
+    private void InitAutoStart()
+    {
+        // Jalan pertama (nilai Run belum ada sama sekali): aktifkan
+        // otomatis — memang itu yang diminta user.
+        if (!HasAutoStartValue())
+        {
+            try
+            {
+                SetAutoStart(true);
+                Log("Jalan otomatis saat Windows menyala: AKTIF (diaktifkan di jalan pertama).");
+            }
+            catch (Exception ex)
+            {
+                Log("GAGAL mengaktifkan jalan otomatis: " + ex.Message);
+            }
+        }
+        _autoStartCheck.Checked = IsAutoStartEnabled();
+        // Handler dipasang SETELAH status awal terisi.
+        _autoStartCheck.CheckedChanged += AutoStartChanged;
+    }
+
+    private void AutoStartChanged(object sender, EventArgs e)
+    {
+        bool on = _autoStartCheck.Checked;
+        try
+        {
+            SetAutoStart(on);
+            Log(on
+                ? "Jalan otomatis saat Windows menyala: AKTIF"
+                : "Jalan otomatis saat Windows menyala: MATI");
+        }
+        catch (Exception ex)
+        {
+            Log("GAGAL mengubah jalan otomatis: " + ex.Message);
         }
     }
 

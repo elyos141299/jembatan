@@ -4,8 +4,11 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -45,6 +48,12 @@ public sealed class AgentServer
     private TcpListener _listener;
     private CancellationTokenSource _cts;
 
+    // Shell persisten (v2.1): satu proses powershell.exe berumur panjang,
+    // dipakai bergantian lewat kunci _shellLock (satu perintah per waktu).
+    private readonly object _shellLock = new object();
+    private ShellSession _shell;
+    private int _shellSeq;
+
     public bool IsRunning { get; private set; }
 
     public AgentServer(Control ui, Action<string> log, Action onActivity)
@@ -72,6 +81,8 @@ public sealed class AgentServer
         try { _listener?.Stop(); } catch { /* abaikan */ }
         _listener = null;
         IsRunning = false;
+        // PUTUSKAN / jendela ditutup = shell persisten ikut dimatikan.
+        lock (_shellLock) { KillShell(); }
     }
 
     private async Task AcceptLoop(TcpListener listener, CancellationToken ct)
@@ -106,6 +117,14 @@ public sealed class AgentServer
         public string Method;
         public string Path;
         public string Body;
+    }
+
+    private sealed class ShellSession
+    {
+        public Process Proc;
+        public StreamWriter In;
+        public readonly StringBuilder Buffer = new StringBuilder();
+        public readonly object BufferLock = new object();
     }
 
     private sealed class Response
@@ -146,7 +165,7 @@ public sealed class AgentServer
                 }
                 if (head.Method == "GET" && head.Path == "/stream")
                 {
-                    HandleStream(stream);
+                    HandleStream(stream, head);
                     return;
                 }
                 if (head.Method == "POST" && head.Path == "/upload")
@@ -273,7 +292,7 @@ public sealed class AgentServer
             {
                 _onActivity();
                 _log("ping — Muse mengecek koneksi");
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.0\"}");
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.1\"}");
             }
 
             if (req.Method == "GET" && req.Path == "/screenshot")
@@ -282,6 +301,63 @@ public sealed class AgentServer
                 var png = OnUi(CaptureScreenshot);
                 _log("screenshot layar diambil");
                 return new Response { ContentType = "image/png", BodyBytes = png };
+            }
+
+            if (req.Method == "GET" && req.Path == "/clipboard")
+            {
+                _onActivity();
+                string text = OnUi(() =>
+                {
+                    // Clipboard bisa sedang dikunci aplikasi lain — gagal = teks kosong.
+                    try { return Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+                    catch { return ""; }
+                });
+                _log($"clipboard dibaca ({text.Length} karakter)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["text"] = text,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/windows")
+            {
+                _onActivity();
+                var wins = OnUi(NativeInput.ListWindows);
+                var list = new List<Dictionary<string, object>>();
+                foreach (var w in wins)
+                {
+                    list.Add(new Dictionary<string, object>
+                    {
+                        ["title"] = w.Title,
+                        ["process"] = w.Process,
+                    });
+                }
+                _log($"daftar jendela diminta ({list.Count} jendela)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["windows"] = list,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/sysinfo")
+            {
+                _onActivity();
+                var bounds = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 0, 0);
+                _log("info sistem diminta");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["version"] = "2.1",
+                    ["pc"] = Environment.MachineName,
+                    ["windows"] = Environment.OSVersion.VersionString,
+                    ["screen"] = bounds.Width + "x" + bounds.Height,
+                    ["uptimeSec"] = (int)(Environment.TickCount64 / 1000),
+                    ["jembatanPort"] = Port,
+                });
             }
 
             if (req.Method == "POST")
@@ -344,6 +420,66 @@ public sealed class AgentServer
                             _log("tombol: " + keys);
                             return Ok();
                         }
+                        case "/clipboard":
+                        {
+                            string text = GetString(root, "text", "");
+                            OnUi(() => { SetClipboardText(text); return true; });
+                            _onActivity();
+                            // Isi clipboard TIDAK PERNAH dicatat — hanya panjangnya.
+                            _log($"clipboard diisi ({text.Length} karakter)");
+                            return Ok();
+                        }
+                        case "/paste":
+                        {
+                            string text = GetString(root, "text", "");
+                            OnUi(() =>
+                            {
+                                SetClipboardText(text);
+                                NativeInput.PressKey("^v"); // Ctrl+V di jendela yang sedang fokus
+                                return true;
+                            });
+                            _onActivity();
+                            _log($"tempel teks ({text.Length} karakter)");
+                            return Ok();
+                        }
+                        case "/focus":
+                        {
+                            string query = GetString(root, "title", "");
+                            if (string.IsNullOrWhiteSpace(query))
+                                return Response.Json("{\"ok\":false,\"error\":\"title kosong\"}", 400);
+                            var wins = OnUi(NativeInput.ListWindows);
+                            NativeInput.WindowInfo match = null;
+                            foreach (var w in wins)
+                            {
+                                if (w.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    match = w;
+                                    break;
+                                }
+                            }
+                            if (match == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan\"}", 404);
+                            var m = match;
+                            OnUi(() => { NativeInput.FocusWindow(m.Handle); return true; });
+                            _onActivity();
+                            _log("fokus ke jendela: " + m.Title);
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["focused"] = m.Title,
+                            });
+                        }
+                        case "/shell":
+                            return Shell(root);
+                        case "/shell/restart":
+                            lock (_shellLock)
+                            {
+                                KillShell();
+                                EnsureShell();
+                            }
+                            _onActivity();
+                            _log("shell dimulai ulang atas permintaan");
+                            return Ok();
                         case "/exec":
                             return Exec(root);
                         case "/open":
@@ -446,6 +582,193 @@ public sealed class AgentServer
         return Ok();
     }
 
+    // ---------- Shell persisten (v2.1) ----------
+
+    /// <summary>
+    /// Satu proses powershell.exe (-NoProfile -NoExit) yang hidup terus:
+    /// folder kerja & variabel bertahan antar panggilan /shell — beda
+    /// dengan /exec yang selalu proses baru. Dibuat malas (lazy) saat
+    /// pertama dipakai, dan dibuat ulang bila prosesnya mati.
+    /// Keluaran stdout+stderr dipompa terus ke satu buffer bersama;
+    /// tiap perintah ditutup baris penanda (sentinel) yang memuat
+    /// $LASTEXITCODE, jadi pemanggil tahu kapan perintah selesai.
+    /// </summary>
+    private void EnsureShell()
+    {
+        if (_shell != null && !_shell.Proc.HasExited) return;
+        KillShell();
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = "-NoProfile -NoExit",
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        var proc = Process.Start(psi);
+        if (proc == null) throw new InvalidOperationException("powershell.exe gagal dimulai");
+        var session = new ShellSession { Proc = proc, In = proc.StandardInput };
+        _shell = session;
+        _ = Task.Run(() => PumpLines(proc.StandardOutput, session));
+        _ = Task.Run(() => PumpLines(proc.StandardError, session));
+        try
+        {
+            // Pastikan $LASTEXITCODE selalu angka sejak awal sesi
+            // (perintah cmdlet tidak mengubahnya, perintah native iya).
+            session.In.WriteLine("$LASTEXITCODE = 0");
+            session.In.Flush();
+        }
+        catch { /* abaikan — panggilan berikutnya akan gagal tulis & ditangani */ }
+    }
+
+    private static void PumpLines(StreamReader reader, ShellSession session)
+    {
+        try
+        {
+            string line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                lock (session.BufferLock)
+                    session.Buffer.Append(line).Append('\n');
+            }
+        }
+        catch { /* proses mati dsb. — pompa berhenti */ }
+    }
+
+    private void KillShell()
+    {
+        try { _shell?.Proc.Kill(true); } catch { /* abaikan */ }
+        try { _shell?.Proc.Dispose(); } catch { /* abaikan */ }
+        _shell = null;
+    }
+
+    private Response Shell(JsonElement root)
+    {
+        string command = GetString(root, "command", "");
+        if (string.IsNullOrWhiteSpace(command))
+            return Response.Json("{\"ok\":false,\"error\":\"command kosong\"}", 400);
+
+        int timeoutMs = GetInt(root, "timeoutMs", DefaultExecTimeoutMs);
+        if (timeoutMs < 1000) timeoutMs = 1000;
+        if (timeoutMs > MaxExecTimeoutMs) timeoutMs = MaxExecTimeoutMs;
+
+        _onActivity();
+        // Log cukup ±80 karakter pertama perintah — keluaran TIDAK dicatat.
+        _log("shell: " + (command.Length > 80 ? command.Substring(0, 80) + "…" : command));
+
+        lock (_shellLock)
+        {
+            EnsureShell();
+            var session = _shell;
+            int seq = ++_shellSeq;
+            string marker = "__JEMBATAN_END_" + seq + "__";
+
+            int start;
+            lock (session.BufferLock) { start = session.Buffer.Length; }
+
+            try
+            {
+                session.In.WriteLine(command);
+                session.In.WriteLine("echo \"" + marker + "$($LASTEXITCODE)\"");
+                session.In.Flush();
+            }
+            catch
+            {
+                // Pipa tulis putus = shell mati di tengah jalan; buat ulang
+                // supaya panggilan berikutnya mulai dari shell yang bersih.
+                KillShell();
+                EnsureShell();
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = false,
+                    ["error"] = "shell mati saat perintah dikirim; shell baru sudah dimulai",
+                    ["restarted"] = true,
+                }, 500);
+            }
+
+            var sw = Stopwatch.StartNew();
+            string raw = "";
+            int markerIdx = -1;
+            int exitCode = 0;
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                lock (session.BufferLock)
+                    raw = session.Buffer.ToString(start, session.Buffer.Length - start);
+                // Kejadian TERAKHIR yang dicari: baris sentinel yang mungkin
+                // tergema sebagai teks perintah mengandung teks yang sama.
+                markerIdx = raw.LastIndexOf(marker, StringComparison.Ordinal);
+                if (markerIdx >= 0)
+                {
+                    int p = markerIdx + marker.Length;
+                    int q = p;
+                    while (q < raw.Length && (char.IsDigit(raw[q]) || raw[q] == '-')) q++;
+                    if (!int.TryParse(raw.Substring(p, q - p), out exitCode)) exitCode = 0;
+                    break;
+                }
+                if (session.Proc.HasExited) break;
+                Thread.Sleep(25);
+            }
+
+            if (markerIdx < 0)
+            {
+                // Timeout: penanda tak pernah tiba (perintah menggantung /
+                // menunggu masukan). Bunuh + buat ulang shell agar panggilan
+                // berikutnya bersih; keluaran sebagian tetap dikembalikan.
+                string partial = CleanShellOutput(raw, command);
+                KillShell();
+                EnsureShell();
+                _log("shell timeout — shell dimulai ulang");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = false,
+                    ["timeout"] = true,
+                    ["restarted"] = true,
+                    ["stdout"] = partial,
+                });
+            }
+
+            string stdout = CleanShellOutput(raw.Substring(0, markerIdx), command);
+            return Response.JsonObject(new Dictionary<string, object>
+            {
+                ["ok"] = true,
+                ["exitCode"] = exitCode,
+                ["stdout"] = stdout,
+            });
+        }
+    }
+
+    /// <summary>
+    /// Bersihkan keluaran shell mentah: buang gema baris perintah yang
+    /// dikirim, buang awalan prompt "PS C:\...&gt; " bila ada, dan buang
+    /// baris yang mengandung teks sentinel. PowerShell non-interaktif
+    /// biasanya tidak menggemakan masukan — ini lapisan pengaman saja.
+    /// </summary>
+    private static string CleanShellOutput(string raw, string command)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+        string text = raw.Replace("\r\n", "\n").Replace("\r", "\n");
+        var kept = new List<string>();
+        foreach (var line in text.Split('\n'))
+        {
+            if (line.Contains("__JEMBATAN_END_")) continue; // sisa baris sentinel
+            string l = line;
+            if (l.StartsWith("PS ", StringComparison.Ordinal))
+            {
+                int gt = l.IndexOf('>');
+                if (gt >= 0 && gt < 80) l = l.Substring(gt + 1).TrimStart();
+            }
+            kept.Add(l);
+        }
+        if (kept.Count > 0 && kept[0].Trim() == command.Trim())
+            kept.RemoveAt(0);
+        return string.Join("\n", kept).Trim('\n');
+    }
+
     // ---------- Endpoint streaming v2 ----------
 
     private void HandleFileDownload(NetworkStream stream, RequestHead head)
@@ -534,10 +857,13 @@ public sealed class AgentServer
         }));
     }
 
-    private void HandleStream(NetworkStream stream)
+    private void HandleStream(NetworkStream stream, RequestHead head)
     {
         _onActivity();
-        _log("stream dimulai");
+        int maxWidth = ParseClamp(GetQueryParam(head.Query, "w"), 1280, 320, 1920);
+        int quality = ParseClamp(GetQueryParam(head.Query, "q"), 60, 30, 90);
+        int fps = ParseClamp(GetQueryParam(head.Query, "fps"), 10, 1, 15);
+        _log($"stream dimulai (lebar {maxWidth}, kualitas {quality}, target {fps} fps)");
         try
         {
             // WriteTimeout pendek: klien yang hilang terdeteksi dari gagal tulis.
@@ -550,17 +876,45 @@ public sealed class AgentServer
             stream.Write(header, 0, header.Length);
 
             var crlf = new byte[] { 13, 10 };
+            int frameMs = 1000 / fps;
+            byte[] lastHash = null;
+            long lastSentMs = -1000; // frame pertama selalu terkirim
+            var clock = Stopwatch.StartNew();
             while (IsRunning)
             {
-                var jpeg = OnUi(CaptureJpegFrame);
-                var partHead = Encoding.ASCII.GetBytes(
-                    "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
-                    jpeg.Length + "\r\n\r\n");
-                stream.Write(partHead, 0, partHead.Length);
-                stream.Write(jpeg, 0, jpeg.Length);
-                stream.Write(crlf, 0, crlf.Length);
-                stream.Flush();
-                Thread.Sleep(150);
+                long frameStart = clock.ElapsedMilliseconds;
+
+                // v2.1: tangkap + encode LANGSUNG di thread pekerja stream ini.
+                // Graphics.CopyFromScreen (BitBlt) tidak butuh thread UI —
+                // v2 meng-Invoke per frame ke thread UI dan di dunia nyata
+                // hanya mencapai ±1–2 fps; sekarang thread UI bebas untuk
+                // klik/ketik yang datang bersamaan.
+                using (var bmp = CaptureScaledBitmap(maxWidth))
+                {
+                    var hash = HashBitmap(bmp);
+                    bool unchanged = lastHash != null && hash.SequenceEqual(lastHash);
+                    // Frame identik tidak dikirim — kecuali sudah ±1 detik
+                    // diam, kirim satu frame penjaga (keepalive).
+                    bool keepaliveDue = frameStart - lastSentMs >= 1000;
+                    if (!unchanged || keepaliveDue)
+                    {
+                        var jpeg = EncodeJpeg(bmp, quality);
+                        var partHead = Encoding.ASCII.GetBytes(
+                            "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
+                            jpeg.Length + "\r\n\r\n");
+                        stream.Write(partHead, 0, partHead.Length);
+                        stream.Write(jpeg, 0, jpeg.Length);
+                        stream.Write(crlf, 0, crlf.Length);
+                        stream.Flush();
+                        lastHash = hash;
+                        lastSentMs = clock.ElapsedMilliseconds;
+                    }
+                }
+
+                // Kejar target fps: tidur hanya sisa waktu bingkai setelah
+                // waktu tangkap+encode diperhitungkan.
+                int sleep = (int)(frameMs - (clock.ElapsedMilliseconds - frameStart));
+                if (sleep > 0) Thread.Sleep(sleep);
             }
         }
         catch
@@ -573,38 +927,62 @@ public sealed class AgentServer
         }
     }
 
-    private static byte[] CaptureJpegFrame()
+    /// <summary>
+    /// Tangkap layar utama dan kecilkan ke lebar maks (bila perlu).
+    /// Aman dipanggil dari thread mana pun. Pemanggil membuang bitmap-nya.
+    /// </summary>
+    private static Bitmap CaptureScaledBitmap(int maxWidth)
     {
         var bounds = Screen.PrimaryScreen != null
             ? Screen.PrimaryScreen.Bounds
             : new Rectangle(0, 0, 1280, 720);
-        using (var bmp = new Bitmap(bounds.Width, bounds.Height))
-        {
-            using (var g = Graphics.FromImage(bmp))
-                g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+        var bmp = new Bitmap(bounds.Width, bounds.Height);
+        using (var g = Graphics.FromImage(bmp))
+            g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+        if (bmp.Width <= maxWidth)
+            return bmp;
+        int w = maxWidth;
+        int h = (int)(bmp.Height * (maxWidth / (double)bmp.Width));
+        var scaled = new Bitmap(bmp, new Size(w, h));
+        bmp.Dispose();
+        return scaled;
+    }
 
-            int w = bmp.Width, h = bmp.Height;
-            if (w > 1280)
+    /// <summary>Hash MD5 piksel bitmap — cukup murah untuk deteksi "frame tidak berubah".</summary>
+    private static byte[] HashBitmap(Bitmap bmp)
+    {
+        var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+        var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            int len = Math.Abs(data.Stride) * bmp.Height;
+            var buf = new byte[len];
+            Marshal.Copy(data.Scan0, buf, 0, len);
+            using (var md5 = MD5.Create())
+                return md5.ComputeHash(buf);
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+    }
+
+    private static byte[] EncodeJpeg(Bitmap bmp, long quality)
+    {
+        using (var ms = new MemoryStream())
+        {
+            var encoder = GetJpegEncoder();
+            if (encoder != null)
             {
-                h = (int)(h * (1280.0 / w));
-                w = 1280;
+                var ep = new EncoderParameters(1);
+                ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
+                bmp.Save(ms, encoder, ep);
             }
-            using (var scaled = new Bitmap(bmp, new Size(w, h)))
-            using (var ms = new MemoryStream())
+            else
             {
-                var encoder = GetJpegEncoder();
-                if (encoder != null)
-                {
-                    var ep = new EncoderParameters(1);
-                    ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 60L);
-                    scaled.Save(ms, encoder, ep);
-                }
-                else
-                {
-                    scaled.Save(ms, ImageFormat.Jpeg);
-                }
-                return ms.ToArray();
+                bmp.Save(ms, ImageFormat.Jpeg);
             }
+            return ms.ToArray();
         }
     }
 
@@ -636,6 +1014,23 @@ public sealed class AgentServer
     }
 
     // ---------- Pembantu ----------
+
+    /// <summary>Isi clipboard (thread UI). Teks kosong = clipboard dibersihkan.</summary>
+    private static void SetClipboardText(string text)
+    {
+        // Clipboard.SetText menolak string kosong — pakai Clear() untuk itu.
+        if (string.IsNullOrEmpty(text)) Clipboard.Clear();
+        else Clipboard.SetText(text);
+    }
+
+    /// <summary>Parse angka query string lalu jepit ke rentang [min, max].</summary>
+    private static int ParseClamp(string raw, int fallback, int min, int max)
+    {
+        if (!int.TryParse(raw, out int v)) v = fallback;
+        if (v < min) v = min;
+        if (v > max) v = max;
+        return v;
+    }
 
     private T OnUi<T>(Func<T> func)
     {
