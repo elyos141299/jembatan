@@ -15,14 +15,21 @@ namespace Jembatan;
 /// Mode Administrator (v2.3): bila AKTIF, Jembatan berjalan dengan
 /// hak administrator — saat dibuka manual ia menaikkan haknya sendiri
 /// (satu prompt UAC), dan jalan otomatisnya memakai Tugas Terjadwal
-/// "Jembatan" berhak tertinggi sehingga saat login Windows ia langsung
-/// admin TANPA prompt. Bila nilai registry belum ada, bawaannya AKTIF —
-/// memang itu yang diperintahkan user secara eksplisit.
+/// "MuseLink" berhak tertinggi sehingga saat login Windows ia
+/// langsung admin TANPA prompt. Bila nilai registry belum ada,
+/// bawaannya AKTIF — memang itu yang diperintahkan user secara
+/// eksplisit.
+///
+/// UserStopped (v2.3.2): bendera berhenti-sengaja untuk penjaga
+/// anti-crash (watchdog). Dipasang HANYA saat user keluar lewat menu
+/// tray → Keluar; penjaga membaca bendera ini dan tidak menyalakan
+/// ulang aplikasi. Setiap jalan yang sehat membersihkannya.
 /// </summary>
 internal static class Settings
 {
     private const string KeyPath = @"Software\Jembatan";
     private const string AdminModeValueName = "AdminMode";
+    private const string UserStoppedValueName = "UserStopped";
 
     /// <summary>Mode Administrator menurut registry; belum ada nilai = AKTIF.</summary>
     public static bool AdminMode
@@ -61,6 +68,39 @@ internal static class Settings
                     return key?.GetValue(AdminModeValueName) != null;
             }
             catch { return false; }
+        }
+    }
+
+    /// <summary>
+    /// Bendera berhenti-sengaja (DWORD "UserStopped", v2.3.2). True
+    /// HANYA bila user keluar lewat menu tray → Keluar; tugas penjaga
+    /// "MuseLink Watchdog" memeriksanya sebelum menyalakan ulang
+    /// aplikasi. Penutupan oleh Windows shutdown / Task Manager tidak
+    /// memasang bendera ini, jadi penjaga tetap menyalakan ulang.
+    /// Aplikasi membersihkannya (0) setiap berhasil dimulai.
+    /// </summary>
+    public static bool UserStopped
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, false))
+                {
+                    if (key?.GetValue(UserStoppedValueName) is int v)
+                        return v != 0;
+                }
+            }
+            catch { /* abaikan — pakai bawaan */ }
+            return false;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, true)
+                              ?? Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(UserStoppedValueName, value ? 1 : 0, RegistryValueKind.DWord);
+            }
         }
     }
 

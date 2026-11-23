@@ -1,12 +1,14 @@
-; Installer Jembatan — pola sama seperti wPlay:
-; per-user (tanpa admin), Inno Setup 6.
+; Installer MuseLink (nama internal: Jembatan) — pola sama
+; seperti wPlay: per-user (tanpa admin), Inno Setup 6.
 ; File Jembatan.exe diambil dari folder publish\ hasil dotnet publish.
 
 [Setup]
 AppId={{7D1C9A42-5B3E-4F08-9E6A-2C4D8B0F5A71}
-AppName=Jembatan
-AppVersion=2.3.1
+AppName=MuseLink
+AppVersion=2.3.3
 AppPublisher=Muse
+; DefaultDirName disematkan eksplisit ke folder lama {autopf}\Jembatan:
+; nama tampil berubah jadi "MuseLink", folder pasang TIDAK ikut pindah.
 DefaultDirName={autopf}\Jembatan
 DefaultGroupName=Jembatan
 DisableProgramGroupPage=yes
@@ -25,8 +27,8 @@ Name: "desktopicon"; Description: "Buat pintasan di Desktop"; GroupDescription: 
 Source: "..\publish\Jembatan.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Jembatan"; Filename: "{app}\Jembatan.exe"
-Name: "{autodesktop}\Jembatan"; Filename: "{app}\Jembatan.exe"; Tasks: desktopicon
+Name: "{group}\MuseLink"; Filename: "{app}\Jembatan.exe"
+Name: "{autodesktop}\MuseLink"; Filename: "{app}\Jembatan.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Jembatan.exe"; Description: "Buka Jembatan sekarang"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Jembatan.exe"; Description: "Buka MuseLink sekarang"; Flags: nowait postinstall skipifsilent

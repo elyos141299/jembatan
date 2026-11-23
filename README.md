@@ -1,9 +1,15 @@
-# Jembatan v2.3 — catatan pengembang
+# MuseLink v2.3.3 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
 saklar: jendela terbuka + status tersambung → Muse bisa bekerja;
 jendela ditutup / tombol PUTUSKAN → akses berhenti total.
+
+Sejak v2.3.3 nama tampil aplikasi adalah **MuseLink** (v2.3.2 sempat
+"Muse Windows"); nama internalnya tetap **jembatan** — berkas
+`Jembatan.exe`, folder pasang `{autopf}\Jembatan`, kunci registry
+`HKCU\Software\Jembatan`, nama repo, dan field `app` di `/ping`
+tidak berubah.
 
 Panduan untuk user ada di `../README-INSTAL.md`.
 
@@ -12,8 +18,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | Berkas | Isi |
 |---|---|
 | `Program.cs` | Titik masuk aplikasi (STAThread): penjaga satu instans (mutex) + kenaikan hak sendiri bila Mode Administrator aktif. |
-| `Settings.cs` | Pengaturan di `HKCU\Software\Jembatan` (Mode Administrator) + pembantu hak administrator (cek elevasi, relaunch `runas`). |
-| `MainForm.cs` | Jendela utama: status, log aktivitas real-time, tombol PUTUSKAN/Sambung lagi, checkbox jalan otomatis & Mode Administrator, penanda mode, dan panel chat Muse (WebView2, sejak v2.2). |
+| `Settings.cs` | Pengaturan di `HKCU\Software\Jembatan` (Mode Administrator, bendera UserStopped untuk penjaga) + pembantu hak administrator (cek elevasi, relaunch `runas`). |
+| `MainForm.cs` | Jendela utama: status, log aktivitas real-time, tombol PUTUSKAN/Sambung lagi, saklar jalan otomatis & Mode Administrator, penanda mode, panel chat Muse (WebView2, sejak v2.2), system tray (v2.3.1), tugas penjaga anti-crash + log persisten (v2.3.2), tema terang gaya iCloud (v2.3.3). |
+| `UiControls.cs` | Kontrol tampilan gaya iCloud (v2.3.3): `RoundedPanel` (kartu sudut bundar), `ToggleSwitch` (saklar ala iOS), `RoundedButton` (tombol pil), `RoundDot` (titik status). Murni tampilan. |
 | `AgentServer.cs` | Layanan agen HTTP (port 8765) + semua endpoint. |
 | `NativeInput.cs` | Mouse/keyboard: user32 `SetCursorPos`/`mouse_event` + `SendKeys`. |
 | `app.manifest` | Manifest aplikasi: DPI-aware PerMonitorV2 (rujukan dari csproj). |
@@ -24,9 +31,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 
 | Metode & path | Body | Hasil |
 |---|---|---|
-| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3", admin}` — `admin` = hak proses saat ini |
+| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3.3", admin}` — `admin` = hak proses saat ini |
 | `GET /screenshot` | — | PNG layar utama (binary `image/png`) |
-| `GET /sysinfo` | — | `{ok, version:"2.3", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
+| `GET /sysinfo` | — | `{ok, version:"2.3.3", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{title, process}]}` — jendela tingkat atas yang terlihat & berjudul |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
@@ -49,6 +56,90 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.3.3 (dari v2.3.2)
+
+- **Nama tampil final: "MuseLink"** — judul jendela, judul besar di
+  kartu kepala, tooltip & menu ikon tray ("Buka MuseLink"), balon
+  tray, baris log pembuka (`=== MuseLink v2.3.3 dimulai ===`),
+  `AppName` installer, dan nama pintasan Start Menu/Desktop kini
+  "MuseLink". Nama internal tetap **jembatan** (exe, folder pasang,
+  kunci registry, berkas log, field `app` di `/ping`, mutex — semua
+  tidak berubah; AppId installer sama, `DefaultDirName` tetap
+  disematkan ke `{autopf}\Jembatan`).
+- **Migrasi nama tugas & nilai Run (semua generasi)**: tugas login
+  kini **"MuseLink"**, tugas penjaga **"MuseLink Watchdog"**, nilai
+  Run **"MuseLink"**. `SyncAutoStart()`/`SetAutoStart()` menghapus
+  seluruh nama lama — tugas "Jembatan", "Muse Windows",
+  "Muse Windows Watchdog" dan nilai Run "Jembatan", "Muse Windows" —
+  agar tidak ada duplikat dari generasi mana pun.
+- **Tema terang gaya iCloud.com** (murni tampilan, perilaku tidak
+  berubah sama sekali): latar form `#F5F5F7`; blok kepala, area log,
+  dan badan panel chat menjadi **kartu putih bersudut bundar 16px**
+  (kontrol baru `RoundedPanel` di `UiControls.cs`, garis tepi
+  `#E3E3E8`, margin luar 12px — garis pemisah 1px v2.3.2 hilang,
+  digantikan jarak antar kartu). Tipografi Segoe UI: judul 15pt
+  tebal, teks utama `#1D1D1F`, teks sekunder `#6E6E73`; log tetap
+  Consolas di atas putih.
+- **Saklar ala iOS** (`ToggleSwitch`) menggantikan kedua checkbox:
+  lintasan 44×26 hijau `#34C759` saat menyala / `#E8E8ED` saat mati,
+  kenop putih 22px; labelnya berdiri sendiri di kanan saklar dan
+  ikut bisa diklik. Semantik `Checked`/`CheckedChanged` sama persis,
+  jadi alur pengaturan (persist + `SyncAutoStart`) tidak berubah.
+- **Tombol pil** (`RoundedButton`, digambar sendiri): "💬 Chat Muse"
+  biru `#0071E3`; tombol bilah alat chat abu muda `#E8E8ED`;
+  PUTUSKAN merah `#FF3B30` sudut 12px tinggi 44px, dan keadaan
+  "Sambung lagi"-nya kini biru aksen (bukan hijau). Titik status
+  menjadi lingkaran 10px (`RoundDot`): oranye menunggu, hijau
+  `#34C759` terhubung, abu mati. Label mode: abu sekunder, atau
+  biru aksen saat Administrator. Label versi 8.5pt abu di pojok
+  kanan bawah kartu kepala. Label galat panel chat: teks kuning
+  tua `#8A6D00` di atas `#FFF4CC`. Bilah judul Windows tetap bawaan
+  (tidak borderless); ikon & tooltip tray tidak berubah.
+
+## Perubahan v2.3.2 (dari v2.3.1)
+
+- **Nama tampil baru: "Muse Windows"** — judul jendela, judul besar
+  di kepala jendela, tooltip & menu ikon tray, `AppName` installer,
+  dan nama pintasan Start Menu/Desktop kini "Muse Windows". Nama
+  internal TIDAK berubah: berkas tetap `Jembatan.exe`, folder pasang
+  tetap `{autopf}\Jembatan` (`DefaultDirName` disematkan eksplisit,
+  AppId installer sama), kunci registry tetap
+  `HKCU\Software\Jembatan`, mutex tetap `JembatanSingleInstance`,
+  field `app` di `/ping` tetap `"jembatan"`.
+- **Penjaga anti-crash (watchdog)**: Tugas Terjadwal **"Muse Windows
+  Watchdog"** berjalan tiap 5 menit (`schtasks /SC MINUTE /MO 5`,
+  hak tertinggi) dengan aksi PowerShell tersembunyi: bila proses
+  `Jembatan` tidak ada, ia menyalakannya lagi — kecuali bendera
+  berhenti-sengaja terpasang. Tugas ini didaftarkan/dihapus di dalam
+  `SyncAutoStart()` dengan syarat yang sama seperti tugas login:
+  jalan otomatis aktif + Mode Administrator diminta + proses sedang
+  admin.
+- **Bendera berhenti-sengaja `UserStopped`** (DWORD di
+  `HKCU\Software\Jembatan`, kelas `Settings`): dipasang (1) HANYA
+  oleh jalan Keluar dari menu tray, dan dibersihkan (0) setiap
+  aplikasi berhasil dimulai. Penutupan oleh Windows shutdown / Task
+  Manager tidak memasangnya — penjaga akan menyalakan ulang
+  aplikasi, sesuai fungsinya.
+- **Migrasi nama tugas & nilai Run**: tugas login kini bernama
+  **"Muse Windows"** (dulu "Jembatan") dan nilai Run kini
+  "Muse Windows"; `SyncAutoStart()` juga menghapus tugas lama
+  bernama "Jembatan" dan nilai Run lama "Jembatan" agar tidak ada
+  duplikat.
+- **Log persisten**: setiap baris log jendela juga ditulis ke
+  `%LOCALAPPDATA%\Jembatan\jembatan.log` (satu baris per entri,
+  format `[HH:mm:ss] pesan` yang sama, dikunci + try/catch menelan
+  galat). Rotasi saat aplikasi dimulai: berkas yang melewati 2 MB
+  diganti nama menjadi `jembatan.log.old`. Setiap jalan dibuka
+  dengan baris pemisah `=== Muse Windows v2.3.2 dimulai ===`.
+- **Perapihan tampilan jendela** (tanpa mengubah perilaku): padding
+  luar kepala diseragamkan 12px dan semua elemen kiri rata pada satu
+  garis vertikal dengan jarak antarbaris yang rata; kedua checkbox
+  kini berlebar tetap 252px sehingga teksnya tidak lagi terpotong
+  saat panel chat terbuka (panel kiri ±380px); garis pemisah 1px di
+  antara kepala–log dan log–baris PUTUSKAN; area log dibungkus panel
+  ber-padding agar teks punya bantalan dalam; tombol PUTUSKAN pas
+  44px; ritme padding panel chat disamakan dengan panel kiri.
 
 ## Perubahan v2.3 (dari v2.2)
 

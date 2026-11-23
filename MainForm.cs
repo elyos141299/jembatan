@@ -12,40 +12,51 @@ using Microsoft.Win32;
 namespace Jembatan;
 
 /// <summary>
-/// Jendela utama Jembatan. Selama jendela ini terbuka dan status
+/// Jendela utama MuseLink (nama internal tetap "Jembatan").
+/// Selama jendela ini terbuka dan status
 /// tersambung, layanan agen (AgentServer) mendengarkan di port 8765
 /// dan Muse bisa bekerja di PC ini lewat jaringan Tailscale user.
 /// Menekan PUTUSKAN menghentikan akses seketika. Tombol X hanya
 /// menyembunyikan jendela ke system tray (layanan tetap berjalan);
 /// keluar total lewat menu tray → Keluar.
 /// Semua aktivitas Muse dicatat di log jendela ini, real-time.
+/// Tampilan sejak v2.3.3: tema TERANG gaya iCloud — kartu putih
+/// bersudut bundar di atas latar #F5F5F7, saklar ala iOS pengganti
+/// checkbox, tombol pil (kontrolnya di UiControls.cs). Murni
+/// tampilan; perilaku sama persis dengan v2.3.2.
 /// </summary>
 public sealed class MainForm : Form
 {
-    private static readonly Color Bg = Color.FromArgb(13, 17, 23);
-    private static readonly Color Panel = Color.FromArgb(22, 27, 34);
-    private static readonly Color Ink = Color.FromArgb(230, 237, 243);
-    private static readonly Color InkDim = Color.FromArgb(139, 148, 158);
-    private static readonly Color Green = Color.FromArgb(46, 160, 67);
-    private static readonly Color Amber = Color.FromArgb(210, 153, 34);
-    private static readonly Color Red = Color.FromArgb(185, 55, 45);
-    private static readonly Color Gray = Color.FromArgb(110, 118, 129);
+    // Palet terang gaya iCloud (v2.3.3).
+    private static readonly Color Bg = Color.FromArgb(245, 245, 247);
+    private static readonly Color Card = Color.FromArgb(255, 255, 255);
+    private static readonly Color Ink = Color.FromArgb(29, 29, 31);
+    private static readonly Color InkDim = Color.FromArgb(110, 110, 115);
+    private static readonly Color Hairline = Color.FromArgb(227, 227, 232);
+    private static readonly Color Accent = Color.FromArgb(0, 113, 227);
+    private static readonly Color Green = Color.FromArgb(52, 199, 89);
+    private static readonly Color Red = Color.FromArgb(255, 59, 48);
+    private static readonly Color LightFill = Color.FromArgb(232, 232, 237);
+    private static readonly Color DotWaiting = Color.FromArgb(255, 159, 10);
+    private static readonly Color DotStopped = Color.FromArgb(174, 174, 178);
+    private static readonly Color ErrorBg = Color.FromArgb(255, 244, 204);
+    private static readonly Color ErrorInk = Color.FromArgb(138, 109, 0);
 
     private readonly AgentServer _server;
-    private Panel _statusDot;
+    private RoundDot _statusDot;
     private Label _statusLabel;
     private RichTextBox _logBox;
-    private Button _toggleButton;
-    private CheckBox _autoStartCheck;
-    private CheckBox _adminCheck;
+    private RoundedButton _toggleButton;
+    private ToggleSwitch _autoStartCheck;
+    private ToggleSwitch _adminCheck;
     private Label _modeLabel;
     private bool _claudeSeen;
 
     // Panel chat Muse (v2.2): SplitContainer membagi jendela —
     // Panel1 (kiri) = tampilan lama, Panel2 (kanan) = chat WebView2.
     private SplitContainer _split;
-    private Button _chatButton;
-    private Panel _chatBody;
+    private RoundedButton _chatButton;
+    private RoundedPanel _chatBody;
     private Label _chatErrorLabel;
     private WebView2 _webView;
     private bool _chatOpen;
@@ -61,7 +72,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Jembatan — Akses Muse";
+        Text = "MuseLink";
         Width = 660;
         Height = 540;
         MinimumSize = new Size(520, 420);
@@ -78,12 +89,18 @@ public sealed class MainForm : Form
 
         Load += (s, e) =>
         {
+            RotateLogFileIfNeeded();
+            Log("=== MuseLink v2.3.3 dimulai ===");
             InitStartOptions();
             try
             {
                 _server.Start();
                 SetWaiting();
-                Log("Jembatan berjalan di port " + AgentServer.Port + ".");
+                // Jalan sehat (bukan berhenti-sengaja): bersihkan
+                // bendera UserStopped agar penjaga (watchdog) kembali
+                // melindungi proses ini.
+                try { Settings.UserStopped = false; } catch { /* abaikan */ }
+                Log("MuseLink berjalan di port " + AgentServer.Port + ".");
                 Log("Menunggu Muse terhubung lewat Tailscale…");
             }
             catch (Exception ex)
@@ -117,7 +134,7 @@ public sealed class MainForm : Form
         if (icon == null) icon = SystemIcons.Application;
 
         var menu = new ContextMenuStrip();
-        var openItem = new ToolStripMenuItem("Buka Jembatan");
+        var openItem = new ToolStripMenuItem("Buka MuseLink");
         openItem.Click += (s, e) => ShowFromTray();
         var exitItem = new ToolStripMenuItem("Keluar");
         exitItem.Click += (s, e) => ExitFromTray();
@@ -128,7 +145,7 @@ public sealed class MainForm : Form
         _trayIcon = new NotifyIcon
         {
             Icon = icon,
-            Text = "Jembatan — Akses Muse",
+            Text = "MuseLink",
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -145,8 +162,12 @@ public sealed class MainForm : Form
     // Satu-satunya jalan keluar sungguhan dari dalam aplikasi:
     // tandai dulu, buang ikon tray, baru tutup — OnMainFormClosing
     // melihat tanda ini dan membiarkan jendela benar-benar tertutup.
+    // Ini juga SATU-SATUNYA jalan yang memasang bendera UserStopped:
+    // berhenti di sini memang sengaja, jadi penjaga (watchdog) tidak
+    // boleh menyalakan ulang aplikasi.
     private void ExitFromTray()
     {
+        try { Settings.UserStopped = true; } catch { /* abaikan */ }
         _exitRequested = true;
         if (_trayIcon != null)
         {
@@ -158,7 +179,7 @@ public sealed class MainForm : Form
     }
 
     // Tombol X (dan penutupan oleh user lainnya) TIDAK mematikan
-    // Jembatan: jendela disembunyikan ke tray dan layanan agen terus
+    // MuseLink: jendela disembunyikan ke tray dan layanan agen terus
     // berjalan. Penutupan bukan dari user (Windows shutdown, Task
     // Manager) serta jalan Keluar dari tray dibiarkan lewat.
     private void OnMainFormClosing(object sender, FormClosingEventArgs e)
@@ -168,13 +189,13 @@ public sealed class MainForm : Form
 
         e.Cancel = true;
         Hide();
-        Log("Jendela disembunyikan ke system tray — Jembatan tetap berjalan.");
+        Log("Jendela disembunyikan ke system tray — MuseLink tetap berjalan.");
         if (!_trayTipShown)
         {
             _trayTipShown = true;
             _trayIcon?.ShowBalloonTip(5000,
-                "Jembatan tetap berjalan",
-                "Jembatan tetap aktif di system tray. Klik ganda ikon tray untuk membuka lagi, atau klik kanan lalu pilih Keluar untuk berhenti total.",
+                "MuseLink tetap berjalan",
+                "MuseLink tetap aktif di system tray. Klik ganda ikon tray untuk membuka lagi, atau klik kanan lalu pilih Keluar untuk berhenti total.",
                 ToolTipIcon.Info);
         }
     }
@@ -198,171 +219,231 @@ public sealed class MainForm : Form
         };
         Controls.Add(_split);
 
-        // Log di tengah (Dock Fill) ditambahkan PERTAMA agar mengisi sisa ruang.
+        // Panel kiri dibungkus panel luar ber-padding 12px (v2.3.3):
+        // kartu-kartu putih melayang di atas latar #F5F5F7 dengan
+        // jarak tepi dan jarak antar kartu yang seragam.
+        var leftRoot = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Bg,
+            Padding = new Padding(12),
+        };
+        _split.Panel1.Controls.Add(leftRoot);
+
+        // Kartu log di tengah (Dock Fill) ditambahkan PERTAMA agar
+        // mengisi sisa ruang. Kotak log tinggal langsung di dalam
+        // kartu dengan padding kartu sebagai bantalan teksnya.
         _logBox = new RichTextBox
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
             BorderStyle = BorderStyle.None,
-            BackColor = Panel,
+            BackColor = Card,
             ForeColor = Ink,
             Font = new Font("Consolas", 9.5f),
             DetectUrls = false,
         };
-        _split.Panel1.Controls.Add(_logBox);
+        var logCard = new RoundedPanel
+        {
+            Dock = DockStyle.Fill,
+            FillColor = Card,
+            BorderColor = Hairline,
+            CornerRadius = 16,
+            Padding = new Padding(12, 10, 12, 10),
+        };
+        logCard.Controls.Add(_logBox);
+        leftRoot.Controls.Add(logCard);
 
-        // Kepala jendela: judul + status + alamat.
-        var header = new Panel
+        // Baris tombol PUTUSKAN / Sambung lagi di bawah kartu log:
+        // panel 56px (jarak 12px di atas tombol 44px).
+        var bottom = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 56,
+            BackColor = Bg,
+            Padding = new Padding(0, 12, 0, 0),
+        };
+        _toggleButton = new RoundedButton
+        {
+            Dock = DockStyle.Fill,
+            Text = "PUTUSKAN",
+            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+            BackColor = Red,
+            ForeColor = Color.White,
+            CornerRadius = 12,
+        };
+        _toggleButton.Click += ToggleClicked;
+        bottom.Controls.Add(_toggleButton);
+        leftRoot.Controls.Add(bottom);
+
+        // Kartu kepala: judul + status + alamat + dua saklar + label
+        // mode. Semua elemen kiri rata di garis x=16 (padding dalam
+        // kartu) dengan jarak vertikal antarbaris yang rata; baris
+        // saklar memakai lebar kartu penuh (tidak berebut ruang
+        // dengan wadah kanan), jadi teks labelnya muat utuh juga
+        // saat panel kiri menyempit ke ±380px (chat terbuka).
+        var header = new RoundedPanel
         {
             Dock = DockStyle.Top,
-            Height = 190,
-            BackColor = Bg,
-            Padding = new Padding(14, 10, 14, 6),
+            Height = 250,
+            FillColor = Card,
+            BorderColor = Hairline,
+            CornerRadius = 16,
+            Padding = new Padding(16),
         };
         var title = new Label
         {
-            Text = "Jembatan — Akses Muse",
+            Text = "MuseLink",
             Font = new Font("Segoe UI", 15f, FontStyle.Bold),
             ForeColor = Ink,
+            BackColor = Card,
             AutoSize = true,
-            Location = new Point(14, 10),
+            Location = new Point(16, 14),
         };
         header.Controls.Add(title);
 
-        _statusDot = new Panel
+        _statusDot = new RoundDot
         {
-            Size = new Size(12, 12),
+            Size = new Size(10, 10),
             Location = new Point(16, 55),
-            BackColor = Amber,
+            BackColor = Card,
+            DotColor = DotWaiting,
         };
         header.Controls.Add(_statusDot);
 
         _statusLabel = new Label
         {
             Text = "Menunggu koneksi",
-            Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
+            Font = new Font("Segoe UI", 10f, FontStyle.Bold),
             ForeColor = Ink,
+            BackColor = Card,
             AutoSize = true,
-            Location = new Point(36, 50),
+            Location = new Point(34, 49),
         };
         header.Controls.Add(_statusLabel);
 
-        // MaximumSize membuat teks panjang ini membungkus (wrap) dua
-        // baris saat panel kiri menyempit ke ±380px (chat terbuka).
+        // MaximumSize membuat teks panjang ini membungkus (wrap) saat
+        // panel kiri menyempit (chat terbuka) — tingginya sudah
+        // dihitung dalam tinggi kartu.
         var addr = new Label
         {
             Text = "Port " + AgentServer.Port + " • Hanya bisa dijangkau lewat jaringan Tailscale kamu — tidak terbuka ke internet.",
+            Font = new Font("Segoe UI", 9f),
             ForeColor = InkDim,
+            BackColor = Card,
             AutoSize = true,
-            MaximumSize = new Size(352, 0),
-            Location = new Point(14, 80),
+            MaximumSize = new Size(330, 0),
+            Location = new Point(16, 78),
         };
         header.Controls.Add(addr);
 
-        // Wadah sisi kanan kepala (perbaikan v2.3.1): panel ini di-Dock
-        // ke tepi kanan kepala sehingga selalu menempel di kanan pada
-        // lebar Panel1 berapa pun (660 tertutup, ±380 chat terbuka).
-        // Dulu tombol chat & label versi memakai Anchor=Right dengan
-        // posisi absolut yang dihitung terhadap lebar awal panel kepala
-        // (200px bawaan konstruksi) — WinForms mengunci jarak tepi kanan
-        // terhadap lebar awal itu, jadi saat kepala melebar ke ukuran
-        // sebenarnya kedua kontrol terdorong ratusan piksel keluar tepi
-        // kanan dan tidak pernah terlihat. Di dalam wadah ter-Dock ini
-        // cukup posisi kiri-atas biasa.
+        // Wadah sisi kanan kepala (perbaikan v2.3.1, dipertahankan):
+        // panel ini di-Dock ke tepi kanan kartu sehingga selalu
+        // menempel di kanan pada lebar Panel1 berapa pun. Di dalam
+        // wadah ter-Dock ini cukup posisi kiri-atas biasa — jangan
+        // kembali ke Anchor=Right pada panel lebar (itu bug v2.3.0:
+        // jarak tepi kanan terkunci terhadap lebar awal 200px dan
+        // kontrolnya terlempar keluar layar).
         var headerRight = new Panel
         {
             Dock = DockStyle.Right,
-            Width = 122,
-            BackColor = Bg,
+            Width = 116,
+            BackColor = Card,
         };
         header.Controls.Add(headerRight);
 
+        // Label versi: kecil abu-abu, rata kanan, di pojok kanan
+        // bawah kartu kepala. Tinggi wadah kanan pasti (250 kartu −
+        // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.3.1",
+            Text = "v2.3.3",
+            Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
-            AutoSize = true,
+            BackColor = Card,
+            AutoSize = false,
+            Size = new Size(112, 22),
             TextAlign = ContentAlignment.MiddleRight,
-            Location = new Point(80, 164),
+            Location = new Point(2, 196),
         };
         headerRight.Controls.Add(version);
 
-        // Tombol buka/tutup panel chat Muse (v2.2) — pojok kanan atas.
-        _chatButton = new Button
+        // Tombol buka/tutup panel chat Muse (v2.2) — pil biru di
+        // pojok kanan atas, sejajar garis judul di kiri.
+        _chatButton = new RoundedButton
         {
             Text = "💬 Chat Muse",
             Font = new Font("Segoe UI", 9.5f),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Panel,
-            ForeColor = Ink,
+            BackColor = Accent,
+            ForeColor = Color.White,
+            CornerRadius = 15,
             Size = new Size(108, 30),
-            Location = new Point(7, 9),
+            Location = new Point(4, 0),
         };
-        _chatButton.FlatAppearance.BorderSize = 0;
         _chatButton.Click += ChatToggleClicked;
         headerRight.Controls.Add(_chatButton);
 
-        // Jalan otomatis saat Windows menyala (v2.1) — status awalnya
-        // diisi InitStartOptions() saat jendela dimuat; handler perubahan
-        // dipasang di sana juga agar pengisian awal tidak menulis registry.
-        _autoStartCheck = new CheckBox
+        // Jalan otomatis saat Windows menyala (v2.1) — sejak v2.3.3
+        // berupa saklar ala iOS + label di kanannya. Status awalnya
+        // diisi InitStartOptions() saat jendela dimuat; handler
+        // perubahan dipasang di sana juga agar pengisian awal tidak
+        // menulis registry. Mengklik labelnya ikut membalik saklar
+        // (perilaku teks checkbox lama).
+        _autoStartCheck = new ToggleSwitch
         {
-            Text = "Jalan otomatis saat Windows menyala",
-            ForeColor = Ink,
-            BackColor = Bg,
-            AutoSize = true,
-            Location = new Point(14, 116),
+            BackColor = Card,
+            Location = new Point(16, 146),
         };
         header.Controls.Add(_autoStartCheck);
-
-        // Mode Administrator (v2.3) — checkbox kedua, tepat di bawah
-        // jalan otomatis. Status awalnya juga diisi InitStartOptions().
-        _adminCheck = new CheckBox
+        var autoStartLabel = new Label
         {
-            Text = "Mode Administrator (akses penuh)",
+            Text = "Jalan otomatis saat Windows menyala",
+            Font = new Font("Segoe UI", 10f),
             ForeColor = Ink,
-            BackColor = Bg,
+            BackColor = Card,
             AutoSize = true,
-            Location = new Point(14, 140),
+            Location = new Point(70, 149),
+        };
+        autoStartLabel.Click += (s, e) => _autoStartCheck.Checked = !_autoStartCheck.Checked;
+        header.Controls.Add(autoStartLabel);
+
+        // Mode Administrator (v2.3) — saklar kedua, tepat di bawah
+        // jalan otomatis. Status awalnya juga diisi InitStartOptions().
+        _adminCheck = new ToggleSwitch
+        {
+            BackColor = Card,
+            Location = new Point(16, 186),
         };
         header.Controls.Add(_adminCheck);
+        var adminLabel = new Label
+        {
+            Text = "Mode Administrator (akses penuh)",
+            Font = new Font("Segoe UI", 10f),
+            ForeColor = Ink,
+            BackColor = Card,
+            AutoSize = true,
+            Location = new Point(70, 189),
+        };
+        adminLabel.Click += (s, e) => _adminCheck.Checked = !_adminCheck.Checked;
+        header.Controls.Add(adminLabel);
 
         // Penanda level proses INI apa adanya (dari hak sebenarnya,
         // bukan dari pengaturan): hak proses tidak berubah selama
-        // berjalan, jadi teksnya diisi sekali di sini.
+        // berjalan, jadi teksnya diisi sekali di sini. Gayanya
+        // mengikuti tema terang: abu sekunder, atau biru aksen saat
+        // proses ini administrator.
         bool elevatedNow = Settings.IsElevated();
         _modeLabel = new Label
         {
             Text = elevatedNow ? "Mode: Administrator" : "Mode: Pengguna biasa",
-            ForeColor = elevatedNow ? Amber : InkDim,
+            ForeColor = elevatedNow ? Accent : InkDim,
+            BackColor = Card,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(14, 164),
+            Location = new Point(16, 222),
         };
         header.Controls.Add(_modeLabel);
-        _split.Panel1.Controls.Add(header);
-
-        // Tombol besar PUTUSKAN / Sambung lagi di bawah.
-        var bottom = new Panel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 72,
-            BackColor = Bg,
-            Padding = new Padding(12),
-        };
-        _toggleButton = new Button
-        {
-            Dock = DockStyle.Fill,
-            Text = "PUTUSKAN",
-            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Red,
-            ForeColor = Color.White,
-        };
-        _toggleButton.FlatAppearance.BorderSize = 0;
-        _toggleButton.Click += ToggleClicked;
-        bottom.Controls.Add(_toggleButton);
-        _split.Panel1.Controls.Add(bottom);
+        leftRoot.Controls.Add(header);
 
         BuildChatPane();
     }
@@ -380,55 +461,67 @@ public sealed class MainForm : Form
     private const string DesktopChromeUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-    private Button SmallButton(string text)
+    private RoundedButton PillButton(string text)
     {
-        var b = new Button
+        return new RoundedButton
         {
             Text = text,
             Font = new Font("Segoe UI", 9.5f),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Panel,
+            BackColor = LightFill,
             ForeColor = Ink,
+            CornerRadius = 15,
             Height = 30,
         };
-        b.FlatAppearance.BorderSize = 0;
-        return b;
     }
 
     private void BuildChatPane()
     {
-        var root = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
+        var root = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Bg,
+            Padding = new Padding(0, 12, 12, 12),
+        };
 
-        // Badan chat (Dock Fill) ditambahkan PERTAMA agar mengisi sisa
-        // ruang — web view / label galat tinggal di sini.
-        _chatBody = new Panel { Dock = DockStyle.Fill, BackColor = Panel };
+        // Badan chat = kartu putih (Dock Fill, ditambahkan PERTAMA
+        // agar mengisi sisa ruang) — web view / label galat tinggal
+        // di sini, terpotong rapi mengikuti sudut bundar kartu.
+        _chatBody = new RoundedPanel
+        {
+            Dock = DockStyle.Fill,
+            FillColor = Card,
+            BorderColor = Hairline,
+            CornerRadius = 16,
+            Padding = new Padding(2),
+        };
         root.Controls.Add(_chatBody);
 
         _chatErrorLabel = new Label
         {
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter,
-            ForeColor = Amber,
+            ForeColor = ErrorInk,
+            BackColor = ErrorBg,
             Font = new Font("Segoe UI", 10.5f),
             Visible = false,
             Padding = new Padding(24),
         };
         _chatBody.Controls.Add(_chatErrorLabel);
 
-        // Bilah alat kecil di atas web view.
+        // Bilah alat kecil di atas kartu: tombol pil abu muda.
         var toolbar = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 44,
+            Height = 42,
             BackColor = Bg,
         };
-        var reload = SmallButton("↻ Muat Ulang");
-        reload.Location = new Point(8, 7);
+        var reload = PillButton("↻ Muat Ulang");
+        reload.Location = new Point(0, 6);
         reload.Width = 110;
         reload.Click += ChatReloadClicked;
         toolbar.Controls.Add(reload);
-        var chrome = SmallButton("🌐 Buka di Chrome");
-        chrome.Location = new Point(126, 7);
+        var chrome = PillButton("🌐 Buka di Chrome");
+        chrome.Location = new Point(118, 6);
         chrome.Width = 150;
         chrome.Click += ChatOpenChromeClicked;
         toolbar.Controls.Add(chrome);
@@ -438,15 +531,16 @@ public sealed class MainForm : Form
         var head = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 34,
+            Height = 30,
             BackColor = Bg,
         };
         var headLabel = new Label
         {
             Text = "Chat Muse — login dengan akunmu sendiri di panel ini",
             ForeColor = InkDim,
+            BackColor = Bg,
             AutoSize = true,
-            Location = new Point(10, 8),
+            Location = new Point(0, 7),
         };
         head.Controls.Add(headLabel);
         root.Controls.Add(head);
@@ -625,23 +719,35 @@ public sealed class MainForm : Form
         else
         {
             _toggleButton.Text = "Sambung lagi";
-            _toggleButton.BackColor = Green;
+            _toggleButton.BackColor = Accent;
         }
     }
 
     // ---------- Jalan otomatis & Mode Administrator (v2.1 + v2.3) ----------
     // Dua mekanisme jalan otomatis, dipilih oleh SyncAutoStart():
-    //  - Nilai "Jembatan" di HKCU\...\CurrentVersion\Run — jalan
+    //  - Nilai "MuseLink" di HKCU\...\CurrentVersion\Run — jalan
     //    sebagai pengguna biasa (perilaku v2.1, tanpa admin).
-    //  - Tugas Terjadwal "Jembatan" berhak tertinggi (schtasks) —
+    //  - Tugas Terjadwal "MuseLink" berhak tertinggi (schtasks) —
     //    jalan sebagai ADMINISTRATOR saat login, tanpa prompt UAC.
     //    Hanya bisa dibuat/dihapus oleh proses yang sedang admin.
     // Mode Administrator sendiri disimpan di HKCU\Software\Jembatan
     // (kelas Settings); kenaikan hak prosesnya diatur di Program.cs.
+    //
+    // Nama tampil aplikasi berganti dua kali: "Jembatan" (≤ v2.2) →
+    // "Muse Windows" (v2.3.2) → "MuseLink" (sejak v2.3.3). Nama
+    // internal tetap "Jembatan": berkas exe, kunci registry, mutex.
+    // Tugas & nilai Run dari SEMUA generasi lama dibersihkan oleh
+    // SyncAutoStart()/SetAutoStart() sebagai migrasi nama. Di mode
+    // terjadwal juga ada tugas penjaga "MuseLink Watchdog"
+    // (EnsureWatchdogTask); pendahulunya "Muse Windows Watchdog"
+    // ikut dibersihkan.
 
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunValueName = "Jembatan";
-    private const string TaskName = "Jembatan";
+    private const string RunValueName = "MuseLink";
+    private static readonly string[] LegacyRunValueNames = { "Jembatan", "Muse Windows" };
+    private const string TaskName = "MuseLink";
+    private const string WatchdogTaskName = "MuseLink Watchdog";
+    private static readonly string[] LegacyTaskNames = { "Jembatan", "Muse Windows", "Muse Windows Watchdog" };
 
     private static string ExpectedRunCommand()
     {
@@ -655,7 +761,12 @@ public sealed class MainForm : Form
         {
             using (var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, false))
             {
-                return key?.GetValue(RunValueName) != null;
+                if (key == null) return false;
+                // Nilai generasi lama juga dihitung ada (migrasi nama).
+                if (key.GetValue(RunValueName) != null) return true;
+                foreach (var legacy in LegacyRunValueNames)
+                    if (key.GetValue(legacy) != null) return true;
+                return false;
             }
         }
         catch { return false; }
@@ -669,10 +780,13 @@ public sealed class MainForm : Form
             if (key == null) return;
             if (enabled) key.SetValue(RunValueName, ExpectedRunCommand());
             else key.DeleteValue(RunValueName, false);
+            // Nilai generasi lama selalu dibersihkan.
+            foreach (var legacy in LegacyRunValueNames)
+                key.DeleteValue(legacy, false);
         }
     }
 
-    // ---------- Tugas Terjadwal "Jembatan" (schtasks) ----------
+    // ---------- Tugas Terjadwal (schtasks) ----------
 
     private static int RunSchtasks(string arguments, out string output)
     {
@@ -704,11 +818,11 @@ public sealed class MainForm : Form
         }
     }
 
-    private static bool ScheduledTaskExists()
+    private static bool ScheduledTaskExists(string name)
     {
         try
         {
-            return RunSchtasks("/Query /TN \"" + TaskName + "\"", out _) == 0;
+            return RunSchtasks("/Query /TN \"" + name + "\"", out _) == 0;
         }
         catch { return false; }
     }
@@ -724,20 +838,45 @@ public sealed class MainForm : Form
             Log("GAGAL membuat tugas terjadwal admin (kode " + code + "): " + output.Trim());
     }
 
-    private void DeleteScheduledTask()
+    // Penjaga anti-crash (v2.3.2): tugas "MuseLink Watchdog"
+    // berjalan tiap 5 menit menjalankan PowerShell TERSEMBUNYI yang
+    // menyalakan ulang Jembatan bila prosesnya tidak ada — KECUALI
+    // bendera UserStopped terpasang (user berhenti sengaja lewat menu
+    // tray → Keluar). Penutupan oleh Windows shutdown / Task Manager
+    // tidak memasang bendera itu, jadi penjaga tetap menyalakan
+    // ulang. Didaftarkan/dihapus bersama tugas login di SyncAutoStart,
+    // dengan syarat yang sama (jalan otomatis + admin + proses admin).
+    private void EnsureWatchdogTask()
     {
-        int code = RunSchtasks("/Delete /TN \"" + TaskName + "\" /F", out string output);
+        string psCommand =
+            "if ((Get-ItemProperty 'HKCU:\\Software\\Jembatan' -Name UserStopped -ErrorAction SilentlyContinue).UserStopped -ne 1) " +
+            "{ if (-not (Get-Process Jembatan -ErrorAction SilentlyContinue)) { Start-Process '" +
+            Application.ExecutablePath + "' } }";
+        // Kutip dalam -Command "..." ditulis \" agar utuh melewati
+        // penguraian baris perintah schtasks (pola yang sama seperti
+        // /TR tugas login di atas).
+        string tr = "powershell -NoProfile -WindowStyle Hidden -Command \\\"" + psCommand + "\\\"";
+        string args = "/Create /TN \"" + WatchdogTaskName + "\" /TR \"" + tr +
+                      "\" /SC MINUTE /MO 5 /RL HIGHEST /F";
+        int code = RunSchtasks(args, out string output);
+        if (code != 0)
+            Log("GAGAL membuat tugas penjaga (kode " + code + "): " + output.Trim());
+    }
+
+    private void DeleteScheduledTask(string name)
+    {
+        int code = RunSchtasks("/Delete /TN \"" + name + "\" /F", out string output);
         if (code != 0)
             Log("GAGAL menghapus tugas terjadwal (kode " + code + "): " + output.Trim());
         else
-            Log("Tugas terjadwal '" + TaskName + "' dihapus.");
+            Log("Tugas terjadwal '" + name + "' dihapus.");
     }
 
     /// <summary>
     /// Selaraskan mekanisme jalan otomatis dengan keadaan yang diminta:
-    /// checkbox jalan otomatis + pengaturan Mode Administrator + hak
+    /// saklar jalan otomatis + pengaturan Mode Administrator + hak
     /// proses ini. Dipanggil sekali saat jendela dimuat dan tiap kali
-    /// SALAH SATU checkbox berubah. Semua kegagalan hanya dicatat di
+    /// SALAH SATU saklar berubah. Semua kegagalan hanya dicatat di
     /// log — tidak pernah menjatuhkan jendela.
     /// </summary>
     private void SyncAutoStart()
@@ -750,28 +889,27 @@ public sealed class MainForm : Form
             if (autoStart && adminWanted && elevated)
             {
                 // Jalan otomatis sebagai admin: tugas terjadwal yang
-                // memegang peran; nilai Run dicabut agar tidak dobel.
+                // memegang peran (login + penjaga anti-crash); nilai
+                // Run dicabut agar tidak dobel. Tugas generasi lama
+                // ("Jembatan", "Muse Windows", "Muse Windows
+                // Watchdog") ikut dibersihkan (migrasi nama).
                 EnsureScheduledTask();
+                EnsureWatchdogTask();
+                foreach (var legacy in LegacyTaskNames)
+                    if (ScheduledTaskExists(legacy))
+                        DeleteScheduledTask(legacy);
                 SetAutoStart(false);
             }
             else if (autoStart)
             {
                 // Jalan otomatis sebagai pengguna biasa: nilai Run.
                 SetAutoStart(true);
-                if (ScheduledTaskExists())
-                {
-                    if (elevated) DeleteScheduledTask();
-                    else Log("Tugas terjadwal '" + TaskName + "' masih terdaftar — penghapusannya butuh Jembatan berjalan sebagai administrator.");
-                }
+                DeleteAdminTasks(elevated);
             }
             else
             {
                 SetAutoStart(false);
-                if (ScheduledTaskExists())
-                {
-                    if (elevated) DeleteScheduledTask();
-                    else Log("Tugas terjadwal '" + TaskName + "' masih terdaftar — penghapusannya butuh Jembatan berjalan sebagai administrator.");
-                }
+                DeleteAdminTasks(elevated);
             }
         }
         catch (Exception ex)
@@ -780,9 +918,27 @@ public sealed class MainForm : Form
         }
     }
 
+    // Hapus tugas-tugas mode admin (login "MuseLink", penjaganya, dan
+    // semua nama generasi lama) bila masih terdaftar. Menghapus tugas
+    // butuh proses admin; bila proses ini belum admin, cukup catat di
+    // log — perilaku yang sama seperti v2.3 untuk tugas login.
+    private void DeleteAdminTasks(bool elevated)
+    {
+        var names = new System.Collections.Generic.List<string> { TaskName, WatchdogTaskName };
+        names.AddRange(LegacyTaskNames);
+        foreach (var name in names)
+        {
+            if (!ScheduledTaskExists(name)) continue;
+            if (elevated) DeleteScheduledTask(name);
+            else Log("Tugas terjadwal '" + name + "' masih terdaftar — penghapusannya butuh MuseLink berjalan sebagai administrator.");
+        }
+    }
+
     private void InitStartOptions()
     {
-        bool taskExists = ScheduledTaskExists();
+        bool taskExists = ScheduledTaskExists(TaskName)
+                          || ScheduledTaskExists("Jembatan")
+                          || ScheduledTaskExists("Muse Windows");
         // "Jalan pertama" = belum ada jejak apa pun: nilai Run tidak
         // ada, tugas tidak ada, dan Mode Administrator belum pernah
         // ditulis. Di jalan pertama jalan otomatis AKTIF secara bawaan
@@ -855,19 +1011,19 @@ public sealed class MainForm : Form
             SyncAutoStart();
             // Proses ini tetap admin sampai ditutup — yang berubah
             // adalah jalan berikutnya.
-            Log("Mode Administrator dimatikan — berlaku penuh setelah Jembatan dibuka ulang");
+            Log("Mode Administrator dimatikan — berlaku penuh setelah MuseLink dibuka ulang");
         }
     }
 
     private void SetWaiting()
     {
-        _statusDot.BackColor = Amber;
+        _statusDot.DotColor = DotWaiting;
         _statusLabel.Text = "Menunggu koneksi";
     }
 
     private void SetStopped(string text)
     {
-        _statusDot.BackColor = Gray;
+        _statusDot.DotColor = DotStopped;
         _statusLabel.Text = text;
     }
 
@@ -880,7 +1036,7 @@ public sealed class MainForm : Form
             return;
         }
         _claudeSeen = true;
-        _statusDot.BackColor = Green;
+        _statusDot.DotColor = Green;
         _statusLabel.Text = "Muse terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
     }
 
@@ -892,7 +1048,9 @@ public sealed class MainForm : Form
             BeginInvoke(new Action(() => Log(message)));
             return;
         }
-        _logBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
+        string line = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message;
+        _logBox.AppendText(line + Environment.NewLine);
+        AppendLogToFile(line);
         if (_logBox.Lines.Length > 500)
         {
             var lines = _logBox.Lines;
@@ -900,5 +1058,57 @@ public sealed class MainForm : Form
         }
         _logBox.SelectionStart = _logBox.TextLength;
         _logBox.ScrollToCaret();
+    }
+
+    // ---------- Log persisten (v2.3.2) ----------
+    // Setiap baris log jendela juga ditulis ke berkas
+    // %LOCALAPPDATA%\Jembatan\jembatan.log (folder internal — nama
+    // tidak ikut berganti) agar riwayat tidak hilang saat aplikasi
+    // ditutup. Semua IO dibungkus try/catch yang menelan galat:
+    // menulis log TIDAK BOLEH menjatuhkan aplikasi.
+
+    private static readonly object LogFileLock = new object();
+
+    private static string LogFilePath
+    {
+        get
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Jembatan", "jembatan.log");
+        }
+    }
+
+    private static void AppendLogToFile(string line)
+    {
+        try
+        {
+            lock (LogFileLock)
+            {
+                string dir = Path.GetDirectoryName(LogFilePath);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                File.AppendAllText(LogFilePath, line + Environment.NewLine);
+            }
+        }
+        catch { /* abaikan */ }
+    }
+
+    // Rotasi sederhana saat aplikasi dimulai: berkas log yang sudah
+    // melewati 2 MB diganti nama jadi jembatan.log.old (meniban yang
+    // lama) dan berkas baru dimulai dari kosong.
+    private static void RotateLogFileIfNeeded()
+    {
+        try
+        {
+            var info = new FileInfo(LogFilePath);
+            if (info.Exists && info.Length > 2 * 1024 * 1024)
+            {
+                string oldPath = LogFilePath + ".old";
+                if (File.Exists(oldPath)) File.Delete(oldPath);
+                File.Move(LogFilePath, oldPath);
+            }
+        }
+        catch { /* abaikan */ }
     }
 }
