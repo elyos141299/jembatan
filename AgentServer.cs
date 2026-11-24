@@ -395,7 +395,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.4\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.5\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -554,7 +554,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.4",
+                    ["version"] = "2.7.5",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -653,7 +653,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.4",
+                    ["version"] = "2.7.5",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -3035,6 +3035,7 @@ public sealed class AgentServer
             var crlf = new byte[] { 13, 10 };
             int frameMs = 1000 / fps;
             byte[] lastHash = null;
+            var encMs = new MemoryStream(256 * 1024); // dipakai ulang tiap frame (v2.7.5)
             long lastSentMs = -1000; // frame pertama selalu terkirim
             var clock = Stopwatch.StartNew();
             while (IsRunning)
@@ -3051,24 +3052,30 @@ public sealed class AgentServer
                 catch { bmp = CaptureScaledBitmap(maxWidth); }
                 using (bmp)
                 {
-                    var hash = HashBitmap(bmp);
+                    // v2.7.5: sidik jari SAMPLING (32 baris x 256 byte)
+                    // menggantikan MD5 layar-penuh — deteksi "frame
+                    // sama" nyaris gratis; perubahan yang lolos dari
+                    // sampel tetap terkirim oleh keepalive 1 detik.
+                    var hash = FingerprintBitmap(bmp);
                     bool unchanged = lastHash != null && hash.SequenceEqual(lastHash);
                     // Frame identik tidak dikirim — kecuali sudah ±1 detik
                     // diam, kirim satu frame penjaga (keepalive).
                     bool keepaliveDue = frameStart - lastSentMs >= 1000;
                     if (!unchanged || keepaliveDue)
                     {
-                        var jpeg = EncodeJpeg(bmp, quality);
+                        EncodeJpegInto(bmp, quality, encMs);
+                        int jpegLen = (int)encMs.Length;
+                        var jpeg = encMs.GetBuffer();
                         var partHead = Encoding.ASCII.GetBytes(
                             "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
-                            jpeg.Length + "\r\n\r\n");
+                            jpegLen + "\r\n\r\n");
                         // v2.7.2: header+JPEG+CRLF digabung jadi SATU tulis
                         // per frame — tiga tulis kecil kena jeda Nagle /
                         // delayed-ACK (±10ms per frame terbuang di v2.7.1).
-                        var frameBytes = new byte[partHead.Length + jpeg.Length + crlf.Length];
+                        var frameBytes = new byte[partHead.Length + jpegLen + crlf.Length];
                         Buffer.BlockCopy(partHead, 0, frameBytes, 0, partHead.Length);
-                        Buffer.BlockCopy(jpeg, 0, frameBytes, partHead.Length, jpeg.Length);
-                        Buffer.BlockCopy(crlf, 0, frameBytes, partHead.Length + jpeg.Length, crlf.Length);
+                        Buffer.BlockCopy(jpeg, 0, frameBytes, partHead.Length, jpegLen);
+                        Buffer.BlockCopy(crlf, 0, frameBytes, partHead.Length + jpegLen, crlf.Length);
                         stream.Write(frameBytes, 0, frameBytes.Length);
                         stream.Flush();
                         lastHash = hash;
@@ -3450,33 +3457,87 @@ public sealed class AgentServer
         }
     }
 
+    // Sidik jari murah untuk deteksi frame-sama di /stream:
+    // MD5 atas 32 baris tersebar x 256 byte (total ±8KB berapa
+    // pun ukuran frame) + ukuran frame sebagai garam. Bukan
+    // untuk keputusan selain "kirim / lewati frame ini".
+    private static byte[] FingerprintBitmap(Bitmap bmp)
+    {
+        var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+        var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = Math.Abs(data.Stride);
+            int rowBytes = bmp.Width * 4;
+            const int rows = 32, seg = 256;
+            var buf = new byte[rows * seg + 8];
+            BitConverter.GetBytes(bmp.Width).CopyTo(buf, 0);
+            BitConverter.GetBytes(bmp.Height).CopyTo(buf, 4);
+            int pos = 8;
+            for (int i = 0; i < rows; i++)
+            {
+                int y = rows == 1 ? 0 : (int)((long)i * (bmp.Height - 1) / (rows - 1));
+                int maxOff = Math.Max(0, rowBytes - seg);
+                int off = maxOff == 0 ? 0 : (int)((long)(i * 7919) % (maxOff + 1)) & ~3;
+                Marshal.Copy(data.Scan0 + y * stride + off, buf, pos, Math.Min(seg, rowBytes));
+                pos += seg;
+            }
+            using (var md5 = MD5.Create())
+                return md5.ComputeHash(buf);
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+    }
+
     private static byte[] EncodeJpeg(Bitmap bmp, long quality)
     {
         using (var ms = new MemoryStream())
         {
-            var encoder = GetJpegEncoder();
-            if (encoder != null)
-            {
-                var ep = new EncoderParameters(1);
-                ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
-                bmp.Save(ms, encoder, ep);
-            }
-            else
-            {
-                bmp.Save(ms, ImageFormat.Jpeg);
-            }
+            EncodeJpegInto(bmp, quality, ms);
             return ms.ToArray();
         }
     }
 
+    // Encode ke MemoryStream milik pemanggil (dipakai ulang antar
+    // frame oleh /stream — tanpa alokasi + salinan ToArray).
+    private static void EncodeJpegInto(Bitmap bmp, long quality, MemoryStream ms)
+    {
+        ms.SetLength(0);
+        ms.Position = 0;
+        var encoder = GetJpegEncoder();
+        if (encoder != null)
+        {
+            var ep = new EncoderParameters(1);
+            ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
+            bmp.Save(ms, encoder, ep);
+        }
+        else
+        {
+            bmp.Save(ms, ImageFormat.Jpeg);
+        }
+    }
+
+    private static ImageCodecInfo _jpegCodec;
+    private static bool _jpegCodecTried;
+
     private static ImageCodecInfo GetJpegEncoder()
     {
+        // v2.7.5: hasil pencarian codec di-cache (dulu diiterasi
+        // ulang pada SETIAP encode). Balapan antar-thread jinak:
+        // yang tertulis selalu codec yang sama.
+        if (_jpegCodecTried) return _jpegCodec;
+        _jpegCodecTried = true;
         foreach (var codec in ImageCodecInfo.GetImageEncoders())
         {
-            if (codec.MimeType == "image/jpeg")
-                return codec;
+            if (codec.FormatID == ImageFormat.Jpeg.Guid)
+            {
+                _jpegCodec = codec;
+                break;
+            }
         }
-        return null;
+        return _jpegCodec;
     }
 
     private static byte[] CaptureScreenshot()

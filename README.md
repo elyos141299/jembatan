@@ -1,4 +1,4 @@
-# MuseLink v2.7.4 — catatan pengembang
+# MuseLink v2.7.5 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,11 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.5 (dari v2.7.4) — Peras sisa CPU per frame stream
+
+- **FingerprintBitmap**: deteksi frame-sama di /stream tidak lagi MD5 atas salinan layar-penuh (3,7MB @1280) — kini MD5 atas sampel tetap 32 baris x 256 byte (±8KB) + ukuran frame. Perubahan mungil yang lolos dari sampel tetap terkirim oleh keepalive 1 detik yang sudah ada.
+- **EncodeJpegInto**: /stream meng-encode ke satu MemoryStream yang dipakai ulang (tanpa alokasi + salinan ToArray per frame); pencarian codec JPEG kini di-cache, bukan diiterasi per encode.
 
 ## Perubahan v2.7.4 (dari v2.7.3) — Skala GPU murni (VideoProcessor)
 
