@@ -1,4 +1,4 @@
-# MuseLink v2.6.2 — catatan pengembang
+# MuseLink v2.6.3 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,27 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.3 (dari v2.6.2) — Inspeksi Super + Koordinat Relatif
+
+Disetujui user 24 Nov ("gas dua duanya") dan dieksekusi
+atas perintahnya sesudah ia bangun tidur:
+
+- **GET /inspect** — satu respons berisi bingkai JPEG
+  wilayah + OCR adaptif (helper OcrAdaptivePick) +
+  elemen UIA jendela depan yang beririsan dengan
+  wilayah + konteks ringkas (jendela depan, aplikasi,
+  CPU/RAM/idle, relay, tema). Param: x/y/w/h, fw, q,
+  uia=0 untuk lewati UIA. Mengganti 3-4 panggilan.
+- **Koordinat relatif jendela** — /find & /click
+  menerima {relativeTo:"potongan judul"} (helper
+  FindWindowByTitle; tidak ketemu -> 404). /find:
+  OCR dibatasi ke wilayah jendela, hasil dikembalikan
+  relatif terhadap sudut jendela + rect absolut
+  jendelanya untuk konversi balik; klik internal
+  /find tetap absolut. /click: x/y lokal diubah ke
+  absolut di server. Klik tetap akurat walau jendela
+  digeser user.
 
 ## Perubahan v2.6.2 (dari v2.6.1) — Push Lanjutan Penglihatan
 

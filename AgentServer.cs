@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.2\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.3\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -523,7 +523,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.2",
+                    ["version"] = "2.6.3",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -619,7 +619,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.2",
+                    ["version"] = "2.6.3",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -641,6 +641,132 @@ public sealed class AgentServer
                     ["relay"] = TailscaleRelay(),
                     ["clipboardChars"] = snap.clipLen,
                     ["eventsLastSeq"] = EventLog.LastSeq,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/inspect")
+            {
+                _onActivity();
+                // Inspeksi super (v2.6.3, pilihan user): SATU
+                // respons berisi bingkai wilayah + OCR adaptif
+                // + elemen UIA jendela depan + konteks ringkas.
+                // Mengganti 3-4 panggilan terpisah (frame, ocr,
+                // uia, context) tiap Muse memeriksa satu
+                // tempat — hemat 2-3 detik per pemeriksaan.
+                int ix = ParseClamp(GetQueryParam(req.Query, "x"), 0, 0, 7680);
+                int iy = ParseClamp(GetQueryParam(req.Query, "y"), 0, 0, 4320);
+                int iw2 = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
+                int ih = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
+                int ifw = ParseClamp(GetQueryParam(req.Query, "fw"), 960, 320, 1920);
+                int iq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
+                bool withUia = GetQueryParam(req.Query, "uia") != "0";
+                var scrI = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 1280, 720);
+                var mintaI = (iw2 > 0 && ih > 0) ? new Rectangle(ix, iy, iw2, ih) : scrI;
+                Rectangle effI;
+                OcrReader.Result ocrRes;
+                string ocrMode;
+                using (var bmp = CaptureRegionBitmap(mintaI, 0, out effI))
+                {
+                    ocrRes = OcrAdaptivePick(bmp, effI.X, effI.Y, out ocrMode);
+                }
+                byte[] jpeg;
+                int fW, fH;
+                using (var bmpF = CaptureRegionBitmap(effI, ifw, out _))
+                {
+                    fW = bmpF.Width; fH = bmpF.Height;
+                    jpeg = EncodeJpeg(bmpF, iq);
+                }
+                var kata = new List<Dictionary<string, object>>();
+                foreach (var wd in ocrRes.Words)
+                {
+                    kata.Add(new Dictionary<string, object>
+                    {
+                        ["t"] = wd.Text,
+                        ["x"] = wd.Rect.X, ["y"] = wd.Rect.Y,
+                        ["w"] = wd.Rect.Width, ["h"] = wd.Rect.Height,
+                    });
+                }
+                var uiaList = new List<Dictionary<string, object>>();
+                if (withUia)
+                {
+                    var items = OnUi(() => UiaScan.ScanForeground(300));
+                    foreach (var it in items)
+                    {
+                        if (uiaList.Count >= 100) break;
+                        if (!it.Rect.IntersectsWith(effI)) continue;
+                        uiaList.Add(new Dictionary<string, object>
+                        {
+                            ["name"] = it.Name, ["type"] = it.Type,
+                            ["x"] = it.Rect.X, ["y"] = it.Rect.Y,
+                            ["w"] = it.Rect.Width, ["h"] = it.Rect.Height,
+                            ["cx"] = it.CenterX, ["cy"] = it.CenterY,
+                        });
+                    }
+                }
+                var fgI = OnUi(() =>
+                {
+                    var wins = NativeInput.ListWindows();
+                    var h = NativeInput.ForegroundHandle();
+                    foreach (var w in wins) if (w.Handle == h) return w;
+                    return null;
+                });
+                Dictionary<string, object> fgDictI = null;
+                if (fgI != null)
+                {
+                    fgDictI = new Dictionary<string, object>
+                    {
+                        ["title"] = fgI.Title, ["process"] = fgI.Process,
+                        ["x"] = fgI.Rect.X, ["y"] = fgI.Rect.Y,
+                        ["w"] = fgI.Rect.Width, ["h"] = fgI.Rect.Height,
+                    };
+                }
+                var metI = NativeInput.SystemMetrics();
+                bool RunningI(string name)
+                {
+                    try { return Process.GetProcessesByName(name).Length > 0; }
+                    catch { return false; }
+                }
+                _log($"inspect wilayah {effI.X},{effI.Y} {effI.Width}x{effI.Height}: {kata.Count} kata ({ocrMode}), {uiaList.Count} elemen");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["region"] = new Dictionary<string, object>
+                    {
+                        ["x"] = effI.X, ["y"] = effI.Y,
+                        ["w"] = effI.Width, ["h"] = effI.Height,
+                    },
+                    ["frame"] = new Dictionary<string, object>
+                    {
+                        ["mime"] = "image/jpeg",
+                        ["width"] = fW, ["height"] = fH,
+                        ["b64"] = Convert.ToBase64String(jpeg),
+                    },
+                    ["ocr"] = new Dictionary<string, object>
+                    {
+                        ["adaptive"] = true,
+                        ["mode"] = ocrMode,
+                        ["text"] = ocrRes.Text,
+                        ["words"] = kata,
+                    },
+                    ["uia"] = uiaList,
+                    ["context"] = new Dictionary<string, object>
+                    {
+                        ["foreground"] = fgDictI,
+                        ["apps"] = new Dictionary<string, object>
+                        {
+                            ["obs"] = RunningI("obs64"),
+                            ["chrome"] = RunningI("chrome"),
+                            ["wplay"] = RunningI("wPlay"),
+                            ["spotify"] = RunningI("Spotify"),
+                        },
+                        ["cpuPercent"] = metI.CpuPercent,
+                        ["ramPercent"] = metI.RamPercent,
+                        ["idleSec"] = metI.IdleSec,
+                        ["relay"] = TailscaleRelay(),
+                        ["theme"] = Settings.Theme,
+                    },
                 });
             }
 
@@ -1291,6 +1417,22 @@ public sealed class AgentServer
                             if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             string button = GetString(root, "button", "left");
+                            // Koordinat relatif jendela (v2.6.3):
+                            // {relativeTo:"potongan judul"} — x/y
+                            // diartikan dari sudut kiri-atas jendela
+                            // itu lalu diubah ke absolut di sini.
+                            // Jendela tidak ketemu -> 404.
+                            string relTo = GetString(root, "relativeTo", "");
+                            string relTitle = null;
+                            if (!string.IsNullOrWhiteSpace(relTo))
+                            {
+                                var win = FindWindowByTitle(relTo);
+                                if (win == null)
+                                    return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan: " + relTo.Replace("\\", " ").Replace("\"", " ") + "\"}", 404);
+                                relTitle = win.Title;
+                                x += win.Rect.X;
+                                y += win.Rect.Y;
+                            }
                             // count (v2.4.0): 2 = klik ganda, 3 = klik tiga.
                             int count = GetInt(root, "count", 1);
                             if (count < 1) count = 1;
@@ -1308,7 +1450,7 @@ public sealed class AgentServer
                             });
                             _onActivity();
                             _lastClickX = x; _lastClickY = y; _lastClickTick = Environment.TickCount64;
-                            _log($"klik {x},{y} ({button}{(n > 1 ? ", " + n + "x" : "")}{(mods.Count > 0 ? ", +penahan" : "")})");
+                            _log($"klik {x},{y} ({button}{(n > 1 ? ", " + n + "x" : "")}{(mods.Count > 0 ? ", +penahan" : "")})" + (relTitle != null ? $" (relatif: {relTitle})" : ""));
                             return Ok();
                         }
                         case "/keydown":
@@ -1649,6 +1791,24 @@ public sealed class AgentServer
                             int fMax = GetInt(root, "max", 10);
                             if (fMax < 1) fMax = 1;
                             if (fMax > 30) fMax = 30;
+                            // Koordinat relatif jendela (v2.6.3):
+                            // {relativeTo:"potongan judul"} — OCR
+                            // dibatasi ke wilayah jendela itu dan
+                            // SEMUA koordinat hasil dikembalikan
+                            // relatif terhadap sudut jendelanya;
+                            // respons memuat "window" (rect absolut
+                            // jendelanya) untuk konversi balik.
+                            // Jendela tidak ketemu -> 404.
+                            string fRelTo = GetString(root, "relativeTo", "");
+                            NativeInput.WindowInfo fWin = null;
+                            if (!string.IsNullOrWhiteSpace(fRelTo))
+                            {
+                                fWin = FindWindowByTitle(fRelTo);
+                                if (fWin == null)
+                                    return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan: " + fRelTo.Replace("\\", " ").Replace("\"", " ") + "\"}", 404);
+                            }
+                            int relOx = fWin != null ? fWin.Rect.X : 0;
+                            int relOy = fWin != null ? fWin.Rect.Y : 0;
                             _onActivity();
                             var matches = new List<Dictionary<string, object>>();
                             int uiaCount = 0, ocrCount = 0;
@@ -1665,6 +1825,7 @@ public sealed class AgentServer
                             });
                             foreach (var it in uiaHits)
                             {
+                                if (fWin != null && !it.Rect.IntersectsWith(fWin.Rect)) continue;
                                 uiaCount++;
                                 matches.Add(new Dictionary<string, object>
                                 {
@@ -1678,9 +1839,9 @@ public sealed class AgentServer
                             }
                             try
                             {
-                                var scr = Screen.PrimaryScreen != null
+                                var scr = fWin != null ? fWin.Rect : (Screen.PrimaryScreen != null
                                     ? Screen.PrimaryScreen.Bounds
-                                    : new Rectangle(0, 0, 1280, 720);
+                                    : new Rectangle(0, 0, 1280, 720));
                                 using (var bmp = CaptureRegionBitmap(scr, 0, out var eff))
                                 {
                                     // OCR adaptif (v2.6.2): kedua mode
@@ -1744,14 +1905,35 @@ public sealed class AgentServer
                                 NativeInput.Click((int)matches[0]["cx"], (int)matches[0]["cy"], "left");
                                 clicked = true;
                             }
-                            _log($"find '{q}': {matches.Count} cocok (uia {uiaCount}, ocr {ocrCount})" + (clicked ? ", pertama diklik" : ""));
-                            return Response.JsonObject(new Dictionary<string, object>
+                            if (fWin != null)
+                            {
+                                foreach (var m in matches)
+                                {
+                                    m["x"] = (int)m["x"] - relOx;
+                                    m["y"] = (int)m["y"] - relOy;
+                                    m["cx"] = (int)m["cx"] - relOx;
+                                    m["cy"] = (int)m["cy"] - relOy;
+                                }
+                            }
+                            _log($"find '{q}': {matches.Count} cocok (uia {uiaCount}, ocr {ocrCount})" + (clicked ? ", pertama diklik" : "") + (fWin != null ? $" (relatif: {fWin.Title})" : ""));
+                            var findResp = new Dictionary<string, object>
                             {
                                 ["ok"] = true,
                                 ["count"] = matches.Count,
                                 ["clicked"] = clicked,
                                 ["matches"] = matches,
-                            });
+                            };
+                            if (fWin != null)
+                            {
+                                findResp["relativeTo"] = fWin.Title;
+                                findResp["window"] = new Dictionary<string, object>
+                                {
+                                    ["title"] = fWin.Title, ["process"] = fWin.Process,
+                                    ["x"] = fWin.Rect.X, ["y"] = fWin.Rect.Y,
+                                    ["w"] = fWin.Rect.Width, ["h"] = fWin.Rect.Height,
+                                };
+                            }
+                            return Response.JsonObject(findResp);
                         }
                         case "/listen":
                         {
@@ -2611,6 +2793,37 @@ public sealed class AgentServer
     /// ukuran bitmap). Tidak menggambar bila klik sudah
     /// lewat 60 detik atau titiknya di luar wilayah.
     /// </summary>
+    /// <summary>
+    /// OCR adaptif (v2.6.3): jalankan mode biasa + diperkuat,
+    /// kembalikan yang lebih kaya kata. mode = pemenangnya.
+    /// </summary>
+    private static OcrReader.Result OcrAdaptivePick(Bitmap bmp, int ox, int oy, out string mode)
+    {
+        var biasa = OcrReader.Read(bmp, ox, oy);
+        var kuat = OcrReader.ReadEnhanced(bmp, ox, oy);
+        int skorBiasa = biasa.Words.Count * 1000 + (biasa.Text != null ? biasa.Text.Length : 0);
+        int skorKuat = kuat.Words.Count * 1000 + (kuat.Text != null ? kuat.Text.Length : 0);
+        if (skorKuat > skorBiasa) { mode = "enhanced"; return kuat; }
+        mode = "normal"; return biasa;
+    }
+
+    /// <summary>
+    /// Cari jendela berdasarkan potongan judul (v2.6.3) —
+    /// untuk mode koordinat relatif. Jendela pertama yang
+    /// judulnya mengandung teks itu (abaikan huruf besar).
+    /// </summary>
+    private NativeInput.WindowInfo FindWindowByTitle(string part)
+    {
+        if (string.IsNullOrWhiteSpace(part)) return null;
+        var wins = OnUi(() => NativeInput.ListWindows());
+        foreach (var w in wins)
+        {
+            if (w.Title != null && w.Title.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0)
+                return w;
+        }
+        return null;
+    }
+
     private static void DrawClickMark(Bitmap bmp, Rectangle eff)
     {
         if (_lastClickX < 0) return;
