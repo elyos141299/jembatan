@@ -132,6 +132,7 @@ public sealed class MainForm : Form
         try { icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
         catch { /* jatuh ke ikon bawaan di bawah */ }
         if (icon == null) icon = SystemIcons.Application;
+        Icon = icon;
 
         var menu = new ContextMenuStrip();
         var openItem = new ToolStripMenuItem("Buka MuseLink");

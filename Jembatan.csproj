@@ -9,6 +9,7 @@
     <AssemblyName>Jembatan</AssemblyName>
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
     <Version>2.3.3</Version>
     <AssemblyVersion>2.3.3.0</AssemblyVersion>
     <FileVersion>2.3.3.0</FileVersion>
