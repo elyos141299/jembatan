@@ -141,14 +141,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.6.3 dimulai ===");
+            Log("=== MuseLink v2.6.4 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.6.3 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.6.4 dimulai");
             // Roda gigi melayang di bar judul, sebelah kiri minimize
             // (v2.5.1) — mengikuti gerak jendela utama.
             _captionGear = new CaptionGearForm(this);
@@ -502,7 +502,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.6.3",
+            Text = "v2.6.4",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -562,7 +562,7 @@ public sealed class MainForm : Form
         tilesWrap.Controls.Add(tiles);
         MakeTile(tiles, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
-        MakeTile(tiles, 2, "VERSI", "2.6.3", out _tileVersionValue);
+        MakeTile(tiles, 2, "VERSI", "2.6.4", out _tileVersionValue);
         leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
 

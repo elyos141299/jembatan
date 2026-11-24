@@ -1,4 +1,4 @@
-# MuseLink v2.6.3 — catatan pengembang
+# MuseLink v2.6.4 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,34 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.4 (dari v2.6.3) — Smart Frame + Inspect Latar + Klik Verifikasi
+
+Dipilih user 24 Nov ("gas semuanya") sesudah full test
+54/54 lulus. Catatan: kandidat keempat paket itu (paket
+OCR Bahasa Indonesia) GUGUR sebelum dibangun — Windows
+ternyata tidak menyediakan capability OCR id-ID sama
+sekali (daftar 35 bahasa diperiksa di PC user; yang
+terpasang hanya en-US + ja-JP). Mesin en-US tetap
+membaca teks Indonesia (aksara Latin) + mode adaptif.
+
+- **GET /delta (smart frame)** — garis dasar per lebar
+  disimpan server; respons JSON {mode, x, y, w, h,
+  coveragePct, changedBlocks, frame{b64}}. mode
+  "full" (pertama/beda lebar/perubahan >60%), "crop"
+  (hanya rect yang berubah, ditangkap ulang resolusi
+  asli), "none" (nol perubahan, tanpa gambar).
+- **/inspect jendela latar** — ?win=<potongan judul>
+  (404 bila tidak ketemu): wilayah = rect jendela,
+  UIA dipindai dari jendela itu (UiaScan.ScanWindow,
+  tidak menyentuh Last), respons memuat "window".
+  ?rel=1: koordinat kata OCR + elemen UIA relatif ke
+  sudut jendela.
+- **/click verifikasi** — {expectText, expectTimeoutMs?,
+  expectRadius?}: sesudah klik, server polling OCR
+  wilayah sekitar titik klik tiap 250ms sampai teks
+  ketemu / timeout; respons {verified, waitedMs}.
+  Tanpa expectText perilaku persis seperti sebelumnya.
 
 ## Perubahan v2.6.3 (dari v2.6.2) — Inspeksi Super + Koordinat Relatif
 

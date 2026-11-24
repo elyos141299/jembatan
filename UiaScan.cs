@@ -114,6 +114,47 @@ public static class UiaScan
     }
 
     /// <summary>
+    /// Pindai jendela tertentu dari handle-nya (v2.6.4) —
+    /// untuk /inspect jendela latar. Tidak menyentuh Last
+    /// (hasil pindai jendela depan tetap milik /uia/click).
+    /// </summary>
+    public static List<Item> ScanWindow(IntPtr handle, int maxItems)
+    {
+        var hasil = new List<Item>();
+        if (handle == IntPtr.Zero) return hasil;
+        try
+        {
+            using (var automation = new UIA3Automation())
+            {
+                var root = automation.FromHandle(handle);
+                if (root == null) return hasil;
+                var all = root.FindAllDescendants();
+                foreach (var el in all)
+                {
+                    if (hasil.Count >= maxItems) break;
+                    try
+                    {
+                        if (!Interesting.Contains(el.ControlType)) continue;
+                        if (el.IsOffscreen) continue;
+                        var r = el.BoundingRectangle;
+                        if (r.Width <= 0 || r.Height <= 0) continue;
+                        hasil.Add(new Item
+                        {
+                            Name = el.Name ?? "",
+                            Type = el.ControlType.ToString(),
+                            Rect = r,
+                            Enabled = el.IsEnabled,
+                        });
+                    }
+                    catch { /* elemen hilang di tengah pindai dsb. — lewati */ }
+                }
+            }
+        }
+        catch { /* UIA gagal total — daftar kosong */ }
+        return hasil;
+    }
+
+    /// <summary>
     /// Cari elemen hasil pindai terakhir: indeks persis bila index
     /// valid, selain itu elemen pertama yang namanya mengandung
     /// nameQuery (tidak peka huruf). Null bila tidak ketemu.

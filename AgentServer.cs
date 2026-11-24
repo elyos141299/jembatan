@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.3\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.4\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -523,7 +523,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.3",
+                    ["version"] = "2.6.4",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -619,7 +619,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.3",
+                    ["version"] = "2.6.4",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -644,6 +644,92 @@ public sealed class AgentServer
                 });
             }
 
+            if (req.Method == "GET" && req.Path == "/delta")
+            {
+                _onActivity();
+                // Smart frame (v2.6.4, pilihan user): kirim
+                // hanya potongan wilayah yang BERUBAH sejak
+                // panggilan delta sebelumnya pada lebar yang
+                // sama. Layar kebanyakan diam -> muatan
+                // menyusut drastis di jalur relay lambat.
+                // Perubahan >60% / panggilan pertama / lebar
+                // beda -> bingkai penuh; nol perubahan ->
+                // mode "none" tanpa gambar.
+                int dw = ParseClamp(GetQueryParam(req.Query, "w"), 1280, 320, 1920);
+                int dq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
+                var scrD = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 1280, 720);
+                Bitmap cur;
+                try { cur = NativeInput.CaptureScreenScaled(dw); }
+                catch { cur = CaptureScaledBitmap(dw); }
+                string mode = "full";
+                Rectangle cropScr = scrD;
+                double cov = 100.0;
+                int blocks = -1;
+                lock (_deltaLock)
+                {
+                    bool sama = _deltaBase != null && _deltaBase.Width == cur.Width && _deltaBase.Height == cur.Height;
+                    if (sama)
+                    {
+                        var ubah = CompareBlocks(_deltaBase, cur, 32, 16, 0, 0, out int totalB);
+                        cov = totalB > 0 ? ubah.Count * 100.0 / totalB : 0;
+                        blocks = ubah.Count;
+                        if (ubah.Count == 0)
+                        {
+                            mode = "none";
+                        }
+                        else if (cov <= 60.0)
+                        {
+                            var u = ubah[0];
+                            foreach (var b in ubah) u = Rectangle.Union(u, b);
+                            double kx = (double)scrD.Width / cur.Width;
+                            double ky = (double)scrD.Height / cur.Height;
+                            cropScr = new Rectangle(
+                                Math.Max(0, (int)(u.X * kx) - 8),
+                                Math.Max(0, (int)(u.Y * ky) - 8),
+                                (int)(u.Width * kx) + 16,
+                                (int)(u.Height * ky) + 16);
+                            cropScr.Intersect(scrD);
+                            mode = "crop";
+                        }
+                    }
+                    if (_deltaBase != null) _deltaBase.Dispose();
+                    _deltaBase = (Bitmap)cur.Clone();
+                }
+                byte[] jpeg;
+                if (mode == "crop")
+                {
+                    using (var bmp = CaptureRegionBitmap(cropScr, 0, out _))
+                        jpeg = EncodeJpeg(bmp, dq);
+                }
+                else if (mode == "none")
+                {
+                    jpeg = Array.Empty<byte>();
+                    cropScr = scrD;
+                }
+                else
+                {
+                    jpeg = EncodeJpeg(cur, dq);
+                }
+                cur.Dispose();
+                _log($"delta: mode {mode}, cakupan {(blocks < 0 ? "-" : cov.ToString("0.0") + "%")}, kirim {jpeg.Length} byte");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["mode"] = mode,
+                    ["x"] = cropScr.X, ["y"] = cropScr.Y,
+                    ["w"] = cropScr.Width, ["h"] = cropScr.Height,
+                    ["coveragePct"] = blocks < 0 ? (double?)null : Math.Round(cov, 1),
+                    ["changedBlocks"] = blocks,
+                    ["frame"] = new Dictionary<string, object>
+                    {
+                        ["mime"] = "image/jpeg",
+                        ["b64"] = Convert.ToBase64String(jpeg),
+                    },
+                });
+            }
+
             if (req.Method == "GET" && req.Path == "/inspect")
             {
                 _onActivity();
@@ -664,6 +750,23 @@ public sealed class AgentServer
                     ? Screen.PrimaryScreen.Bounds
                     : new Rectangle(0, 0, 1280, 720);
                 var mintaI = (iw2 > 0 && ih > 0) ? new Rectangle(ix, iy, iw2, ih) : scrI;
+                // Jendela latar (v2.6.4): ?win=<potongan judul>
+                // mengarahkan inspeksi ke jendela itu (wilayah
+                // = rect jendelanya, UIA dipindai dari jendela
+                // itu, bukan yang di depan). ?rel=1 membuat
+                // koordinat OCR/UIA relatif ke sudut jendela.
+                NativeInput.WindowInfo fWinI = null;
+                bool relI = GetQueryParam(req.Query, "rel") == "1";
+                string winQ = GetQueryParam(req.Query, "win");
+                if (!string.IsNullOrWhiteSpace(winQ))
+                {
+                    fWinI = FindWindowByTitle(winQ);
+                    if (fWinI == null)
+                        return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan: " + winQ.Replace("\\", " ").Replace("\"", " ") + "\"}", 404);
+                    mintaI = fWinI.Rect;
+                }
+                int relOxI = (relI && fWinI != null) ? fWinI.Rect.X : 0;
+                int relOyI = (relI && fWinI != null) ? fWinI.Rect.Y : 0;
                 Rectangle effI;
                 OcrReader.Result ocrRes;
                 string ocrMode;
@@ -684,14 +787,16 @@ public sealed class AgentServer
                     kata.Add(new Dictionary<string, object>
                     {
                         ["t"] = wd.Text,
-                        ["x"] = wd.Rect.X, ["y"] = wd.Rect.Y,
+                        ["x"] = wd.Rect.X - relOxI, ["y"] = wd.Rect.Y - relOyI,
                         ["w"] = wd.Rect.Width, ["h"] = wd.Rect.Height,
                     });
                 }
                 var uiaList = new List<Dictionary<string, object>>();
                 if (withUia)
                 {
-                    var items = OnUi(() => UiaScan.ScanForeground(300));
+                    var items = fWinI != null
+                        ? OnUi(() => UiaScan.ScanWindow(fWinI.Handle, 300))
+                        : OnUi(() => UiaScan.ScanForeground(300));
                     foreach (var it in items)
                     {
                         if (uiaList.Count >= 100) break;
@@ -699,9 +804,9 @@ public sealed class AgentServer
                         uiaList.Add(new Dictionary<string, object>
                         {
                             ["name"] = it.Name, ["type"] = it.Type,
-                            ["x"] = it.Rect.X, ["y"] = it.Rect.Y,
+                            ["x"] = it.Rect.X - relOxI, ["y"] = it.Rect.Y - relOyI,
                             ["w"] = it.Rect.Width, ["h"] = it.Rect.Height,
-                            ["cx"] = it.CenterX, ["cy"] = it.CenterY,
+                            ["cx"] = it.CenterX - relOxI, ["cy"] = it.CenterY - relOyI,
                         });
                     }
                 }
@@ -729,7 +834,7 @@ public sealed class AgentServer
                     catch { return false; }
                 }
                 _log($"inspect wilayah {effI.X},{effI.Y} {effI.Width}x{effI.Height}: {kata.Count} kata ({ocrMode}), {uiaList.Count} elemen");
-                return Response.JsonObject(new Dictionary<string, object>
+                var inspResp = new Dictionary<string, object>
                 {
                     ["ok"] = true,
                     ["region"] = new Dictionary<string, object>
@@ -767,7 +872,18 @@ public sealed class AgentServer
                         ["relay"] = TailscaleRelay(),
                         ["theme"] = Settings.Theme,
                     },
-                });
+                };
+                if (fWinI != null)
+                {
+                    inspResp["window"] = new Dictionary<string, object>
+                    {
+                        ["title"] = fWinI.Title, ["process"] = fWinI.Process,
+                        ["x"] = fWinI.Rect.X, ["y"] = fWinI.Rect.Y,
+                        ["w"] = fWinI.Rect.Width, ["h"] = fWinI.Rect.Height,
+                    };
+                    inspResp["relative"] = relI;
+                }
+                return Response.JsonObject(inspResp);
             }
 
             if (req.Method == "GET" && req.Path == "/lastops")
@@ -1451,6 +1567,48 @@ public sealed class AgentServer
                             _onActivity();
                             _lastClickX = x; _lastClickY = y; _lastClickTick = Environment.TickCount64;
                             _log($"klik {x},{y} ({button}{(n > 1 ? ", " + n + "x" : "")}{(mods.Count > 0 ? ", +penahan" : "")})" + (relTitle != null ? $" (relatif: {relTitle})" : ""));
+                            // Klik verifikasi (v2.6.4): {expectText}
+                            // -> sesudah klik, server menunggu teks
+                            // itu muncul di sekitar titik klik (OCR
+                            // wilayah radius, polling 250ms) lalu
+                            // melapor verified:true/false dalam
+                            // respons yang sama. Satu panggilan
+                            // menggantikan klik->tunggu->cari.
+                            string expect = GetString(root, "expectText", "");
+                            if (!string.IsNullOrWhiteSpace(expect))
+                            {
+                                int expTimeout = GetInt(root, "expectTimeoutMs", 3000);
+                                if (expTimeout < 250) expTimeout = 250;
+                                if (expTimeout > 10000) expTimeout = 10000;
+                                int expRadius = GetInt(root, "expectRadius", 400);
+                                if (expRadius < 100) expRadius = 100;
+                                if (expRadius > 1000) expRadius = 1000;
+                                var wilE = new Rectangle(x - expRadius, y - expRadius, expRadius * 2, expRadius * 2);
+                                bool verified = false;
+                                var swExp = System.Diagnostics.Stopwatch.StartNew();
+                                while (swExp.ElapsedMilliseconds < expTimeout)
+                                {
+                                    try
+                                    {
+                                        using (var bmp = CaptureRegionBitmap(wilE, 0, out var effE))
+                                        {
+                                            var rr = OcrReader.Read(bmp, effE.X, effE.Y);
+                                            if (rr.Text != null && rr.Text.IndexOf(expect, StringComparison.OrdinalIgnoreCase) >= 0)
+                                            { verified = true; break; }
+                                        }
+                                    }
+                                    catch { /* abaikan, coba lagi */ }
+                                    System.Threading.Thread.Sleep(250);
+                                }
+                                _log($"klik verifikasi '{expect}': {(verified ? "KETEMU" : "tidak ketemu")} ({swExp.ElapsedMilliseconds}ms)");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true,
+                                    ["verified"] = verified,
+                                    ["expectText"] = expect,
+                                    ["waitedMs"] = (int)swExp.ElapsedMilliseconds,
+                                });
+                            }
                             return Ok();
                         }
                         case "/keydown":
@@ -2714,6 +2872,10 @@ public sealed class AgentServer
     private static Bitmap _diffBase;
     private static Rectangle _diffRegion;
     private static readonly object _diffLock = new object();
+
+    // Garis dasar smart frame /delta (v2.6.4).
+    private static Bitmap _deltaBase;
+    private static readonly object _deltaLock = new object();
 
     /// <summary>
     /// Gambar kisi koordinat LAYAR di atas salinan bitmap
