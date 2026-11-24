@@ -90,7 +90,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.3.4 dimulai ===");
+            Log("=== MuseLink v2.3.5 dimulai ===");
             InitStartOptions();
             try
             {
@@ -295,7 +295,7 @@ public sealed class MainForm : Form
         var title = new Label
         {
             Text = "MuseLink",
-            Font = new Font("Segoe UI", 15f, FontStyle.Bold),
+            Font = new Font("Segoe UI Semibold", 15f),
             ForeColor = Ink,
             BackColor = Card,
             AutoSize = true,
@@ -358,7 +358,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.3.4",
+            Text = "v2.3.5",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -486,14 +486,17 @@ public sealed class MainForm : Form
 
         // Badan chat = kartu putih (Dock Fill, ditambahkan PERTAMA
         // agar mengisi sisa ruang) — web view / label galat tinggal
-        // di sini, terpotong rapi mengikuti sudut bundar kartu.
+        // di sini dengan bantalan 10px, jadi sudut persegi web view
+        // menempel di bidang putih kartu, tidak menabrak lengkung
+        // sudut kartu (v2.3.5; sebelumnya bantalan 2px + potongan
+        // Region yang bergerigi).
         _chatBody = new RoundedPanel
         {
             Dock = DockStyle.Fill,
             FillColor = Card,
             BorderColor = Hairline,
             CornerRadius = 16,
-            Padding = new Padding(2),
+            Padding = new Padding(10),
         };
         root.Controls.Add(_chatBody);
 
@@ -538,10 +541,11 @@ public sealed class MainForm : Form
         var headLabel = new Label
         {
             Text = "Chat Muse — login dengan akunmu sendiri di panel ini",
+            Font = new Font("Segoe UI", 10f),
             ForeColor = InkDim,
             BackColor = Bg,
             AutoSize = true,
-            Location = new Point(0, 7),
+            Location = new Point(0, 6),
         };
         head.Controls.Add(headLabel);
         root.Controls.Add(head);

@@ -11,8 +11,11 @@ namespace Jembatan;
 
 /// <summary>
 /// Panel kartu: isi warna rata + garis tepi 1px, sudut dibulatkan
-/// (bawaan 16px) dan seluruh kontrol (termasuk anak-anaknya) dipotong
-/// mengikuti bentuk bundar itu lewat Region.
+/// (bawaan 16px). Sejak v2.3.5 sudutnya TIDAK lagi dipotong Region —
+/// Region Windows tidak mengenal anti-alias dan tepinya bergerigi
+/// tangga piksel. Sebagai gantinya area di luar lengkung dicat warna
+/// latar (BackColor panel = warna latar form) lalu bentuk bundarnya
+/// digambar dengan anti-alias penuh, jadi tepinya mulus.
 /// </summary>
 public class RoundedPanel : Panel
 {
@@ -46,21 +49,18 @@ public class RoundedPanel : Panel
         return path;
     }
 
-    protected override void OnResize(EventArgs e)
-    {
-        base.OnResize(e);
-        if (Width > 0 && Height > 0)
-        {
-            using (var path = RoundRectPath(ClientRectangle, CornerRadius))
-                Region = new Region(path);
-        }
-    }
-
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        // Sudut di luar lengkung: cat warna latar dulu (BackColor
+        // panel memang disamakan dengan latar form #F5F5F7), supaya
+        // lengkung anti-alias menyatu mulus dengan latar — pengganti
+        // Region yang bergerigi (v2.3.5).
+        using (var bg = new SolidBrush(BackColor))
+            g.FillRectangle(bg, ClientRectangle);
         using (var path = RoundRectPath(ClientRectangle, CornerRadius))
         using (var fill = new SolidBrush(FillColor))
             g.FillPath(fill, path);
@@ -128,6 +128,7 @@ public class ToggleSwitch : Control
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         using (var bg = new SolidBrush(BackColor))
             g.FillRectangle(bg, ClientRectangle);
 
@@ -136,11 +137,21 @@ public class ToggleSwitch : Control
             ? Color.FromArgb(52, 199, 89)
             : Color.FromArgb(232, 232, 237);
         using (var path = RoundedPanel.RoundRectPath(trackRect, Height / 2))
-        using (var brush = new SolidBrush(track))
-            g.FillPath(brush, path);
+        {
+            using (var brush = new SolidBrush(track))
+                g.FillPath(brush, path);
+            // Garis tepi sangat tipis semi-transparan: memberi batas
+            // tegas tanpa kesan keras (v2.3.5).
+            using (var pen = new Pen(Color.FromArgb(26, 0, 0, 0), 1f))
+                g.DrawPath(pen, path);
+        }
 
         const int knob = 22;
         int kx = _checked ? Width - knob - 2 : 2;
+        // Bayangan lembut kenop (elips semi-transparan bergeser 1px
+        // ke bawah) — kesan kedalaman ala iOS (v2.3.5).
+        using (var shadow = new SolidBrush(Color.FromArgb(34, 0, 0, 0)))
+            g.FillEllipse(shadow, kx, 3, knob, knob);
         var knobRect = new Rectangle(kx, 2, knob, knob);
         using (var path = RoundedPanel.RoundRectPath(knobRect, knob / 2))
         {
@@ -162,8 +173,9 @@ public class ToggleSwitch : Control
 }
 
 /// <summary>
-/// Tombol datar tanpa tepi dengan sudut bundar (Region dipotong
-/// mengikuti jalur bundar; isi + teks digambar sendiri). BackColor =
+/// Tombol datar tanpa tepi dengan sudut bundar (isi + teks digambar
+/// sendiri; sudut di luar lengkung dicat warna latar induk agar
+/// tepinya mulus anti-alias — tanpa Region, v2.3.5). BackColor =
 /// warna isi, ForeColor = warna teks, sama seperti Button biasa.
 /// </summary>
 public class RoundedButton : Button
@@ -181,16 +193,6 @@ public class RoundedButton : Button
         FlatAppearance.BorderSize = 0;
         UseVisualStyleBackColor = false;
         Cursor = Cursors.Hand;
-    }
-
-    protected override void OnResize(EventArgs e)
-    {
-        base.OnResize(e);
-        if (Width > 0 && Height > 0)
-        {
-            using (var path = RoundedPanel.RoundRectPath(ClientRectangle, CornerRadius))
-                Region = new Region(path);
-        }
     }
 
     protected override void OnMouseEnter(EventArgs e)
@@ -227,14 +229,22 @@ public class RoundedButton : Button
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        // Sengaja kosong: Region sudah memotong bentuknya dan isi
-        // digambar di OnPaint — latar di luar sudut ditangani induk.
+        // Sengaja kosong: seluruh permukaan digambar di OnPaint,
+        // termasuk sudut di luar lengkung (warna latar induk).
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+        // Sudut di luar lengkung dicat warna latar induk langsung,
+        // supaya lengkung anti-alias menyatu mulus — pengganti
+        // pemotongan Region yang bergerigi (v2.3.5).
+        Color surround = Parent != null ? Parent.BackColor : Color.FromArgb(245, 245, 247);
+        using (var bg = new SolidBrush(surround))
+            g.FillRectangle(bg, ClientRectangle);
 
         Color fill = BackColor;
         if (!Enabled) fill = ControlPaint.LightLight(fill);
@@ -278,9 +288,10 @@ public class RoundDot : Control
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         using (var bg = new SolidBrush(BackColor))
             g.FillRectangle(bg, ClientRectangle);
-        var r = new Rectangle(0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
+        var r = new RectangleF(0.5f, 0.5f, Math.Max(0f, Width - 1f), Math.Max(0f, Height - 1f));
         using (var brush = new SolidBrush(_dotColor))
             g.FillEllipse(brush, r);
     }

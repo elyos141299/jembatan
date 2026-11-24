@@ -1,4 +1,4 @@
-# MuseLink v2.3.4 — catatan pengembang
+# MuseLink v2.3.5 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -31,9 +31,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 
 | Metode & path | Body | Hasil |
 |---|---|---|
-| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3.4", admin}` — `admin` = hak proses saat ini |
+| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3.5", admin}` — `admin` = hak proses saat ini |
 | `GET /screenshot` | — | PNG layar utama (binary `image/png`) |
-| `GET /sysinfo` | — | `{ok, version:"2.3.4", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
+| `GET /sysinfo` | — | `{ok, version:"2.3.5", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{title, process}]}` — jendela tingkat atas yang terlihat & berjudul |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
@@ -56,6 +56,22 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.3.5 (dari v2.3.4)
+
+- **Sudut mulus anti-alias penuh (perhalusan tampilan)**: kartu
+  (`RoundedPanel`) dan tombol (`RoundedButton`) tidak lagi dipotong
+  `Region` — Region Windows tidak mengenal anti-alias sehingga
+  sudutnya bergerigi tangga piksel. Area di luar lengkung kini dicat
+  warna latar induk, lalu bentuk bundar digambar anti-alias dengan
+  `PixelOffsetMode.HighQuality`.
+- **Panel chat dirapikan**: badan chat diberi bantalan 10px sehingga
+  sudut persegi WebView2 menempel di bidang putih kartu (tidak
+  menabrak lengkung sudut); fon kepala panel diseragamkan Segoe UI
+  10pt; judul jendela memakai Segoe UI Semibold.
+- **Saklar**: bayangan lembut di bawah kenop + garis tepi lintasan
+  semi-transparan sangat tipis. Murni tampilan — perilaku, endpoint,
+  dan logika penjaga tidak berubah sama sekali.
 
 ## Perubahan v2.3.4 (dari v2.3.3)
 
