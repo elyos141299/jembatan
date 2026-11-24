@@ -1,4 +1,4 @@
-# MuseLink v2.6.4 — catatan pengembang
+# MuseLink v2.6.5 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,39 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.5 (dari v2.6.4) — Klik-Tunggu + Mesin OCR Tesseract
+
+Dipilih user 24 Nov ("gas ketiganya" — butir ketiga,
+jalur unduh gh CLI, adalah perubahan alur kerja di PC,
+bukan kode aplikasi).
+
+- **POST /clickwhen** — {text, x/y/w/h?, timeoutMs?,
+  expectText?, expectTimeoutMs?, expectRadius?}:
+  server polling (UIA jendela depan lalu OCR wilayah
+  adaptif, jeda 300ms) sampai teks ketemu -> klik
+  tengahnya (titik klik terakhir dicatat) -> bila
+  expectText diisi, verifikasi seperti /click.
+  Respons {found, x, y, waitedMs, verified?}. Teks
+  tidak ketemu sampai timeout -> found:false (bukan
+  error). text kosong -> 400.
+- **Mesin OCR kedua: Tesseract (ind+eng)** — Windows
+  tidak menyediakan capability OCR Bahasa Indonesia
+  sama sekali, jadi aplikasi membawa mesinnya
+  sendiri. CI mengunduh installer Tesseract UB
+  Mannheim v5.4.0.20240606 (SHA-256 disematkan &
+  diverifikasi) + tessdata_fast eng/ind 4.1.0 (hash
+  diverifikasi juga), menaruh tesseract.exe + DLL +
+  tessdata ke publish\tesseract; installer memasang
+  ke {app}\tesseract. OcrReader.ReadTesseract
+  menjalankan proses tesseract (PSM 6, keluaran TSV)
+  dan memetakan kata ke koordinat layar; kegagalan
+  apa pun -> hasil kosong. /ocr & /inspect menerima
+  ?engine=tesseract (paksa) atau ?engine=auto (tiga
+  mesin dilombakan: WinRT biasa, WinRT diperkuat,
+  Tesseract — skor kata terbanyak menang). Respons
+  /ocr memuat "tesseract": true/false (ketersediaan).
+  Ukuran installer naik (mesin + data ±15 MB).
 
 ## Perubahan v2.6.4 (dari v2.6.3) — Smart Frame + Inspect Latar + Klik Verifikasi
 

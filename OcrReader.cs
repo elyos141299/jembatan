@@ -100,6 +100,89 @@ public static class OcrReader
         return dst;
     }
 
+
+    // ===== Mesin OCR kedua: Tesseract (v2.6.5) =====
+    // Windows tidak menyediakan OCR Bahasa Indonesia sama
+    // sekali (capability Language.OCR id-ID memang tidak
+    // ada di daftar Microsoft), jadi MuseLink membawa
+    // mesinnya sendiri: tesseract.exe + data ind/eng di
+    // subfolder "tesseract" di samping exe aplikasi
+    // (diunduh & diverifikasi hash-nya di CI). Berkasnya
+    // tidak ada -> mesin ini diam-diam tidak aktif.
+
+    private static string TessExe =>
+        Path.Combine(AppContext.BaseDirectory, "tesseract", "tesseract.exe");
+
+    private static string TessDataDir =>
+        Path.Combine(AppContext.BaseDirectory, "tesseract", "tessdata");
+
+    /// <summary>True bila berkas mesin Tesseract terpasang.</summary>
+    public static bool TesseractAvailable =>
+        File.Exists(TessExe) && File.Exists(Path.Combine(TessDataDir, "ind.traineddata"));
+
+    /// <summary>
+    /// Baca bitmap dengan Tesseract (ind+eng, PSM 6).
+    /// Koordinat kata digeser offsetX/offsetY seperti
+    /// Read. Kegagalan apa pun -> hasil kosong (metode
+    /// ini tidak pernah melempar).
+    /// </summary>
+    public static Result ReadTesseract(Bitmap bmp, int offsetX, int offsetY)
+    {
+        var hasil = new Result();
+        if (!TesseractAvailable) return hasil;
+        string tmp = Path.Combine(Path.GetTempPath(),
+            "muselink-ocr-" + Guid.NewGuid().ToString("N") + ".png");
+        try
+        {
+            bmp.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = TessExe,
+                Arguments = "\"" + tmp + "\" stdout --tessdata-dir \"" + TessDataDir + "\" -l ind+eng --psm 6 tsv",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            using (var proc = System.Diagnostics.Process.Start(psi))
+            {
+                var baca = proc.StandardOutput.ReadToEndAsync();
+                if (!proc.WaitForExit(20000))
+                {
+                    try { proc.Kill(); } catch { }
+                    return hasil;
+                }
+                string tsv = baca.GetAwaiter().GetResult();
+                var potongan = new List<string>();
+                foreach (var baris in tsv.Split('\n'))
+                {
+                    var kol = baris.TrimEnd('\r').Split('\t');
+                    if (kol.Length < 12) continue;
+                    if (kol[0] != "5") continue; // level kata
+                    string teks = kol[11].Trim();
+                    if (teks.Length == 0) continue;
+                    if (!int.TryParse(kol[6], out int lx) || !int.TryParse(kol[7], out int ly)
+                        || !int.TryParse(kol[8], out int lw) || !int.TryParse(kol[9], out int lh))
+                        continue;
+                    hasil.Words.Add(new Word
+                    {
+                        Text = teks,
+                        Rect = new Rectangle(offsetX + lx, offsetY + ly, lw, lh),
+                    });
+                    potongan.Add(teks);
+                    if (hasil.Words.Count >= 600) break;
+                }
+                hasil.Text = string.Join(" ", potongan);
+            }
+        }
+        catch { /* mesin kedua gagal -> hasil kosong */ }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
+        return hasil;
+    }
+
     private static async Task<Result> ReadAsync(Bitmap bmp, int offsetX, int offsetY, double scale)
     {
         var engine = OcrEngine.TryCreateFromUserProfileLanguages()

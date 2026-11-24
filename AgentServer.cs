@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.4\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.5\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -523,7 +523,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.4",
+                    ["version"] = "2.6.5",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -619,7 +619,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.4",
+                    ["version"] = "2.6.5",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -772,7 +772,10 @@ public sealed class AgentServer
                 string ocrMode;
                 using (var bmp = CaptureRegionBitmap(mintaI, 0, out effI))
                 {
-                    ocrRes = OcrAdaptivePick(bmp, effI.X, effI.Y, out ocrMode);
+                    string engI = GetQueryParam(req.Query, "engine") ?? "";
+                    if (engI == "tesseract") { ocrRes = OcrReader.ReadTesseract(bmp, effI.X, effI.Y); ocrMode = "tesseract"; }
+                    else if (engI == "auto") { ocrRes = OcrAdaptivePick(bmp, effI.X, effI.Y, out ocrMode, true); }
+                    else { ocrRes = OcrAdaptivePick(bmp, effI.X, effI.Y, out ocrMode); }
                 }
                 byte[] jpeg;
                 int fW, fH;
@@ -1191,6 +1194,13 @@ public sealed class AgentServer
                 string enhParam = GetQueryParam(req.Query, "enhance") ?? "";
                 bool enhanceOn = enhParam == "1";
                 bool adaptif = enhParam == "auto";
+                // Mesin OCR (v2.6.5): ?engine=tesseract memaksa
+                // mesin Tesseract (ind+eng); ?engine=auto
+                // melombakan WinRT biasa + diperkuat +
+                // Tesseract, yang terkaya kata menang.
+                string engineParam = GetQueryParam(req.Query, "engine") ?? "";
+                bool tessOn = engineParam == "tesseract";
+                bool engineAuto = engineParam == "auto";
                 OcrReader.Result hasil;
                 string modeDipakai = "normal";
                 using (var bmp = CaptureRegionBitmap(wilayah, 0, out var eff))
@@ -1198,7 +1208,24 @@ public sealed class AgentServer
                     wilayah = eff;
                     try
                     {
-                        if (adaptif)
+                        if (tessOn)
+                        {
+                            hasil = OcrReader.ReadTesseract(bmp, eff.X, eff.Y);
+                            modeDipakai = "tesseract";
+                        }
+                        else if (engineAuto)
+                        {
+                            var bA = OcrReader.Read(bmp, eff.X, eff.Y);
+                            var kA = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
+                            var tA = OcrReader.ReadTesseract(bmp, eff.X, eff.Y);
+                            int sB = bA.Words.Count * 1000 + (bA.Text != null ? bA.Text.Length : 0);
+                            int sK = kA.Words.Count * 1000 + (kA.Text != null ? kA.Text.Length : 0);
+                            int sT = tA.Words.Count * 1000 + (tA.Text != null ? tA.Text.Length : 0);
+                            if (sT >= sB && sT >= sK) { hasil = tA; modeDipakai = "tesseract"; }
+                            else if (sK > sB) { hasil = kA; modeDipakai = "enhanced"; }
+                            else { hasil = bA; modeDipakai = "normal"; }
+                        }
+                        else if (adaptif)
                         {
                             var biasa = OcrReader.Read(bmp, eff.X, eff.Y);
                             var kuat = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
@@ -1243,6 +1270,7 @@ public sealed class AgentServer
                     ["enhanced"] = modeDipakai == "enhanced",
                     ["mode"] = modeDipakai,
                     ["adaptive"] = adaptif,
+                    ["tesseract"] = OcrReader.TesseractAvailable,
                     ["text"] = hasil.Text,
                     ["words"] = kata,
                     ["region"] = new Dictionary<string, object>
@@ -1610,6 +1638,108 @@ public sealed class AgentServer
                                 });
                             }
                             return Ok();
+                        }
+                        case "/clickwhen":
+                        {
+                            // Klik-tunggu (v2.6.5): tunggu teks
+                            // muncul di layar (UIA jendela depan
+                            // + OCR wilayah adaptif), klik
+                            // tengahnya, lalu opsional verifikasi
+                            // teks lain muncul — SATU panggilan
+                            // menggantikan cari->klik->cek.
+                            string cari = GetString(root, "text", "");
+                            if (string.IsNullOrWhiteSpace(cari))
+                                return Response.Json("{\"ok\":false,\"error\":\"field wajib hilang: text\"}", 400);
+                            int cwTimeout = GetInt(root, "timeoutMs", 15000);
+                            if (cwTimeout < 1000) cwTimeout = 1000;
+                            if (cwTimeout > 60000) cwTimeout = 60000;
+                            var scrW = Screen.PrimaryScreen != null ? Screen.PrimaryScreen.Bounds : new Rectangle(0, 0, 1280, 720);
+                            var wilW = scrW;
+                            if (HasInt(root, "x") && HasInt(root, "y") && HasInt(root, "w") && HasInt(root, "h"))
+                            {
+                                var mw = new Rectangle(GetInt(root, "x", 0), GetInt(root, "y", 0), GetInt(root, "w", 0), GetInt(root, "h", 0));
+                                var potong = Rectangle.Intersect(scrW, mw);
+                                if (potong.Width > 0 && potong.Height > 0) wilW = potong;
+                            }
+                            var swW = System.Diagnostics.Stopwatch.StartNew();
+                            int ketemuX = -1, ketemuY = -1;
+                            while (swW.ElapsedMilliseconds < cwTimeout && ketemuX < 0)
+                            {
+                                try
+                                {
+                                    var itemsW = OnUi(() => UiaScan.ScanForeground(300));
+                                    foreach (var it in itemsW)
+                                    {
+                                        if (!string.IsNullOrEmpty(it.Name) && it.Name.IndexOf(cari, StringComparison.OrdinalIgnoreCase) >= 0
+                                            && wilW.Contains(it.CenterX, it.CenterY))
+                                        { ketemuX = it.CenterX; ketemuY = it.CenterY; break; }
+                                    }
+                                }
+                                catch { /* abaikan, lanjut OCR */ }
+                                if (ketemuX < 0)
+                                {
+                                    try
+                                    {
+                                        using (var bmp = CaptureRegionBitmap(wilW, 0, out var effW))
+                                        {
+                                            var rr = OcrAdaptivePick(bmp, effW.X, effW.Y, out _);
+                                            var gab = CariTeksDiKata(rr.Words, cari);
+                                            if (gab != null) { ketemuX = gab.Value.X; ketemuY = gab.Value.Y; }
+                                        }
+                                    }
+                                    catch { /* abaikan, polling lagi */ }
+                                }
+                                if (ketemuX < 0) System.Threading.Thread.Sleep(300);
+                            }
+                            if (ketemuX < 0)
+                            {
+                                _log($"clickwhen '{cari}': TIDAK ketemu ({swW.ElapsedMilliseconds}ms)");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true, ["found"] = false,
+                                    ["waitedMs"] = (int)swW.ElapsedMilliseconds,
+                                });
+                            }
+                            OnUi(() => { NativeInput.ClickTimes(ketemuX, ketemuY, "left", 1); return true; });
+                            _onActivity();
+                            _lastClickX = ketemuX; _lastClickY = ketemuY; _lastClickTick = Environment.TickCount64;
+                            _log($"clickwhen '{cari}': ketemu, klik {ketemuX},{ketemuY} ({swW.ElapsedMilliseconds}ms)");
+                            var respW = new Dictionary<string, object>
+                            {
+                                ["ok"] = true, ["found"] = true,
+                                ["x"] = ketemuX, ["y"] = ketemuY,
+                                ["waitedMs"] = (int)swW.ElapsedMilliseconds,
+                            };
+                            string expectW = GetString(root, "expectText", "");
+                            if (!string.IsNullOrWhiteSpace(expectW))
+                            {
+                                int expT = GetInt(root, "expectTimeoutMs", 3000);
+                                if (expT < 250) expT = 250;
+                                if (expT > 10000) expT = 10000;
+                                int expR = GetInt(root, "expectRadius", 400);
+                                if (expR < 100) expR = 100;
+                                if (expR > 1000) expR = 1000;
+                                var wilE2 = new Rectangle(ketemuX - expR, ketemuY - expR, expR * 2, expR * 2);
+                                bool ver = false;
+                                var swE = System.Diagnostics.Stopwatch.StartNew();
+                                while (swE.ElapsedMilliseconds < expT)
+                                {
+                                    try
+                                    {
+                                        using (var bmp = CaptureRegionBitmap(wilE2, 0, out var effE2))
+                                        {
+                                            var rr2 = OcrReader.Read(bmp, effE2.X, effE2.Y);
+                                            if (rr2.Text != null && rr2.Text.IndexOf(expectW, StringComparison.OrdinalIgnoreCase) >= 0) { ver = true; break; }
+                                        }
+                                    }
+                                    catch { /* abaikan */ }
+                                    System.Threading.Thread.Sleep(250);
+                                }
+                                respW["verified"] = ver;
+                                respW["expectText"] = expectW;
+                                _log($"clickwhen verifikasi '{expectW}': {(ver ? "KETEMU" : "tidak ketemu")}");
+                            }
+                            return Response.JsonObject(respW);
                         }
                         case "/keydown":
                         case "/keyup":
@@ -2959,15 +3089,59 @@ public sealed class AgentServer
     /// OCR adaptif (v2.6.3): jalankan mode biasa + diperkuat,
     /// kembalikan yang lebih kaya kata. mode = pemenangnya.
     /// </summary>
-    private static OcrReader.Result OcrAdaptivePick(Bitmap bmp, int ox, int oy, out string mode)
+    private static OcrReader.Result OcrAdaptivePick(Bitmap bmp, int ox, int oy, out string mode, bool withTess = false)
     {
         var biasa = OcrReader.Read(bmp, ox, oy);
         var kuat = OcrReader.ReadEnhanced(bmp, ox, oy);
         int skorBiasa = biasa.Words.Count * 1000 + (biasa.Text != null ? biasa.Text.Length : 0);
         int skorKuat = kuat.Words.Count * 1000 + (kuat.Text != null ? kuat.Text.Length : 0);
-        if (skorKuat > skorBiasa) { mode = "enhanced"; return kuat; }
-        mode = "normal"; return biasa;
+        OcrReader.Result best = skorKuat > skorBiasa ? kuat : biasa;
+        mode = skorKuat > skorBiasa ? "enhanced" : "normal";
+        int skorBest = Math.Max(skorBiasa, skorKuat);
+        if (withTess)
+        {
+            // Mesin ketiga (v2.6.5): Tesseract ind+eng —
+            // ikut lomba skor yang sama, yang terkaya menang.
+            var tess = OcrReader.ReadTesseract(bmp, ox, oy);
+            int skorTess = tess.Words.Count * 1000 + (tess.Text != null ? tess.Text.Length : 0);
+            if (skorTess > skorBest) { mode = "tesseract"; return tess; }
+        }
+        return best;
     }
+
+    /// <summary>
+    /// Cari teks (kata tunggal atau frasa sebaris) di
+    /// daftar kata OCR; kembalikan titik tengah
+    /// gabungannya atau null (v2.6.5, untuk /clickwhen).
+    /// </summary>
+    private static Point? CariTeksDiKata(List<OcrReader.Word> words, string cari)
+    {
+        string target = (cari ?? "").Trim();
+        if (target.Length == 0 || words == null) return null;
+        foreach (var w in words)
+        {
+            if (!string.IsNullOrEmpty(w.Text) && w.Text.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0)
+                return new Point(w.Rect.Left + w.Rect.Width / 2, w.Rect.Top + w.Rect.Height / 2);
+        }
+        int jumlahKata = target.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length;
+        if (jumlahKata > 1)
+        {
+            for (int i = 0; i < words.Count; i++)
+            {
+                var gab = words[i].Rect;
+                string teks = words[i].Text ?? "";
+                for (int j = i + 1; j < Math.Min(words.Count, i + jumlahKata + 2); j++)
+                {
+                    teks += " " + (words[j].Text ?? "");
+                    gab = Rectangle.Union(gab, words[j].Rect);
+                    if (teks.IndexOf(target, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return new Point(gab.Left + gab.Width / 2, gab.Top + gab.Height / 2);
+                }
+            }
+        }
+        return null;
+    }
+
 
     /// <summary>
     /// Cari jendela berdasarkan potongan judul (v2.6.3) —
