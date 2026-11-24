@@ -59,6 +59,67 @@ internal static class Settings
         }
     }
 
+    private const string ThemeValueName = "Theme";
+    private const string KeepAwakeValueName = "KeepAwake";
+
+    /// <summary>
+    /// Pilihan tema tampilan (v2.5.0): "device" (bawaan, mengikuti
+    /// Windows), "light", atau "dark". Disimpan sebagai teks.
+    /// </summary>
+    public static string Theme
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
+                {
+                    if (key?.GetValue(ThemeValueName) is string v &&
+                        (v == "light" || v == "dark" || v == "device"))
+                        return v;
+                }
+            }
+            catch { /* anggap bawaan */ }
+            return "device";
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(ThemeValueName, value, RegistryValueKind.String);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Saklar "Jangan tidur" (v2.5.0): true = PC dicegah tidur
+    /// selama MuseLink jalan (SetThreadExecutionState di
+    /// NativeInput). Bawaan mati.
+    /// </summary>
+    public static bool KeepAwake
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
+                {
+                    if (key?.GetValue(KeepAwakeValueName) is int v)
+                        return v != 0;
+                }
+            }
+            catch { /* anggap mati */ }
+            return false;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(KeepAwakeValueName, value ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+    }
+
     /// <summary>True bila nilai AdminMode memang sudah pernah ditulis.</summary>
     public static bool HasAdminModeValue
     {

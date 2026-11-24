@@ -27,29 +27,45 @@ namespace Jembatan;
 /// </summary>
 public sealed class MainForm : Form
 {
-    // Palet terang gaya iCloud (v2.3.3).
-    private static readonly Color Bg = Color.FromArgb(245, 245, 247);
-    private static readonly Color Card = Color.FromArgb(255, 255, 255);
-    private static readonly Color Ink = Color.FromArgb(29, 29, 31);
-    private static readonly Color InkDim = Color.FromArgb(110, 110, 115);
-    private static readonly Color Hairline = Color.FromArgb(227, 227, 232);
-    private static readonly Color Accent = Color.FromArgb(0, 113, 227);
-    private static readonly Color Green = Color.FromArgb(52, 199, 89);
-    private static readonly Color Red = Color.FromArgb(255, 59, 48);
-    private static readonly Color LightFill = Color.FromArgb(232, 232, 237);
-    private static readonly Color DotWaiting = Color.FromArgb(255, 159, 10);
-    private static readonly Color DotStopped = Color.FromArgb(174, 174, 178);
-    private static readonly Color ErrorBg = Color.FromArgb(255, 244, 204);
-    private static readonly Color ErrorInk = Color.FromArgb(138, 109, 0);
+    // Palet dari AppTheme (v2.5.0): Terang / Gelap / Ikuti perangkat.
+    // Nama-nama lama dipertahankan sebagai properti agar seluruh
+    // pemakaian di bawah tidak berubah; nilainya mengikuti tema
+    // efektif dan ApplyTheme() mengecat ulang saat tema berganti.
+    private static Color Bg => AppTheme.Bg;
+    private static Color Card => AppTheme.Card;
+    private static Color Ink => AppTheme.Ink;
+    private static Color InkDim => AppTheme.InkDim;
+    private static Color Hairline => AppTheme.Hairline;
+    private static Color Accent => AppTheme.Accent;
+    private static Color Green => AppTheme.Green;
+    private static Color Red => AppTheme.Red;
+    private static Color LightFill => AppTheme.LightFill;
+    private static Color DotWaiting => AppTheme.DotWaiting;
+    private static Color DotStopped => AppTheme.DotStopped;
+    private static Color ErrorBg => AppTheme.ErrorBg;
+    private static Color ErrorInk => AppTheme.ErrorInk;
 
     private readonly AgentServer _server;
     private RoundDot _statusDot;
     private Label _statusLabel;
     private RichTextBox _logBox;
-    private RoundedButton _toggleButton;
-    private ToggleSwitch _autoStartCheck;
-    private ToggleSwitch _adminCheck;
     private Label _modeLabel;
+    private RoundedPanel _headerCard;
+    private RoundedPanel _logCard;
+    private Label _titleLabel;
+    private Label _addrLabel;
+    private Label _versionLabel;
+    private Panel _leftRoot;
+    private Panel _chatRoot;
+    private RoundedButton _settingsButton;
+    private SettingsForm _settingsForm;
+    private bool _autoStartEnabled;
+
+    /// <summary>Keadaan jalan otomatis saat ini (untuk jendela Pengaturan).</summary>
+    internal bool AutoStartEnabled => _autoStartEnabled;
+
+    /// <summary>True bila listener sedang berjalan (untuk jendela Pengaturan).</summary>
+    internal bool ServerRunning => _server.IsRunning;
 
     // Panel chat Muse: SplitContainer membagi jendela — Panel1
     // (kiri) = panel kendali, Panel2 (kanan) = chat WebView2.
@@ -100,11 +116,30 @@ public sealed class MainForm : Form
 
         _server = new AgentServer(this, Log, OnActivity);
 
+        // Tema "Ikuti perangkat": cat ulang langsung saat tema
+        // Windows berubah; kunci/buka layar masuk catatan kejadian.
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += (s, e) =>
+        {
+            if (AppTheme.Current == AppTheme.Choice.Device) ApplyTheme();
+        };
+        Microsoft.Win32.SystemEvents.SessionSwitch += (s, e) =>
+        {
+            bool kunci = e.Reason == Microsoft.Win32.SessionSwitchReason.SessionLock;
+            EventLog.Add(kunci ? "lock" : "unlock", kunci ? "layar dikunci" : "layar dibuka lagi");
+        };
+
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.4.5 dimulai ===");
+            Log("=== MuseLink v2.5.0 dimulai ===");
             InitStartOptions();
+            if (Settings.KeepAwake)
+            {
+                NativeInput.SetKeepAwake(true);
+                Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
+            }
+            EventLog.Add("app-start", "MuseLink v2.5.0 dimulai");
+            ApplyTheme();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
             // sejak aplikasi mulai, tanpa tombol buka/tutup.
@@ -286,7 +321,7 @@ public sealed class MainForm : Form
         // Panel kiri dibungkus panel luar ber-padding 12px (v2.3.3):
         // kartu-kartu putih melayang di atas latar #F5F5F7 dengan
         // jarak tepi dan jarak antar kartu yang seragam.
-        var leftRoot = new Panel
+        var leftRoot = _leftRoot = new Panel
         {
             Dock = DockStyle.Fill,
             BackColor = Bg,
@@ -311,7 +346,7 @@ public sealed class MainForm : Form
             // menggulir ke entri terbaru, jadi tidak ada yang hilang.
             ScrollBars = RichTextBoxScrollBars.None,
         };
-        var logCard = new RoundedPanel
+        var logCard = _logCard = new RoundedPanel
         {
             Dock = DockStyle.Fill,
             FillColor = Card,
@@ -322,27 +357,9 @@ public sealed class MainForm : Form
         logCard.Controls.Add(_logBox);
         leftRoot.Controls.Add(logCard);
 
-        // Baris tombol PUTUSKAN / Sambung lagi di bawah kartu log:
-        // panel 56px (jarak 12px di atas tombol 44px).
-        var bottom = new Panel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 56,
-            BackColor = Bg,
-            Padding = new Padding(0, 12, 0, 0),
-        };
-        _toggleButton = new RoundedButton
-        {
-            Dock = DockStyle.Fill,
-            Text = "PUTUSKAN",
-            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-            BackColor = Red,
-            ForeColor = Color.White,
-            CornerRadius = 12,
-        };
-        _toggleButton.Click += ToggleClicked;
-        bottom.Controls.Add(_toggleButton);
-        leftRoot.Controls.Add(bottom);
+        // (Panel bawah + tombol PUTUSKAN besar DIHAPUS di v2.5.0
+        // atas permintaan user: tombolnya pindah ke jendela
+        // Pengaturan. Kartu log kini mengisi penuh sampai bawah.)
 
         // Kartu kepala: judul + status + alamat + dua saklar + label
         // mode. Semua elemen kiri rata di garis x=16 (padding dalam
@@ -350,16 +367,16 @@ public sealed class MainForm : Form
         // saklar memakai lebar kartu penuh (tidak berebut ruang
         // dengan wadah kanan), jadi teks labelnya muat utuh juga
         // saat panel kiri menyempit ke ±380px (chat terbuka).
-        var header = new RoundedPanel
+        var header = _headerCard = new RoundedPanel
         {
             Dock = DockStyle.Top,
-            Height = 250,
+            Height = 168,
             FillColor = Card,
             BorderColor = Hairline,
             CornerRadius = 16,
             Padding = new Padding(16),
         };
-        var title = new Label
+        var title = _titleLabel = new Label
         {
             Text = "MuseLink",
             Font = new Font("Segoe UI Semibold", 15f),
@@ -393,7 +410,7 @@ public sealed class MainForm : Form
         // MaximumSize membuat teks panjang ini membungkus (wrap) saat
         // panel kiri menyempit (chat terbuka) — tingginya sudah
         // dihitung dalam tinggi kartu.
-        var addr = new Label
+        var addr = _addrLabel = new Label
         {
             Text = "Port " + AgentServer.Port + " • Hanya bisa dijangkau lewat jaringan Tailscale kamu — tidak terbuka ke internet.",
             Font = new Font("Segoe UI", 9f),
@@ -417,72 +434,49 @@ public sealed class MainForm : Form
             Dock = DockStyle.Right,
             Width = 116,
             BackColor = Card,
+            Tag = "cardbg",
         };
         header.Controls.Add(headerRight);
 
         // Label versi: kecil abu-abu, rata kanan, di pojok kanan
         // bawah kartu kepala. Tinggi wadah kanan pasti (250 kartu −
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
-        var version = new Label
+        var version = _versionLabel = new Label
         {
-            Text = "v2.4.5",
+            Text = "v2.5.0",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
             AutoSize = false,
             Size = new Size(112, 22),
             TextAlign = ContentAlignment.MiddleRight,
-            Location = new Point(2, 196),
+            Location = new Point(2, 108),
         };
         headerRight.Controls.Add(version);
+
+        // Tombol Pengaturan (v2.5.0, permintaan user): roda gigi di
+        // pojok kanan atas kartu kepala — tepat di bawah tombol
+        // minimize jendela. Membuka jendela Pengaturan tempat
+        // saklar, tema, dan tombol PUTUSKAN kini tinggal.
+        _settingsButton = new RoundedButton
+        {
+            Text = "\u2699",
+            Font = new Font("Segoe UI Symbol", 13f),
+            BackColor = LightFill,
+            ForeColor = Ink,
+            CornerRadius = 10,
+            Size = new Size(40, 40),
+            Location = new Point(72, 6),
+        };
+        _settingsButton.Click += (s2, e2) => OpenSettings();
+        headerRight.Controls.Add(_settingsButton);
 
         // (Tombol "💬 Chat Muse" DIHAPUS di v2.4.1: chat kini
         // menyatu permanen di sebelah panel — tidak ada lagi yang
         // perlu dibuka lewat tombol.)
 
-        // Jalan otomatis saat Windows menyala (v2.1) — sejak v2.3.3
-        // berupa saklar ala iOS + label di kanannya. Status awalnya
-        // diisi InitStartOptions() saat jendela dimuat; handler
-        // perubahan dipasang di sana juga agar pengisian awal tidak
-        // menulis registry. Mengklik labelnya ikut membalik saklar
-        // (perilaku teks checkbox lama).
-        _autoStartCheck = new ToggleSwitch
-        {
-            BackColor = Card,
-            Location = new Point(16, 146),
-        };
-        header.Controls.Add(_autoStartCheck);
-        var autoStartLabel = new Label
-        {
-            Text = "Jalan otomatis",
-            Font = new Font("Segoe UI", 10f),
-            ForeColor = Ink,
-            BackColor = Card,
-            AutoSize = true,
-            Location = new Point(70, 149),
-        };
-        autoStartLabel.Click += (s, e) => _autoStartCheck.Checked = !_autoStartCheck.Checked;
-        header.Controls.Add(autoStartLabel);
-
-        // Mode Administrator (v2.3) — saklar kedua, tepat di bawah
-        // jalan otomatis. Status awalnya juga diisi InitStartOptions().
-        _adminCheck = new ToggleSwitch
-        {
-            BackColor = Card,
-            Location = new Point(16, 186),
-        };
-        header.Controls.Add(_adminCheck);
-        var adminLabel = new Label
-        {
-            Text = "Mode Administrator",
-            Font = new Font("Segoe UI", 10f),
-            ForeColor = Ink,
-            BackColor = Card,
-            AutoSize = true,
-            Location = new Point(70, 189),
-        };
-        adminLabel.Click += (s, e) => _adminCheck.Checked = !_adminCheck.Checked;
-        header.Controls.Add(adminLabel);
+        // (Saklar Jalan otomatis & Mode Administrator PINDAH ke
+        // jendela Pengaturan di v2.5.0 — lihat SettingsForm.)
 
         // Penanda level proses INI apa adanya (dari hak sebenarnya,
         // bukan dari pengaturan): hak proses tidak berubah selama
@@ -497,7 +491,7 @@ public sealed class MainForm : Form
             BackColor = Card,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(16, 222),
+            Location = new Point(16, 126),
         };
         header.Controls.Add(_modeLabel);
         leftRoot.Controls.Add(header);
@@ -520,7 +514,7 @@ public sealed class MainForm : Form
 
     private void BuildChatPane()
     {
-        var root = new Panel
+        var root = _chatRoot = new Panel
         {
             Dock = DockStyle.Fill,
             BackColor = Bg,
@@ -648,7 +642,8 @@ public sealed class MainForm : Form
         _chatErrorLabel.Visible = true;
     }
 
-    private void ToggleClicked(object sender, EventArgs e)
+    /// <summary>PUTUSKAN / Sambung lagi — kini dari jendela Pengaturan.</summary>
+    internal void ToggleServer()
     {
         if (_server.IsRunning)
         {
@@ -670,21 +665,7 @@ public sealed class MainForm : Form
                 Log("GAGAL memulai layanan: " + ex.Message);
             }
         }
-        RefreshToggleButton();
-    }
-
-    private void RefreshToggleButton()
-    {
-        if (_server.IsRunning)
-        {
-            _toggleButton.Text = "PUTUSKAN";
-            _toggleButton.BackColor = Red;
-        }
-        else
-        {
-            _toggleButton.Text = "Sambung lagi";
-            _toggleButton.BackColor = Accent;
-        }
+        _settingsForm?.RefreshServerButton();
     }
 
     // ---------- Jalan otomatis & Mode Administrator (v2.1 + v2.3) ----------
@@ -861,7 +842,7 @@ public sealed class MainForm : Form
     /// </summary>
     private void SyncAutoStart()
     {
-        bool autoStart = _autoStartCheck.Checked;
+        bool autoStart = _autoStartEnabled;
         bool adminWanted = Settings.AdminMode;
         bool elevated = Settings.IsElevated();
         try
@@ -929,11 +910,9 @@ public sealed class MainForm : Form
         if (firstRun)
             Log("Jalan otomatis saat Windows menyala: AKTIF (diaktifkan di jalan pertama).");
 
-        _autoStartCheck.Checked = autoStart;
-        _adminCheck.Checked = Settings.AdminMode;
-        // Handler dipasang SETELAH status awal terisi.
-        _autoStartCheck.CheckedChanged += AutoStartChanged;
-        _adminCheck.CheckedChanged += AdminModeChanged;
+        // Sejak v2.5.0 saklarnya tinggal di jendela Pengaturan —
+        // di sini cukup keadaan awal yang disimpan.
+        _autoStartEnabled = autoStart;
 
         if (Program.ElevationDeclined)
             Log("Mode Administrator ditolak — jalan sebagai pengguna biasa");
@@ -949,17 +928,19 @@ public sealed class MainForm : Form
         }
     }
 
-    private void AutoStartChanged(object sender, EventArgs e)
+    /// <summary>Dipanggil jendela Pengaturan saat saklar jalan otomatis berubah.</summary>
+    internal void ApplyAutoStart(bool on)
     {
-        Log(_autoStartCheck.Checked
+        _autoStartEnabled = on;
+        Log(on
             ? "Jalan otomatis saat Windows menyala: AKTIF"
             : "Jalan otomatis saat Windows menyala: MATI");
         SyncAutoStart();
     }
 
-    private void AdminModeChanged(object sender, EventArgs e)
+    /// <summary>Dipanggil jendela Pengaturan saat saklar Mode Administrator berubah.</summary>
+    internal void ApplyAdminMode(bool on)
     {
-        bool on = _adminCheck.Checked;
         try
         {
             Settings.AdminMode = on;
@@ -1005,6 +986,160 @@ public sealed class MainForm : Form
     {
         _statusDot.DotColor = DotStopped;
         _statusLabel.Text = text;
+    }
+
+    // ---------- Pengaturan, tema & jangan tidur (v2.5.0) ----------
+
+    private void OpenSettings()
+    {
+        if (_settingsForm != null && !_settingsForm.IsDisposed)
+        {
+            _settingsForm.Activate();
+            return;
+        }
+        _settingsForm = new SettingsForm(this);
+        _settingsForm.FormClosed += (s, e) => _settingsForm = null;
+        _settingsForm.Show(this);
+    }
+
+    /// <summary>Dipanggil jendela Pengaturan / endpoint /theme saat tema dipilih.</summary>
+    internal void SetTheme(string theme)
+    {
+        try { Settings.Theme = theme; } catch { /* registry gagal — tema sesi ini tetap berganti */ }
+        ApplyTheme();
+        Log("Tema tampilan: " + (theme == "light" ? "Terang" : theme == "dark" ? "Gelap" : "Ikuti perangkat"));
+    }
+
+    /// <summary>Dipanggil jendela Pengaturan saat saklar Jangan tidur berubah.</summary>
+    internal void ApplyKeepAwake(bool on)
+    {
+        try { Settings.KeepAwake = on; }
+        catch (Exception ex)
+        {
+            Log("GAGAL menyimpan Jangan tidur: " + ex.Message);
+            return;
+        }
+        NativeInput.SetKeepAwake(on);
+        Log(on
+            ? "Jangan tidur: AKTIF — PC dicegah tidur selama MuseLink jalan"
+            : "Jangan tidur: MATI");
+    }
+
+    /// <summary>
+    /// Cat ulang jendela utama (dan Pengaturan bila terbuka)
+    /// mengikuti tema efektif AppTheme saat ini.
+    /// </summary>
+    internal void ApplyTheme()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(ApplyTheme));
+            return;
+        }
+        BackColor = Bg;
+        if (_leftRoot != null) _leftRoot.BackColor = Bg;
+        if (_split != null)
+        {
+            _split.BackColor = Bg;
+            _split.Panel1.BackColor = Bg;
+            _split.Panel2.BackColor = Bg;
+        }
+        if (_headerCard != null)
+        {
+            _headerCard.FillColor = Card;
+            _headerCard.BorderColor = Hairline;
+            _headerCard.BackColor = Bg;
+        }
+        if (_logCard != null)
+        {
+            _logCard.FillColor = Card;
+            _logCard.BorderColor = Hairline;
+            _logCard.BackColor = Bg;
+        }
+        if (_chatBody != null)
+        {
+            _chatBody.FillColor = Card;
+            _chatBody.BorderColor = Hairline;
+            _chatBody.BackColor = Bg;
+        }
+        if (_chatRoot != null) _chatRoot.BackColor = Bg;
+        PaintThemedChildren(this);
+        if (_titleLabel != null) { _titleLabel.ForeColor = Ink; _titleLabel.BackColor = Card; }
+        if (_statusLabel != null) { _statusLabel.ForeColor = Ink; _statusLabel.BackColor = Card; }
+        if (_statusDot != null) _statusDot.BackColor = Card;
+        if (_addrLabel != null) { _addrLabel.ForeColor = InkDim; _addrLabel.BackColor = Card; }
+        if (_versionLabel != null) { _versionLabel.ForeColor = InkDim; _versionLabel.BackColor = Card; }
+        if (_modeLabel != null)
+        {
+            _modeLabel.ForeColor = Settings.IsElevated() ? Accent : InkDim;
+            _modeLabel.BackColor = Card;
+        }
+        if (_logBox != null)
+        {
+            _logBox.BackColor = Card;
+            _logBox.ForeColor = Ink;
+            int pos = _logBox.SelectionStart;
+            int len = _logBox.SelectionLength;
+            _logBox.SelectAll();
+            _logBox.SelectionColor = Ink;
+            _logBox.Select(pos, len);
+        }
+        if (_settingsButton != null)
+        {
+            _settingsButton.BackColor = LightFill;
+            _settingsButton.ForeColor = Ink;
+        }
+        if (_chatLoadingLabel != null) { _chatLoadingLabel.ForeColor = InkDim; _chatLoadingLabel.BackColor = Card; }
+        if (_chatErrorLabel != null) { _chatErrorLabel.ForeColor = ErrorInk; _chatErrorLabel.BackColor = ErrorBg; }
+        _settingsForm?.ApplyTheme();
+        Invalidate(true);
+    }
+
+    private void PaintThemedChildren(Control parent)
+    {
+        foreach (Control c in parent.Controls)
+        {
+            if (c is ToggleSwitch ts) ts.BackColor = Card;
+            else if (c is RoundDot rd) rd.BackColor = Card;
+            else if (c is Panel p && p is not RoundedPanel)
+                p.BackColor = (p.Tag as string) == "cardbg" ? Card : Bg;
+            PaintThemedChildren(c);
+        }
+    }
+
+    // Clipboard berubah → catatan kejadian (isi tidak dicatat,
+    // hanya panjang teksnya; isinya urusan endpoint /clipboard).
+    private const int WmClipboardUpdate = 0x031D;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        try { AddClipboardFormatListener(Handle); } catch { /* pemantau clipboard hanya bonus */ }
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        try { RemoveClipboardFormatListener(Handle); } catch { /* abaikan */ }
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WmClipboardUpdate)
+        {
+            int len = -1;
+            try { if (Clipboard.ContainsText()) len = Clipboard.GetText().Length; } catch { /* clipboard terkunci sesaat */ }
+            EventLog.Add("clipboard", len >= 0
+                ? "teks clipboard berubah (" + len + " karakter)"
+                : "clipboard berubah (bukan teks)");
+        }
+        base.WndProc(ref m);
     }
 
     // Dipanggil AgentServer tiap ada permintaan masuk dari Muse.

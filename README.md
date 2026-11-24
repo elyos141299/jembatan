@@ -1,4 +1,4 @@
-# MuseLink v2.4.5 — catatan pengembang
+# MuseLink v2.5.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -57,6 +57,11 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `GET /lastops` | — | `{ok, ops:[{seq, time, method, path, status, ms}]}` — 50 operasi Route terakhir, terbaru dulu (gelombang 2): cek anti-ambiguitas setelah koneksi putus |
 | `GET /frame?w=&q=` | — | JPEG bingkai layar terkompresi (binary `image/jpeg`) — lebar maks `w` (bawaan 1280, 320–1920), kualitas `q` (bawaan 70, 30–95); jalur lihat instan, lebih ringan dari `/screenshot`; wilayah opsional `&rx=&ry=&rw=&rh=` membatasi tangkapan ke satu wilayah (v2.4.4) |
 | `GET /ocr?x=&y=&w=&h=` | — | `{ok, text, words:[{t, x, y, w, h}], region}` — baca wilayah layar (bawaan: layar penuh) sebagai TEKS lewat OCR bawaan Windows (v2.4.4); respons ±1-2KB, kata bisa diklik berdasar isinya |
+| `GET /events?since=&max=` | — | `{ok, events:[{seq, time, kind, detail}], lastSeq}` — catatan kejadian PC (v2.5.0): process-start/stop, window-open/close, clipboard, idle-start/end, lock/unlock, app-start; cincin 200 kejadian |
+| `POST /listen` | `{seconds?}` (bawaan 5, maks 30) | WAV mentah (`audio/wav`) — rekaman loopback WASAPI audio yang sedang dimainkan PC, diperkecil jadi mono 16kHz (v2.5.0) |
+| `POST /say` | `{text, rate?}` | `{ok, spoken}` — ucapkan teks lewat speaker PC (TTS SAPI bawaan Windows, v2.5.0) |
+| `POST /theme` | `{choice: device\|light\|dark}` | `{ok, theme, dark}` — ganti tema tampilan aplikasi (v2.5.0) |
+| `POST /keepawake` | `{on}` | `{ok, keepAwake}` — saklar Jangan tidur lewat API (v2.5.0) |
 | `POST /keydown` / `POST /keyup` | `{key}` | `{ok:true}` — tahan/lepas satu tombol (`CTRL`, `SHIFT`, `ALT`, `WIN`, huruf/angka, `F1`–`F12`, arah, dst.) untuk kombinasi lintas perintah |
 | `POST /wait` | `{windowTitle?, filePath?, screenChange?, screenQuiet?, processGone?, processExists?, see?, timeoutMs?}` | `{ok, found, via, waitedMs, frame?}` — tunggu di sisi server sampai salah satu kondisi ketemu; `frame` (bila `see:true` & kondisi layar yang ketemu) = gambar wilayah yang dipantau, `{mime, x, y, width, height, b64}` (v2.4.4) |
 | `POST /batch` | `{actions:[{do, ...}], stopOnError?}` | `{ok, count, results}` — rangkaian aksi dijalankan berurutan di sisi PC dalam SATU panggilan (v2.4.1, "mode ngebut"); `do` = nama endpoint POST tanpa garis miring (`uia_click` = `/uia/click`) atau `sleep` {ms}; maks 100 aksi; berhenti pada galat pertama kecuali `stopOnError:false` |
@@ -66,6 +71,45 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.0 (dari v2.4.5) — "Lima Fitur + Pengaturan & Tema"
+
+Paket fitur yang diusulkan Muse dan disetujui user (24 Nov),
+ditambah dua arahan tata letak user di tengah jalan:
+
+- **`GET /events`** (baru, `EventLog.cs`): pemantau latar 2 detik
+  mencatat proses mulai/berhenti (sesi user, tanpa proses sistem
+  berisik), jendela buka/tutup, perubahan clipboard (dari
+  MainForm; isi tidak dicatat, hanya panjang teks), menganggur
+  5 menit, dan kunci/buka layar (SystemEvents).
+- **`POST /listen`** (baru, `AudioTools.cs` + NAudio): rekam
+  loopback WASAPI → WAV mono 16kHz (±32KB/detik).
+- **`POST /say`**: TTS SAPI (System.Speech) lewat speaker PC.
+- **Jangan tidur + /sysinfo kaya**: saklar cegah-tidur
+  (SetThreadExecutionState di thread khusus; tersimpan, diterapkan
+  saat mulai) + `POST /keepawake`; /sysinfo kini juga memuat
+  appUptimeSec, keepAwake, theme, themeDark, tailscaleRelay
+  (dari `tailscale status --json`, cache 60 dtk), eventsLastSeq.
+- **Stream & frame lebih ngebut**: tangkap layar StretchBlt
+  langsung ke ukuran tujuan (`NativeInput.CaptureScreenScaled`,
+  pengecilan oleh pengemudi grafis; jalur GDI+ lama jadi
+  cadangan) untuk /stream & /frame; batas fps stream naik 15→30.
+- **Jendela Pengaturan** (baru, `SettingsForm.cs`): tombol roda
+  gigi di pojok kanan atas kartu kepala (tepat di bawah minimize)
+  membukanya. PINDAH ke sana atas permintaan user: saklar Jalan
+  otomatis, Mode Administrator, Jangan tidur, pilihan Tema, dan
+  tombol besar PUTUSKAN/Sambung lagi (panel bawah jendela utama
+  dihapus — kartu log kini penuh sampai bawah). Logika tetap
+  milik MainForm (ApplyAutoStart/ApplyAdminMode/ApplyKeepAwake/
+  SetTheme/ToggleServer).
+- **Tema Terang / Gelap / Ikuti perangkat** (baru, `AppTheme.cs`):
+  palet MainForm menjadi properti mengikuti tema efektif;
+  ApplyTheme() mengecat ulang jendela utama + Pengaturan;
+  pilihan "Perangkat" membaca AppsUseLightTheme dan mengikuti
+  perubahan tema Windows secara langsung.
+- **Ikon dipoles**: icon.ico dibangun ulang dari master 1600px —
+  Lanczos + penajaman per ukuran, varian zoom glif untuk
+  16/20/24px; 9 ukuran (dulu 8).
 
 ## Perubahan v2.4.5 (dari v2.4.4) — Fix Interval Penjaga
 

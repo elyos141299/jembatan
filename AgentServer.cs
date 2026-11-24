@@ -73,6 +73,9 @@ public sealed class AgentServer
         var listener = _listener;
         var token = _cts.Token;
         _ = Task.Run(() => AcceptLoop(listener, token));
+        // Pemantau kejadian /events (v2.5.0): proses & jendela
+        // dipantau thread latar EventLog sejak listener jalan.
+        EventLog.StartMonitor();
     }
 
     public void Stop()
@@ -345,7 +348,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.5\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.0\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -461,7 +464,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.4.5",
+                    ["version"] = "2.5.0",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -474,6 +477,13 @@ public sealed class AgentServer
                     ["diskFreeGb"] = met.DiskFreeGb,
                     ["diskTotalGb"] = met.DiskTotalGb,
                     ["idleSec"] = met.IdleSec,
+                    // v2.5.0: kesehatan aplikasi & keadaan fitur baru.
+                    ["appUptimeSec"] = (int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalSeconds,
+                    ["keepAwake"] = NativeInput.KeepAwakeOn,
+                    ["theme"] = Settings.Theme,
+                    ["themeDark"] = AppTheme.IsDark,
+                    ["tailscaleRelay"] = TailscaleRelay(),
+                    ["eventsLastSeq"] = EventLog.LastSeq,
                 });
             }
 
@@ -531,11 +541,51 @@ public sealed class AgentServer
                 }
                 else
                 {
-                    using (var bmp = CaptureScaledBitmap(fw))
-                        jpeg = EncodeJpeg(bmp, fq);
+                    // Tangkap cepat (v2.5.0): StretchBlt mengecilkan
+                    // di pengemudi grafis; jalur lama jadi cadangan.
+                    try
+                    {
+                        using (var bmp = NativeInput.CaptureScreenScaled(fw))
+                            jpeg = EncodeJpeg(bmp, fq);
+                    }
+                    catch
+                    {
+                        using (var bmp = CaptureScaledBitmap(fw))
+                            jpeg = EncodeJpeg(bmp, fq);
+                    }
                     _log($"bingkai instan diambil ({fw}px, q{fq})");
                 }
                 return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
+            }
+
+            if (req.Method == "GET" && req.Path == "/events")
+            {
+                // Catatan kejadian PC (v2.5.0): apa yang terjadi
+                // selagi Muse tidak memanggil — proses mulai /
+                // berhenti, jendela buka / tutup, clipboard,
+                // menganggur, kunci layar. ?since=<seq> membatasi
+                // pada kejadian sesudah nomor urut itu.
+                long since = 0;
+                long.TryParse(GetQueryParam(req.Query, "since"), out since);
+                int emax = ParseClamp(GetQueryParam(req.Query, "max"), 100, 1, 200);
+                var evs = EventLog.Since(since, emax);
+                var elist = new List<Dictionary<string, object>>();
+                foreach (var ev in evs)
+                {
+                    elist.Add(new Dictionary<string, object>
+                    {
+                        ["seq"] = ev.Seq,
+                        ["time"] = ev.Time,
+                        ["kind"] = ev.Kind,
+                        ["detail"] = ev.Detail,
+                    });
+                }
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["events"] = elist,
+                    ["lastSeq"] = EventLog.LastSeq,
+                });
             }
 
             if (req.Method == "GET" && req.Path == "/ocr")
@@ -1049,6 +1099,91 @@ public sealed class AgentServer
                                 ["count"] = hasil.cocok.Count,
                                 ["clicked"] = hasil.clicked,
                                 ["matches"] = fList,
+                            });
+                        }
+                        case "/listen":
+                        {
+                            // Dengar audio PC (v2.5.0): rekam loopback
+                            // WASAPI selama {seconds} detik (bawaan 5,
+                            // maks 30) → WAV mono 16kHz mentah.
+                            int detik = GetInt(root, "seconds", 5);
+                            if (detik < 1) detik = 1;
+                            if (detik > 30) detik = 30;
+                            _onActivity();
+                            _log($"dengar audio PC ({detik} detik)…");
+                            byte[] wav;
+                            try
+                            {
+                                wav = AudioTools.CaptureLoopbackWav(detik);
+                            }
+                            catch (Exception ex)
+                            {
+                                _log("rekam audio gagal: " + ex.Message);
+                                return Response.Json("{\"ok\":false,\"error\":\"rekam audio gagal: " +
+                                    ex.Message.Replace("\\", " ").Replace("\"", " ") + "\"}", 500);
+                            }
+                            _log($"rekaman selesai ({wav.Length} byte)");
+                            return new Response { ContentType = "audio/wav", BodyBytes = wav };
+                        }
+                        case "/say":
+                        {
+                            // Bicara lewat speaker PC (v2.5.0): TTS
+                            // bawaan Windows (SAPI).
+                            string ucap = GetString(root, "text", "");
+                            if (string.IsNullOrWhiteSpace(ucap))
+                                return Response.Json("{\"ok\":false,\"error\":\"text kosong\"}", 400);
+                            if (ucap.Length > 500) ucap = ucap.Substring(0, 500);
+                            int rate = GetInt(root, "rate", 0);
+                            _onActivity();
+                            _log($"bicara: \"{ucap}\"");
+                            string err = AudioTools.Speak(ucap, rate);
+                            if (!string.IsNullOrEmpty(err))
+                                return Response.Json("{\"ok\":false,\"error\":\"" +
+                                    err.Replace("\\", " ").Replace("\"", " ") + "\"}", 500);
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["spoken"] = ucap,
+                            });
+                        }
+                        case "/theme":
+                        {
+                            // Ganti tema tampilan (v2.5.0):
+                            // {choice: device|light|dark}.
+                            string choice = GetString(root, "choice", "");
+                            if (choice != "device" && choice != "light" && choice != "dark")
+                                return Response.Json("{\"ok\":false,\"error\":\"choice harus device, light, atau dark\"}", 400);
+                            _onActivity();
+                            if (_ui is MainForm mf) mf.SetTheme(choice);
+                            else
+                            {
+                                try { Settings.Theme = choice; } catch { }
+                                _log("tema diganti: " + choice);
+                            }
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["theme"] = choice,
+                                ["dark"] = AppTheme.IsDark,
+                            });
+                        }
+                        case "/keepawake":
+                        {
+                            // Saklar Jangan tidur lewat API (v2.5.0) —
+                            // logika sama dengan saklar di Pengaturan.
+                            bool on = GetBool(root, "on", false);
+                            _onActivity();
+                            if (_ui is MainForm mf2) mf2.ApplyKeepAwake(on);
+                            else
+                            {
+                                try { Settings.KeepAwake = on; } catch { }
+                                NativeInput.SetKeepAwake(on);
+                                _log("jangan tidur: " + (on ? "AKTIF" : "MATI"));
+                            }
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["keepAwake"] = NativeInput.KeepAwakeOn,
                             });
                         }
                         case "/window":
@@ -1599,7 +1734,7 @@ public sealed class AgentServer
         _onActivity();
         int maxWidth = ParseClamp(GetQueryParam(head.Query, "w"), 1280, 320, 1920);
         int quality = ParseClamp(GetQueryParam(head.Query, "q"), 60, 30, 90);
-        int fps = ParseClamp(GetQueryParam(head.Query, "fps"), 10, 1, 15);
+        int fps = ParseClamp(GetQueryParam(head.Query, "fps"), 10, 1, 30);
         _log($"stream dimulai (lebar {maxWidth}, kualitas {quality}, target {fps} fps)");
         try
         {
@@ -1626,7 +1761,10 @@ public sealed class AgentServer
                 // v2 meng-Invoke per frame ke thread UI dan di dunia nyata
                 // hanya mencapai ±1–2 fps; sekarang thread UI bebas untuk
                 // klik/ketik yang datang bersamaan.
-                using (var bmp = CaptureScaledBitmap(maxWidth))
+                Bitmap bmp;
+                try { bmp = NativeInput.CaptureScreenScaled(maxWidth); }
+                catch { bmp = CaptureScaledBitmap(maxWidth); }
+                using (bmp)
                 {
                     var hash = HashBitmap(bmp);
                     bool unchanged = lastHash != null && hash.SequenceEqual(lastHash);
@@ -1662,6 +1800,64 @@ public sealed class AgentServer
         {
             _log("stream berhenti");
         }
+    }
+
+    private static string _relayCache = "";
+    private static long _relayCacheTick;
+
+    /// <summary>
+    /// Nama relay DERP yang dipakai jalur ke VM Muse ("nyc" dsb.),
+    /// dibaca dari `tailscale status --json` di PC ini dan di-cache
+    /// 60 detik agar /sysinfo tetap ringan. "" bila tidak terbaca.
+    /// </summary>
+    private static string TailscaleRelay()
+    {
+        long now = Environment.TickCount64;
+        if (now - _relayCacheTick < 60000) return _relayCache;
+        _relayCacheTick = now;
+        try
+        {
+            var exe = @"C:\Program Files\Tailscale\tailscale.exe";
+            if (!File.Exists(exe)) return _relayCache;
+            var psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = "status --json",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true,
+            };
+            using (var proc = Process.Start(psi))
+            {
+                string json = proc.StandardOutput.ReadToEnd();
+                if (!proc.WaitForExit(4000)) { try { proc.Kill(); } catch { } return _relayCache; }
+                using (var doc = JsonDocument.Parse(json))
+                {
+                    var rootEl = doc.RootElement;
+                    if (rootEl.TryGetProperty("Peer", out var peers) &&
+                        peers.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var peer in peers.EnumerateObject())
+                        {
+                            var pv = peer.Value;
+                            string host = "";
+                            if (pv.TryGetProperty("HostName", out var hn)) host = hn.GetString() ?? "";
+                            if (host.StartsWith("muse", StringComparison.OrdinalIgnoreCase) &&
+                                pv.TryGetProperty("Relay", out var rl))
+                            {
+                                _relayCache = rl.GetString() ?? "";
+                                return _relayCache;
+                            }
+                        }
+                    }
+                    if (rootEl.TryGetProperty("Self", out var self) &&
+                        self.TryGetProperty("Relay", out var sr))
+                        _relayCache = sr.GetString() ?? "";
+                }
+            }
+        }
+        catch { /* relay hanya keterangan */ }
+        return _relayCache;
     }
 
     /// <summary>

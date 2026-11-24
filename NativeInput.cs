@@ -412,6 +412,117 @@ public static class NativeInput
         return ((long)ft.High << 32) | ft.Low;
     }
 
+    /// <summary>Detik sejak masukan terakhir user (untuk pemantau kejadian).</summary>
+    public static int IdleSeconds()
+    {
+        var lii = new LastInputInfo();
+        lii.Size = (uint)Marshal.SizeOf(typeof(LastInputInfo));
+        if (GetLastInputInfo(ref lii))
+            return (int)((Environment.TickCount64 - (long)lii.Time) / 1000);
+        return 0;
+    }
+
+    // ---------- Jangan tidur (v2.5.0) ----------
+    // SetThreadExecutionState dengan ES_CONTINUOUS berlaku dari
+    // thread yang memanggilnya sampai diubah lagi; makanya dipakai
+    // satu thread khusus berumur panjang yang memasang bendera
+    // lalu tidur menunggu sinyal berhenti.
+
+    [DllImport("kernel32.dll")]
+    private static extern uint SetThreadExecutionState(uint esFlags);
+
+    private const uint EsContinuous = 0x80000000;
+    private const uint EsSystemRequired = 0x00000001;
+    private const uint EsDisplayRequired = 0x00000002;
+
+    private static readonly object _awakeLock = new object();
+    private static ManualResetEventSlim _awakeStop;
+
+    /// <summary>Keadaan cegah-tidur saat ini.</summary>
+    public static bool KeepAwakeOn { get; private set; }
+
+    /// <summary>Pasang / lepas cegah-tidur (sistem + layar).</summary>
+    public static void SetKeepAwake(bool on)
+    {
+        lock (_awakeLock)
+        {
+            if (on == KeepAwakeOn) return;
+            if (on)
+            {
+                var stop = new ManualResetEventSlim(false);
+                _awakeStop = stop;
+                var t = new Thread(() =>
+                {
+                    SetThreadExecutionState(EsContinuous | EsSystemRequired | EsDisplayRequired);
+                    stop.Wait();
+                    SetThreadExecutionState(EsContinuous);
+                })
+                { IsBackground = true, Name = "KeepAwake" };
+                t.Start();
+                KeepAwakeOn = true;
+            }
+            else
+            {
+                _awakeStop?.Set();
+                _awakeStop = null;
+                KeepAwakeOn = false;
+            }
+        }
+    }
+
+    // ---------- Tangkap layar cepat (v2.5.0) ----------
+    // StretchBlt langsung dari DC layar ke bitmap tujuan yang
+    // sudah berukuran kecil — pengemudi grafis yang mengerjakan
+    // pengecilannya, bukan GDI+ piksel per piksel seperti
+    // CaptureScaledBitmap lama. Dipakai /stream & /frame.
+
+    [DllImport("gdi32.dll")]
+    private static extern bool StretchBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest,
+        IntPtr hdcSrc, int xSrc, int ySrc, int wSrc, int hSrc, uint rop);
+
+    [DllImport("gdi32.dll")]
+    private static extern int SetStretchBltMode(IntPtr hdc, int mode);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+    private const uint Srccopy = 0x00CC0020;
+
+    /// <summary>
+    /// Tangkap layar utama langsung pada lebar tujuan (pengecilan
+    /// oleh pengemudi grafis). Pemanggil membuang bitmap-nya.
+    /// </summary>
+    public static Bitmap CaptureScreenScaled(int maxWidth)
+    {
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        int tw = Math.Min(maxWidth, bounds.Width);
+        if (tw <= 0) tw = bounds.Width;
+        int th = Math.Max(1, (int)(bounds.Height * (tw / (double)bounds.Width)));
+        var bmp = new Bitmap(tw, th);
+        IntPtr hdcSrc = GetDC(IntPtr.Zero);
+        try
+        {
+            using (var g = Graphics.FromImage(bmp))
+            {
+                IntPtr hdcDst = g.GetHdc();
+                try
+                {
+                    SetStretchBltMode(hdcDst, 3); // COLORONCOLOR — cepat
+                    StretchBlt(hdcDst, 0, 0, tw, th, hdcSrc,
+                        bounds.X, bounds.Y, bounds.Width, bounds.Height, Srccopy);
+                }
+                finally { g.ReleaseHdc(hdcDst); }
+            }
+        }
+        finally { if (hdcSrc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, hdcSrc); }
+        return bmp;
+    }
+
     /// <summary>Angka kesehatan PC untuk /sysinfo (v2.4.0 gelombang 2).</summary>
     public sealed class Metrics
     {

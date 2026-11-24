@@ -135,7 +135,7 @@ public class ToggleSwitch : Control
         var trackRect = new Rectangle(0, 0, Width - 1, Height - 1);
         Color track = _checked
             ? Color.FromArgb(52, 199, 89)
-            : Color.FromArgb(232, 232, 237);
+            : (AppTheme.IsDark ? Color.FromArgb(57, 57, 61) : Color.FromArgb(232, 232, 237));
         using (var path = RoundedPanel.RoundRectPath(trackRect, Height / 2))
         {
             using (var brush = new SolidBrush(track))
