@@ -1,4 +1,4 @@
-# MuseLink v2.9.1 — catatan pengembang
+# MuseLink v2.10.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,25 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.10.0 (dari v2.9.1) — Arah Aubergine Two-Zone
+- Midnight Rich diganti lagi atas permintaan user; riset
+  ronde tiga menunjuk akar persoalan: chat putih raksasa tak
+  pernah menyatu dengan cangkang gelap. User memilih pola
+  dua zona Slack: panel plum jenuh + chat putih flush.
+- Token gelap diganti keluarga plum Slack: Panel #4A154B,
+  Card #611F69, Bg/LogBg #350D36, Ink #FFFFFF, InkDim
+  #CFC3CF, InkFaint #B29AB4, Hairline #7E4880, Accent Sky
+  #36C5F0, Green #2EB67D, Red #E01E5A, DotWaiting #ECB22E.
+  Garis gradasi kepala kini Sky -> Green (AccentAlt).
+- Chat FLUSH di tema gelap: Padding root 0, radius & padding
+  kartu chat 0 — web view menempel ke tepi zonanya.
+- Tombol Sambungkan dibalik: putih, teks #350D36.
+- Logo baru: ubin putih + glif plum (logo-aubergine.png);
+  icon.ico dibangun ulang 9 ukuran. Palet terang utuh.
+- Pengaturan SENGAJA tetap mengikuti tema (plum), menyimpang
+  dari riset yang mengusulkan Pengaturan terang — konsistensi
+  dipilih (user baru saja protes bar judul putih yang belang).
 
 ## Perubahan v2.9.1 (dari v2.9.0) — Perbaikan inspeksi visual
 - SEGITIGA PUTIH di sudut kartu/tombol (keluhan user):

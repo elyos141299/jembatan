@@ -63,27 +63,29 @@ public static class AppTheme
     }
 
     // ---------- Palet ----------
-    public static Color Bg => IsDark ? Color.FromArgb(22, 24, 43) : Color.FromArgb(245, 245, 247);
-    public static Color Card => IsDark ? Color.FromArgb(35, 38, 66) : Color.FromArgb(255, 255, 255);
+    public static Color Bg => IsDark ? Color.FromArgb(53, 13, 54) : Color.FromArgb(245, 245, 247);
+    public static Color Card => IsDark ? Color.FromArgb(97, 31, 105) : Color.FromArgb(255, 255, 255);
     // v2.8.0 (rombak gelap modern): permukaan panel (panel kiri, bar
     // judul, strip status) satu tingkat di atas Bg; area log adalah
     // "sumur" inset satu tingkat di bawah Bg. Terang: Panel = Bg dan
     // LogBg = putih kartu — tampang terang tidak berubah.
-    public static Color Panel => IsDark ? Color.FromArgb(16, 18, 34) : Color.FromArgb(245, 245, 247);
-    public static Color LogBg => IsDark ? Color.FromArgb(13, 14, 26) : Color.FromArgb(255, 255, 255);
-    public static Color Ink => IsDark ? Color.FromArgb(237, 238, 247) : Color.FromArgb(29, 29, 31);
-    public static Color InkDim => IsDark ? Color.FromArgb(181, 184, 214) : Color.FromArgb(110, 110, 115);
-    public static Color InkFaint => IsDark ? Color.FromArgb(122, 126, 163) : Color.FromArgb(174, 174, 178);
-    public static Color Hairline => IsDark ? Color.FromArgb(52, 56, 96) : Color.FromArgb(227, 227, 232);
-    public static Color Accent => IsDark ? Color.FromArgb(88, 101, 242) : Color.FromArgb(0, 113, 227);
+    public static Color Panel => IsDark ? Color.FromArgb(74, 21, 75) : Color.FromArgb(245, 245, 247);
+    public static Color LogBg => IsDark ? Color.FromArgb(53, 13, 54) : Color.FromArgb(255, 255, 255);
+    public static Color Ink => IsDark ? Color.FromArgb(255, 255, 255) : Color.FromArgb(29, 29, 31);
+    public static Color InkDim => IsDark ? Color.FromArgb(207, 195, 207) : Color.FromArgb(110, 110, 115);
+    public static Color InkFaint => IsDark ? Color.FromArgb(178, 154, 180) : Color.FromArgb(174, 174, 178);
+    public static Color Hairline => IsDark ? Color.FromArgb(126, 72, 128) : Color.FromArgb(227, 227, 232);
+    public static Color Accent => IsDark ? Color.FromArgb(54, 197, 240) : Color.FromArgb(0, 113, 227);
     // v2.9.0 (Midnight Rich): pasangan gradasi aksen — fuchsia,
     // hanya dipakai sebagai ujung gradasi (tombol & logo).
-    public static Color AccentAlt => Color.FromArgb(235, 69, 158);
-    public static Color Green => IsDark ? Color.FromArgb(35, 165, 90) : Color.FromArgb(52, 199, 89);
-    public static Color Red => IsDark ? Color.FromArgb(242, 63, 67) : Color.FromArgb(255, 59, 48);
-    public static Color LightFill => IsDark ? Color.FromArgb(42, 45, 79) : Color.FromArgb(232, 232, 237);
-    public static Color DotWaiting => IsDark ? Color.FromArgb(240, 178, 50) : Color.FromArgb(255, 159, 10);
-    public static Color DotStopped => IsDark ? Color.FromArgb(128, 132, 142) : Color.FromArgb(174, 174, 178);
-    public static Color ErrorBg => IsDark ? Color.FromArgb(46, 24, 30) : Color.FromArgb(255, 244, 204);
-    public static Color ErrorInk => IsDark ? Color.FromArgb(255, 150, 153) : Color.FromArgb(138, 109, 0);
+    // v2.10.0 (Aubergine): pasangan gradasi kini Sky -> Green
+    // (warna status Slack) untuk garis aksen kartu kepala.
+    public static Color AccentAlt => AppTheme.IsDark ? Color.FromArgb(46, 182, 125) : Color.FromArgb(235, 69, 158);
+    public static Color Green => IsDark ? Color.FromArgb(46, 182, 125) : Color.FromArgb(52, 199, 89);
+    public static Color Red => IsDark ? Color.FromArgb(224, 30, 90) : Color.FromArgb(255, 59, 48);
+    public static Color LightFill => IsDark ? Color.FromArgb(97, 31, 105) : Color.FromArgb(232, 232, 237);
+    public static Color DotWaiting => IsDark ? Color.FromArgb(236, 178, 46) : Color.FromArgb(255, 159, 10);
+    public static Color DotStopped => IsDark ? Color.FromArgb(168, 144, 170) : Color.FromArgb(174, 174, 178);
+    public static Color ErrorBg => IsDark ? Color.FromArgb(70, 24, 40) : Color.FromArgb(255, 244, 204);
+    public static Color ErrorInk => IsDark ? Color.FromArgb(248, 170, 185) : Color.FromArgb(138, 109, 0);
 }

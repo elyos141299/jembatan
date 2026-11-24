@@ -175,7 +175,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v2.9.1", 20, 496, 8.5f, false, true);
+        MakeLabel("MuseLink v2.10.0", 20, 496, 8.5f, false, true);
     }
 
     private RoundedButton MakePill(string text, int x, Action onClick)

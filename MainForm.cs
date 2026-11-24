@@ -185,14 +185,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.9.1 dimulai ===");
+            Log("=== MuseLink v2.10.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.9.1 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.10.0 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -517,7 +517,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v2.9.1",
+            Text = "v2.10.0",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -773,7 +773,7 @@ public sealed class MainForm : Form
         MakeTile2(tiles, 0, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile2(tiles, 0, 1, "UPTIME", "0m", out _tileUptimeValue);
         MakeTile2(tiles, 1, 0, "CAPTURE", "…", out _tileCaptureValue);
-        MakeTile2(tiles, 1, 1, "VERSI", "2.9.1", out _tileVersionValue);
+        MakeTile2(tiles, 1, 1, "VERSI", "2.10.0", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -1515,11 +1515,20 @@ public sealed class MainForm : Form
         else
         {
             _serverBtn.Text = "Sambungkan";
-            // v2.9.0: tombol utama memakai gradasi Blurple->fuchsia
-            // di tema gelap (tanda tangan Midnight Rich).
-            _serverBtn.GradientEnd = AppTheme.IsDark ? (Color?)AccentAlt : null;
-            _serverBtn.BackColor = Accent;
-            _serverBtn.ForeColor = Color.White;
+            // v2.10.0 (Aubergine Two-Zone): tombol utama DIBALIK di
+            // tema gelap — putih di atas plum, teks plum pekat
+            // (pola Slack); tema terang tetap aksen seperti biasa.
+            _serverBtn.GradientEnd = null;
+            if (AppTheme.IsDark)
+            {
+                _serverBtn.BackColor = Color.White;
+                _serverBtn.ForeColor = Color.FromArgb(53, 13, 54);
+            }
+            else
+            {
+                _serverBtn.BackColor = Accent;
+                _serverBtn.ForeColor = Color.White;
+            }
         }
     }
 
@@ -1675,6 +1684,17 @@ public sealed class MainForm : Form
         if (_stripDot != null) _stripDot.BackColor = Panel;
         if (_stripLabel != null) { _stripLabel.ForeColor = InkDim; _stripLabel.BackColor = Panel; }
         if (_gradBar != null) { _gradBar.Visible = AppTheme.IsDark; _gradBar.StartColor = Accent; _gradBar.EndColor = AccentAlt; _gradBar.Invalidate(); }
+        // v2.10.0 (Aubergine): di tema gelap chat menjadi zona kedua
+        // yang FLUSH penuh — tanpa gutter, tanpa sudut kartu, web
+        // view menempel langsung ke tepi zona; tema terang tetap
+        // memakai kartu chat terapung seperti sebelumnya.
+        if (_chatRoot != null) _chatRoot.Padding = AppTheme.IsDark ? new Padding(0) : new Padding(0, 12, 12, 12);
+        if (_chatBody != null)
+        {
+            _chatBody.CornerRadius = AppTheme.IsDark ? 0 : 8;
+            _chatBody.Padding = AppTheme.IsDark ? new Padding(0) : new Padding(10);
+            _chatBody.Invalidate();
+        }
         if (_stripUptime != null) { _stripUptime.ForeColor = InkDim; _stripUptime.BackColor = Panel; }
         if (_stripLogLabel != null) { _stripLogLabel.ForeColor = InkDim; _stripLogLabel.BackColor = Panel; }
         if (_logPanel != null) _logPanel.BackColor = Panel;
