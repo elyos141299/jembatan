@@ -76,6 +76,20 @@ public sealed class AgentServer
         // Pemantau kejadian /events (v2.5.0): proses & jendela
         // dipantau thread latar EventLog sejak listener jalan.
         EventLog.StartMonitor();
+        // Penghangat cache relay Tailscale (v2.5.5): /sysinfo
+        // pertama sesudah aplikasi mulai dulu lambat (query
+        // `tailscale status` dingin). Thread ini mengisi cache
+        // sejak start dan menyegarkannya tiap 50 detik (umur
+        // cache 60 detik), jadi /sysinfo selalu dari cache.
+        var warmer = new Thread(() =>
+        {
+            while (true)
+            {
+                try { TailscaleRelay(); } catch { /* hanya keterangan */ }
+                Thread.Sleep(50000);
+            }
+        }) { IsBackground = true, Name = "RelayWarmer" };
+        warmer.Start();
     }
 
     public void Stop()
@@ -348,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.4\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.5\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -464,7 +478,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.5.4",
+                    ["version"] = "2.5.5",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -666,8 +680,10 @@ public sealed class AgentServer
                             // "do" = nama endpoint tanpa garis miring
                             // (move/click/type/key/keydown/keyup/
                             // scroll/drag/focus/window/uia_click/
-                            // clipboard/paste/open/exec/shell/wait)
+                            // clipboard/paste/open/exec/shell/wait/ocr)
                             // atau {"do":"sleep","ms":300} untuk jeda.
+                            // "ocr" membaca teks wilayah layar
+                            // (x/y/w/h) di tengah rangkaian (v2.5.5).
                             // Hasil tiap aksi dikembalikan sebagai
                             // daftar; berhenti pada galat pertama
                             // kecuali "stopOnError":false.
@@ -724,6 +740,22 @@ public sealed class AgentServer
                                     Query = "",
                                     Body = action.GetRawText(),
                                 };
+                                // Aksi "ocr" (v2.5.5): /ocr aslinya
+                                // endpoint GET berparameter query —
+                                // teruskan sebagai sub-permintaan GET
+                                // dengan query yang disusun dari field
+                                // aksi, supaya baca-teks bisa ikut di
+                                // tengah rangkaian batch (satu
+                                // panggilan untuk pola tunggu-klik-baca).
+                                if (doName == "ocr")
+                                {
+                                    subReq.Method = "GET";
+                                    subReq.Query = "x=" + GetInt(action, "x", 0) +
+                                                   "&y=" + GetInt(action, "y", 0) +
+                                                   "&w=" + GetInt(action, "w", 0) +
+                                                   "&h=" + GetInt(action, "h", 0);
+                                    subReq.Body = "";
+                                }
                                 Response subResp;
                                 try { subResp = Route(subReq); }
                                 catch (Exception ex)
@@ -791,6 +823,7 @@ public sealed class AgentServer
                         }
                         case "/move":
                         {
+                            if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             OnUi(() => { NativeInput.Move(x, y); return true; });
                             _onActivity();
@@ -799,6 +832,7 @@ public sealed class AgentServer
                         }
                         case "/click":
                         {
+                            if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             string button = GetString(root, "button", "left");
                             // count (v2.4.0): 2 = klik ganda, 3 = klik tiga.
@@ -1221,6 +1255,7 @@ public sealed class AgentServer
                         }
                         case "/scroll":
                         {
+                            if (!HasInt(root, "x") || !HasInt(root, "y") || !HasInt(root, "delta")) return MissingField("x/y/delta");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             int delta = GetInt(root, "delta", 0);
                             OnUi(() => { NativeInput.Scroll(x, y, delta); return true; });
@@ -1230,6 +1265,7 @@ public sealed class AgentServer
                         }
                         case "/drag":
                         {
+                            if (!HasInt(root, "x1") || !HasInt(root, "y1") || !HasInt(root, "x2") || !HasInt(root, "y2")) return MissingField("x1/y1/x2/y2");
                             int x1 = GetInt(root, "x1", 0), y1 = GetInt(root, "y1", 0);
                             int x2 = GetInt(root, "x2", 0), y2 = GetInt(root, "y2", 0);
                             string button = GetString(root, "button", "left");
@@ -2112,5 +2148,22 @@ public sealed class AgentServer
             v.TryGetInt32(out int i))
             return i;
         return fallback;
+    }
+
+    /// <summary>True bila field angka benar-benar dikirim di body
+    /// (v2.5.5: bedakan "tidak dikirim" dari nilai 0 yang sah —
+    /// dulu body kosong untuk /click tetap dijawab ok dan klik
+    /// terjadi di pojok 0,0).</summary>
+    private static bool HasInt(JsonElement root, string name)
+    {
+        return root.ValueKind == JsonValueKind.Object &&
+               root.TryGetProperty(name, out var v) &&
+               v.ValueKind == JsonValueKind.Number;
+    }
+
+    /// <summary>Jawaban 400 baku untuk field wajib yang hilang.</summary>
+    private static Response MissingField(string field)
+    {
+        return Response.Json("{\"ok\":false,\"error\":\"field wajib hilang: " + field + "\"}", 400);
     }
 }

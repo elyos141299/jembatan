@@ -91,6 +91,9 @@ public static class EventLog
         "SearchFilterHost", "smartscreen", "MpCmdRun", "TiWorker",
         "TrustedInstaller", "WmiPrvSE", "backgroundTaskHost", "svchost",
         "csrss", "winlogon", "fontdrvhost", "dwm", "sihost", "taskhostw",
+        // Anak proses panel chat (WebView2) lahir-mati terus sepanjang
+        // aplikasi jalan — sumber noise terbesar /events (v2.5.5).
+        "msedgewebview2",
     };
 
     /// <summary>Mulai pemantau (sekali saja; dipanggil AgentServer).</summary>

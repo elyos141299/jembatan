@@ -1,4 +1,4 @@
-# MuseLink v2.5.4 — catatan pengembang
+# MuseLink v2.5.5 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,30 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.5 (dari v2.5.4) — Paket Perbaikan Full Test
+
+Tiga temuan full test v2.5.4 (diparkir user 24 Nov, dibuka lagi
+atas perintahnya di hari yang sama; fitur voice command sempat
+dipertimbangkan lalu dibatalkan user sebelum sempat dibangun):
+
+- **Validasi field koordinat**: `/click`, `/move`, `/scroll`,
+  `/drag` kini menolak body yang tidak memuat koordinatnya
+  (HTTP 400 "field wajib hilang"). Sebelumnya body kosong `{}`
+  untuk `/click` dijawab ok dan klik benar-benar terjadi di
+  pojok (0,0). Helper baru `HasInt` + `MissingField`.
+- **/events bebas noise WebView2**: `msedgewebview2` masuk
+  daftar `Noise` di EventLog — anak proses panel chat lahir-mati
+  terus dan dulu memenuhi catatan kejadian.
+- **/sysinfo pertama tidak lagi lambat**: thread penghangat
+  `RelayWarmer` mengisi cache relay Tailscale sejak server start
+  dan menyegarkannya tiap 50 detik (umur cache 60 detik).
+- **Aksi `ocr` di dalam /batch** (tambahan atas permintaan user
+  di hari yang sama — respon terasa lebih cepat lewat panggilan
+  yang lebih gemuk): rangkaian batch kini bisa memuat
+  `{"do":"ocr","x":..,"y":..,"w":..,"h":.."}` dan menerima teks
+  hasil bacaan pada hasil rangkaian yang sama. Pola
+  tunggu-klik-baca yang dulu 3 panggilan kini cukup 1.
 
 ## Perubahan v2.5.4 (dari v2.5.3) — Ukuran Minimum Jendela
 
