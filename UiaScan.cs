@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Windows.Automation;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
+using FlaUI.UIA3;
 
 namespace Jembatan;
 
@@ -15,10 +17,15 @@ namespace Jembatan;
 /// Muse meminta daftarnya (/uia), memilih elemen berdasarkan NAMA,
 /// lalu mengklik titik tengahnya (/uia/click) — jauh lebih presisi.
 ///
+/// Dipakai lewat pustaka FlaUI.UIA3 (NuGet): rujukan langsung ke
+/// rakitan kerangka UIAutomationClient tidak terselesaikan di CI
+/// (build #13 gagal karenanya) — FlaUI membungkus COM UI Automation
+/// resmi dan memang dibuat untuk .NET modern.
+///
 /// Hasil pindai terakhir disimpan statis; /uia/click memakai indeks
 /// dari daftar itu. Semua fungsi di sini dipanggil dari thread UI
 /// (AgentServer mengurus lewat OnUi) agar konsisten dengan injeksi
-/// input lain dan menghindari masalah apartemen COM.
+/// input lain.
 /// </summary>
 public static class UiaScan
 {
@@ -74,39 +81,35 @@ public static class UiaScan
         var fg = NativeInput.ForegroundHandle();
         if (fg == IntPtr.Zero) return _last;
 
-        AutomationElement root;
-        try { root = AutomationElement.FromHandle(fg); }
-        catch { return _last; }
-        if (root == null) return _last;
-
-        AutomationElementCollection all;
         try
         {
-            var cond = new PropertyCondition(AutomationElement.IsControlElementProperty, true);
-            all = root.FindAll(TreeScope.Descendants, cond);
-        }
-        catch { return _last; }
-
-        foreach (AutomationElement el in all)
-        {
-            if (_last.Count >= maxItems) break;
-            try
+            using (var automation = new UIA3Automation())
             {
-                var cur = el.Current;
-                if (!Interesting.Contains(cur.ControlType)) continue;
-                if (cur.IsOffscreen) continue;
-                var r = cur.BoundingRectangle;
-                if (r.Width <= 0 || r.Height <= 0) continue;
-                _last.Add(new Item
+                var root = automation.FromHandle(fg);
+                if (root == null) return _last;
+                var all = root.FindAllDescendants();
+                foreach (var el in all)
                 {
-                    Name = cur.Name ?? "",
-                    Type = cur.ControlType.ProgrammaticName.Replace("ControlType.", ""),
-                    Rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height),
-                    Enabled = cur.IsEnabled,
-                });
+                    if (_last.Count >= maxItems) break;
+                    try
+                    {
+                        if (!Interesting.Contains(el.ControlType)) continue;
+                        if (el.IsOffscreen) continue;
+                        var r = el.BoundingRectangle;
+                        if (r.Width <= 0 || r.Height <= 0) continue;
+                        _last.Add(new Item
+                        {
+                            Name = el.Name ?? "",
+                            Type = el.ControlType.ToString(),
+                            Rect = r,
+                            Enabled = el.IsEnabled,
+                        });
+                    }
+                    catch { /* elemen hilang di tengah pindai dsb. — lewati */ }
+                }
             }
-            catch { /* elemen hilang di tengah pindai dsb. — lewati */ }
         }
+        catch { /* UIA gagal total (jendela aman dsb.) — daftar kosong */ }
         return _last;
     }
 

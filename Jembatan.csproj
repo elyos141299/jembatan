@@ -23,11 +23,12 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
 
-  <!-- UI Automation (peta elemen jendela, v2.4.0): bagian dari
-       kerangka Microsoft.WindowsDesktop.App, bukan paket NuGet. -->
+  <!-- UI Automation (peta elemen jendela, v2.4.0): lewat FlaUI —
+       rujukan rakitan kerangka UIAutomationClient tidak
+       terselesaikan di CI (build #13), FlaUI.UIA3 adalah bungkus
+       NuGet resmi-komunitas untuk COM UI Automation yang sama. -->
   <ItemGroup>
-    <Reference Include="UIAutomationClient" />
-    <Reference Include="UIAutomationTypes" />
+    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
   </ItemGroup>
 
 </Project>
