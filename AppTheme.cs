@@ -5,49 +5,31 @@ using Microsoft.Win32;
 namespace Jembatan;
 
 /// <summary>
-/// Tema tampilan MuseLink (v2.5.0, pilihan user): Terang / Gelap /
-/// Perangkat (mengikuti tema aplikasi Windows). Palet terang adalah
-/// tema iCloud sejak v2.3.3; palet gelap pasangannya bergaya iOS
-/// dark (latar nyaris hitam, kartu abu gelap, aksen biru terang).
+/// Palet MuseLink v3.0.0 — SATU tampilan terkunci dari blueprint
+/// yang disetujui user (25 Nov 2026): basis Lavender iPhone 17
+/// dipasangkan "Split-Complement Sage + Pale Gold" (Pasangan 4).
+/// Pilihan tema Terang/Gelap/Perangkat PENSIUN — blueprint adalah
+/// satu desain final, bukan keluarga tema. Enum Choice, Current
+/// dan IsDark dipertahankan sebagai shim kompatibilitas (IsDark
+/// kini selalu false) agar sisa pemanggil lama tetap terkompilasi;
+/// nilai Settings.Theme lama tidak lagi berpengaruh.
 ///
-/// MainForm membaca warna lewat properti di sini (bukan konstanta
-/// lagi), dan ApplyTheme() mengecat ulang semua kontrol saat tema
-/// berganti — termasuk mengikuti perubahan tema Windows secara
-/// langsung bila pilihan = Perangkat.
+/// Aturan jatah warna blueprint: ±60% kanvas lavender pucat, ±30%
+/// struktur violet, aksen jenuh hanya untuk aksi; sage &amp; emas
+/// pucat HANYA permukaan aksen (teks sage di atas terang gagal
+/// kontras) — status Terhubung memakai sage yang diperdalam.
 /// </summary>
 public static class AppTheme
 {
     public enum Choice { Device, Light, Dark }
 
-    /// <summary>Pilihan tersimpan saat ini (dari Settings).</summary>
-    public static Choice Current
-    {
-        get
-        {
-            switch (Settings.Theme)
-            {
-                case "light": return Choice.Light;
-                case "dark": return Choice.Dark;
-                default: return Choice.Device;
-            }
-        }
-    }
+    /// <summary>Shim kompatibilitas: kini selalu Light.</summary>
+    public static Choice Current => Choice.Light;
 
-    /// <summary>True bila tema EFEKTIF saat ini gelap.</summary>
-    public static bool IsDark
-    {
-        get
-        {
-            switch (Current)
-            {
-                case Choice.Dark: return true;
-                case Choice.Light: return false;
-                default: return !SystemUsesLightTheme();
-            }
-        }
-    }
+    /// <summary>Shim kompatibilitas: desain v3.0 selalu terang.</summary>
+    public static bool IsDark => false;
 
-    /// <summary>Tema aplikasi Windows: AppsUseLightTheme 1 = terang, 0 = gelap.</summary>
+    /// <summary>Tema aplikasi Windows (dipakai shim lama; kini tak berpengaruh).</summary>
     public static bool SystemUsesLightTheme()
     {
         try
@@ -62,30 +44,49 @@ public static class AppTheme
         return true;
     }
 
-    // ---------- Palet ----------
-    public static Color Bg => IsDark ? Color.FromArgb(53, 13, 54) : Color.FromArgb(245, 245, 247);
-    public static Color Card => IsDark ? Color.FromArgb(97, 31, 105) : Color.FromArgb(255, 255, 255);
-    // v2.8.0 (rombak gelap modern): permukaan panel (panel kiri, bar
-    // judul, strip status) satu tingkat di atas Bg; area log adalah
-    // "sumur" inset satu tingkat di bawah Bg. Terang: Panel = Bg dan
-    // LogBg = putih kartu — tampang terang tidak berubah.
-    public static Color Panel => IsDark ? Color.FromArgb(74, 21, 75) : Color.FromArgb(245, 245, 247);
-    public static Color LogBg => IsDark ? Color.FromArgb(53, 13, 54) : Color.FromArgb(255, 255, 255);
-    public static Color Ink => IsDark ? Color.FromArgb(255, 255, 255) : Color.FromArgb(29, 29, 31);
-    public static Color InkDim => IsDark ? Color.FromArgb(207, 195, 207) : Color.FromArgb(110, 110, 115);
-    public static Color InkFaint => IsDark ? Color.FromArgb(178, 154, 180) : Color.FromArgb(174, 174, 178);
-    public static Color Hairline => IsDark ? Color.FromArgb(126, 72, 128) : Color.FromArgb(227, 227, 232);
-    public static Color Accent => IsDark ? Color.FromArgb(54, 197, 240) : Color.FromArgb(0, 113, 227);
-    // v2.9.0 (Midnight Rich): pasangan gradasi aksen — fuchsia,
-    // hanya dipakai sebagai ujung gradasi (tombol & logo).
-    // v2.10.0 (Aubergine): pasangan gradasi kini Sky -> Green
-    // (warna status Slack) untuk garis aksen kartu kepala.
-    public static Color AccentAlt => AppTheme.IsDark ? Color.FromArgb(46, 182, 125) : Color.FromArgb(235, 69, 158);
-    public static Color Green => IsDark ? Color.FromArgb(46, 182, 125) : Color.FromArgb(52, 199, 89);
-    public static Color Red => IsDark ? Color.FromArgb(224, 30, 90) : Color.FromArgb(255, 59, 48);
-    public static Color LightFill => IsDark ? Color.FromArgb(97, 31, 105) : Color.FromArgb(232, 232, 237);
-    public static Color DotWaiting => IsDark ? Color.FromArgb(236, 178, 46) : Color.FromArgb(255, 159, 10);
-    public static Color DotStopped => IsDark ? Color.FromArgb(168, 144, 170) : Color.FromArgb(174, 174, 178);
-    public static Color ErrorBg => IsDark ? Color.FromArgb(70, 24, 40) : Color.FromArgb(255, 244, 204);
-    public static Color ErrorInk => IsDark ? Color.FromArgb(248, 170, 185) : Color.FromArgb(138, 109, 0);
+    // ---------- Palet Pasangan 4 (blueprint final) ----------
+    /// <summary>Kanvas lavender pucat #F3F0FF.</summary>
+    public static Color Bg => Color.FromArgb(243, 240, 255);
+    /// <summary>Permukaan panel #E6E6FA.</summary>
+    public static Color Panel => Color.FromArgb(230, 230, 250);
+    /// <summary>Kartu putih.</summary>
+    public static Color Card => Color.FromArgb(255, 255, 255);
+    /// <summary>Panel log = sumur tinta #3D3461.</summary>
+    public static Color LogBg => Color.FromArgb(61, 52, 97);
+    /// <summary>Tinta violet pekat #3D3461 (teks + rel + strip kepala chat).</summary>
+    public static Color Ink => Color.FromArgb(61, 52, 97);
+    /// <summary>Teks sekunder violet #6B59A0.</summary>
+    public static Color InkDim => Color.FromArgb(107, 89, 160);
+    /// <summary>Teks keterangan pucat #9B89C0 (hanya keterangan kecil).</summary>
+    public static Color InkFaint => Color.FromArgb(155, 137, 192);
+    /// <summary>Garis rambut keunguan #D5CFEC.</summary>
+    public static Color Hairline => Color.FromArgb(213, 207, 236);
+    /// <summary>Aksen aksi #6B59A0 (teks putih di atasnya ±5,9:1).</summary>
+    public static Color Accent => Color.FromArgb(107, 89, 160);
+    /// <summary>Aksen tekan/hover #7851A9.</summary>
+    public static Color AccentStrong => Color.FromArgb(120, 81, 169);
+    /// <summary>Pasangan aksen permukaan: emas pucat #F2D492.</summary>
+    public static Color AccentAlt => Color.FromArgb(242, 212, 146);
+    /// <summary>Sage #9CAF88 — permukaan aksen saja, bukan teks.</summary>
+    public static Color Sage => Color.FromArgb(156, 175, 136);
+    /// <summary>Emas pucat #F2D492 — permukaan aksen saja.</summary>
+    public static Color Gold => Color.FromArgb(242, 212, 146);
+    /// <summary>Rel ikon = tinta #3D3461.</summary>
+    public static Color Rail => Color.FromArgb(61, 52, 97);
+    /// <summary>Hover/aktif di atas rel tinta #54497A.</summary>
+    public static Color RailHover => Color.FromArgb(84, 73, 122);
+    /// <summary>Teks pucat di atas tinta #E9E6FA.</summary>
+    public static Color InkOnDark => Color.FromArgb(233, 230, 250);
+    /// <summary>Status terhubung: sage diperdalam #6B8F5E (lolos kontras).</summary>
+    public static Color Green => Color.FromArgb(107, 143, 94);
+    /// <summary>Galat #B3261E.</summary>
+    public static Color Red => Color.FromArgb(179, 38, 30);
+    /// <summary>Isian hover terang #E9E5F6.</summary>
+    public static Color LightFill => Color.FromArgb(233, 229, 246);
+    /// <summary>Titik menunggu: kuningan #C8A24A.</summary>
+    public static Color DotWaiting => Color.FromArgb(200, 162, 74);
+    /// <summary>Titik berhenti #9A94AD.</summary>
+    public static Color DotStopped => Color.FromArgb(154, 148, 173);
+    public static Color ErrorBg => Color.FromArgb(246, 227, 225);
+    public static Color ErrorInk => Color.FromArgb(140, 43, 35);
 }

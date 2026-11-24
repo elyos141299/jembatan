@@ -63,6 +63,7 @@ internal static class Settings
     private const string KeepAwakeValueName = "KeepAwake";
     private const string LogPanelOpenValueName = "LogPanelOpen";
     private const string LogPanelHeightValueName = "LogPanelHeight";
+    private const string PanelOpenValueName = "PanelOpen";
 
     /// <summary>
     /// Pilihan tema tampilan (v2.5.0): "device" (bawaan, mengikuti
@@ -147,7 +148,32 @@ internal static class Settings
         }
     }
 
-    /// <summary>Tinggi panel log bawah tersimpan (v2.8.0). Bawaan 190.</summary>
+    /// <summary>Panel kendali di samping rel terbuka? (v3.0.0) Bawaan terbuka.</summary>
+    public static bool PanelOpen
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
+                {
+                    if (key?.GetValue(PanelOpenValueName) is int v)
+                        return v != 0;
+                }
+            }
+            catch { /* anggap terbuka */ }
+            return true;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(PanelOpenValueName, value ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+    }
+
+    /// <summary>Tinggi panel log bawah tersimpan (v2.8.0). Bawaan 176 (blueprint v3.0).</summary>
     public static int LogPanelHeight
     {
         get
@@ -161,7 +187,7 @@ internal static class Settings
                 }
             }
             catch { /* bawaan */ }
-            return 190;
+            return 176;
         }
         set
         {

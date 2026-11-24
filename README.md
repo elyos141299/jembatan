@@ -1,4 +1,41 @@
-# MuseLink v2.10.0 — catatan pengembang
+# MuseLink v3.0.0 — catatan pengembang
+
+## v3.0.0 — ROMBAK TOTAL sesuai blueprint final (disetujui user 25 Nov 2026)
+
+Eksekusi blueprint yang dikunci user (konsep rel+panel dari Forest
+Console, palet Pasangan 4, logo L2):
+
+- **Tata letak baru:** bar judul 40px · **rel ikon tinta 56px**
+  sebadan jendela (logo = lipat/buka panel, titik status, tombol
+  log bergaris sage + titik error, roda gigi Pengaturan di bawah)
+  · **panel kendali 264px bisa dilipat** (tersimpan; melipat
+  sendiri bila jendela <1080px) · **chat = kartu jendela**:
+  gutter 12px, strip kepala tinta 36px di atas WebView2 (sibling
+  tata letak — overlay mustahil karena airspace HWND), kartu
+  putih radius 8 · **log dock tinta** di bawah · strip status
+  28px satu baris (status · Relay · Uptime … v3.0.0).
+- **Panel:** kartu kepala (logo, pill status selebar kartu,
+  alamat, mode), tile 2×2 DIGANTI **baris rincian**
+  RELAY/UPTIME/CAPTURE/VERSI, grup AKSES menempel di bawah panel.
+- **Palet Pasangan 4 (Split-Complement Sage + Pale Gold)** di
+  atas Lavender iPhone 17: kanvas #F3F0FF, panel #E6E6FA, tinta
+  #3D3461, aksen #6B59A0/#7851A9, sage #9CAF88 & emas #F2D492
+  khusus permukaan, status Terhubung sage diperdalam #6B8F5E.
+  **Pilihan tema Terang/Gelap/Perangkat PENSIUN** — AppTheme kini
+  satu palet statis (IsDark/Current = shim kompatibilitas, selalu
+  terang); kartu Tema di Pengaturan dihapus (jendela menyusut
+  400×452).
+- **Logo L2 "Simpul Tautan"** (pilihan user): tiga simpul —
+  diagonal naik ke simpul relay sage, turun vertikal — di atas
+  ubin tinta; master `../logo-l2.png`, icon.ico 9 ukuran dibangun
+  ulang (varian kecil goresan lebih tebal).
+- **Perbaikan ikon Windows (keluhan user):** installer kini
+  menjalankan `ie4uinit.exe -show` setiap pemasangan untuk
+  menyegarkan cache ikon; pintasan selalu ditulis ulang Inno dan
+  ikonnya dari resource EXE. Pin taskbar tetap perlu unpin/re-pin
+  manual sekali (batasan Windows).
+- Endpoint, protokol, dan perilaku server TIDAK berubah dari
+  v2.10.0; /theme kini melaporkan nilai warisan tersimpan saja.
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya

@@ -9,8 +9,8 @@ namespace Jembatan;
 /// Jendela Pengaturan MuseLink (v2.5.0, tata letak atas permintaan
 /// user): semua saklar yang dulu berjejer di kartu kepala jendela
 /// utama pindah ke sini — Jalan otomatis, Mode Administrator,
-/// Jangan tidur — ditambah pilihan Tema (Terang / Gelap / Ikuti
-/// perangkat) dan tombol besar PUTUSKAN / Sambung lagi yang dulu
+/// Jangan tidur — dan tombol besar PUTUSKAN / Sambung lagi yang
+/// dulu
 /// memenuhi kiri bawah jendela utama.
 ///
 /// Jendela ini hanya WAJAH: keadaan &amp; logika tetap milik
@@ -29,16 +29,12 @@ public sealed class SettingsForm : Form
     private readonly MainForm _owner;
 
     private RoundedPanel _cardUmum;
-    private RoundedPanel _cardTema;
     private RoundedPanel _cardKoneksi;
     private readonly List<Label> _labelsInk = new List<Label>();
     private readonly List<Label> _labelsDim = new List<Label>();
     private ToggleSwitch _autoStartCheck;
     private ToggleSwitch _adminCheck;
     private ToggleSwitch _awakeCheck;
-    private RoundedButton _pillTerang;
-    private RoundedButton _pillGelap;
-    private RoundedButton _pillPerangkat;
     private RoundedButton _serverButton;
     private Label _serverNote;
 
@@ -51,7 +47,7 @@ public sealed class SettingsForm : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(400, 524);
+        ClientSize = new Size(400, 452);
         Font = new Font("Segoe UI", 10f);
         if (owner.Icon != null) Icon = owner.Icon;
 
@@ -67,7 +63,6 @@ public sealed class SettingsForm : Form
         _adminCheck.CheckedChanged += (s, e) => _owner.ApplyAdminMode(_adminCheck.Checked);
         _awakeCheck.CheckedChanged += (s, e) => _owner.ApplyKeepAwake(_awakeCheck.Checked);
 
-        RefreshPills();
         RefreshServerButton();
         ApplyTheme();
     }
@@ -119,35 +114,10 @@ public sealed class SettingsForm : Form
         _adminCheck = MakeToggleRow(_cardUmum, "Mode Administrator", 60);
         _awakeCheck = MakeToggleRow(_cardUmum, "Jangan tidur", 106);
 
-        MakeLabel("TAMPILAN", 20, 236, 9f, true, true);
-        _cardTema = new RoundedPanel
-        {
-            Location = new Point(20, 258),
-            Size = new Size(360, 92),
-            CornerRadius = 8,
-            Padding = new Padding(12),
-        };
-        Controls.Add(_cardTema);
-        var temaLabel = new Label
-        {
-            Text = "Tema",
-            Font = new Font("Segoe UI", 10f),
-            AutoSize = true,
-            Location = new Point(14, 12),
-        };
-        _labelsInk.Add(temaLabel);
-        _cardTema.Controls.Add(temaLabel);
-        _pillTerang = MakePill("Terang", 14, () => _owner.SetTheme("light"));
-        _pillGelap = MakePill("Gelap", 126, () => _owner.SetTheme("dark"));
-        _pillPerangkat = MakePill("Perangkat", 238, () => _owner.SetTheme("device"));
-        _cardTema.Controls.Add(_pillTerang);
-        _cardTema.Controls.Add(_pillGelap);
-        _cardTema.Controls.Add(_pillPerangkat);
-
-        MakeLabel("KONEKSI", 20, 366, 9f, true, true);
+        MakeLabel("KONEKSI", 20, 242, 9f, true, true);
         _cardKoneksi = new RoundedPanel
         {
-            Location = new Point(20, 388),
+            Location = new Point(20, 264),
             Size = new Size(360, 100),
             CornerRadius = 8,
             Padding = new Padding(12),
@@ -175,37 +145,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v2.10.0", 20, 496, 8.5f, false, true);
-    }
-
-    private RoundedButton MakePill(string text, int x, Action onClick)
-    {
-        var b = new RoundedButton
-        {
-            Text = text,
-            Font = new Font("Segoe UI", 9.5f),
-            CornerRadius = 8,
-            Location = new Point(x, 42),
-            Size = new Size(104, 36),
-        };
-        b.Click += (s, e) => { onClick(); RefreshPills(); };
-        return b;
-    }
-
-    /// <summary>Warna pil tema mengikuti pilihan tersimpan saat ini.</summary>
-    public void RefreshPills()
-    {
-        string cur = Settings.Theme;
-        PaintPill(_pillTerang, cur == "light");
-        PaintPill(_pillGelap, cur == "dark");
-        PaintPill(_pillPerangkat, cur == "device");
-    }
-
-    private static void PaintPill(RoundedButton b, bool selected)
-    {
-        if (b == null) return;
-        b.BackColor = selected ? AppTheme.Accent : AppTheme.LightFill;
-        b.ForeColor = selected ? Color.White : AppTheme.Ink;
+        MakeLabel("MuseLink v3.0.0", 20, 372, 8.5f, false, true);
     }
 
     /// <summary>Teks &amp; warna tombol server mengikuti keadaan listener.</summary>
@@ -228,7 +168,7 @@ public sealed class SettingsForm : Form
     public void ApplyTheme()
     {
         BackColor = AppTheme.Bg;
-        foreach (var card in new[] { _cardUmum, _cardTema, _cardKoneksi })
+        foreach (var card in new[] { _cardUmum, _cardKoneksi })
         {
             if (card == null) continue;
             card.FillColor = AppTheme.Card;
@@ -241,9 +181,7 @@ public sealed class SettingsForm : Form
             if (t != null) t.BackColor = AppTheme.Card;
         // Label di dalam kartu berlatar kartu, bukan latar form.
         foreach (Control c in _cardUmum.Controls) if (c is Label l1) l1.BackColor = AppTheme.Card;
-        foreach (Control c in _cardTema.Controls) if (c is Label l2) l2.BackColor = AppTheme.Card;
         foreach (Control c in _cardKoneksi.Controls) if (c is Label l3) l3.BackColor = AppTheme.Card;
-        RefreshPills();
         RefreshServerButton();
         try
         {
