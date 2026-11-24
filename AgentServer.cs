@@ -394,7 +394,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.0\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.1\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -553,7 +553,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.0",
+                    ["version"] = "2.7.1",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -651,7 +651,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.0",
+                    ["version"] = "2.7.1",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -3010,7 +3010,7 @@ public sealed class AgentServer
         _onActivity();
         int maxWidth = ParseClamp(GetQueryParam(head.Query, "w"), 1280, 320, 1920);
         int quality = ParseClamp(GetQueryParam(head.Query, "q"), 60, 30, 90);
-        int fps = ParseClamp(GetQueryParam(head.Query, "fps"), 10, 1, 30);
+        int fps = ParseClamp(GetQueryParam(head.Query, "fps"), 10, 1, 60);
         _log($"stream dimulai (lebar {maxWidth}, kualitas {quality}, target {fps} fps)");
         try
         {
@@ -3065,7 +3065,12 @@ public sealed class AgentServer
                 // Kejar target fps: tidur hanya sisa waktu bingkai setelah
                 // waktu tangkap+encode diperhitungkan.
                 int sleep = (int)(frameMs - (clock.ElapsedMilliseconds - frameStart));
-                if (sleep > 0) Thread.Sleep(sleep);
+                // v2.7.1: Thread.Sleep Windows kasar (granularitas ±15ms)
+                // akan menahan laju di bawah target — tidur hanya sampai
+                // 2ms terakhir, sisanya putar singkat agar 60fps tercapai.
+                if (sleep > 2) Thread.Sleep(sleep - 2);
+                while (clock.ElapsedMilliseconds - frameStart < frameMs)
+                    Thread.SpinWait(200);
             }
         }
         catch

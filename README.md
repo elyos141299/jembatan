@@ -1,4 +1,4 @@
-# MuseLink v2.7.0 — catatan pengembang
+# MuseLink v2.7.1 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,11 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.1 (dari v2.7.0) — Stream 60fps
+
+- **Batas fps GET /stream naik 30 → 60** (permintaan user): tangkapan DXGI (v2.7.0) cukup ringan untuk 60fps di sisi PC. Penjadwalan bingkai diperhalus — Thread.Sleep hanya sampai 2ms terakhir, sisanya putaran singkat (SpinWait), karena granularitas Sleep Windows (±15ms) akan menahan laju di kisaran 40fps.
+- Catatan jujur: 60fps adalah laju tangkap di PC; laju yang sampai ke penampil di seberang jaringan tetap mengikuti kemampuan jalur (relay).
 
 ## Perubahan v2.7.0 (dari v2.6.6) — DXGI, mic, rutinitas, auto-tray
 
