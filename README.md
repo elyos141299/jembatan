@@ -1,4 +1,4 @@
-# MuseLink v2.5.6 — catatan pengembang
+# MuseLink v2.5.7 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -72,6 +72,30 @@ Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
 
+## Perubahan v2.5.7 (dari v2.5.6) — Poles Tampilan
+
+Dibandingkan dengan bahasa desain aplikasi profesional
+(Linear, Vercel, Apple System Settings, Raycast) atas
+permintaan user 24 Nov — prinsip yang diadopsi: warna hanya
+untuk status/makna, hierarki lewat berat huruf bukan ukuran
+berlebihan, caption mikro huruf besar untuk data.
+
+- **Log dibersihkan dari akarnya**: /exec jalur scriptB64
+  dulu mencatat DUA kali — ringkasan + Base64 utuhnya yang
+  tumpah memenuhi panel. Kini hanya ringkasan; token raksasa
+  tanpa spasi juga diringkas otomatis di Log(). Berkas log
+  ikut ringkas.
+- **Warna log ala Vercel**: cap waktu redup, isi netral,
+  galat merah, baris "selesai" redup.
+- **Pill status ala Linear/Vercel**: status koneksi kini pil
+  berlatar warna semantik pudar (oranye menunggu, hijau
+  terhubung, abu berhenti) berisi titik + teks.
+- **Logo di kartu kepala**: ikon rantai-M tampil 40×40 di
+  kiri judul (ala identitas sidebar Apple System Settings).
+- **Tile status mini ala kartu KPI**: RELAY / UPTIME /
+  VERSI — caption mikro huruf besar redup + nilai semibold,
+  disegarkan tiap 5 detik.
+
 ## Perubahan v2.5.6 (dari v2.5.5) — ocrAfter + Push CLI
 
 - **ocrAfter di /batch** (permintaan user 24 Nov — lanjut
@@ -82,12 +106,15 @@ bukan per frame.
   rangkaian lalu baca hasilnya" kini benar-benar satu panggilan.
 - **Push CLI diperbaiki dari akarnya** (bukan bagian aplikasi —
   dicatat di sini sebagai konteks rilis): push git CLI yang
-  gagal sejak restart PC 24 Nov ternyata disebabkan layanan
-  Windows **VaultSvc (Credential Manager) berhenti** — Git
-  Credential Manager tidak bisa membaca/menyimpan kredensial
-  GitHub. Layanan dinyalakan lagi; push CLI kembali senyap
-  tanpa jendela GitHub Desktop. Rilis ini adalah push CLI
-  pertama yang membuktikannya.
+  gagal sejak restart PC 24 Nov ternyata disebabkan brankas
+  kredensial Windows profil user yang rusak/kosong (GCM
+  diagnose gagal di ValidateWindowsCredentialManager; cmdkey
+  /list kosong). Obatnya: store GCM diganti ke **dpapi**
+  (`git config --global credential.credentialStore dpapi` —
+  melewati brankas Windows) + satu kali login
+  `git credential-manager github login --browser`. Push CLI
+  kembali senyap tanpa jendela GitHub Desktop; rilis ini
+  adalah push CLI pertama yang membuktikannya.
 
 ## Perubahan v2.5.5 (dari v2.5.4) — Paket Perbaikan Full Test
 

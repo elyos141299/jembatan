@@ -55,6 +55,16 @@ public sealed class MainForm : Form
     private Label _titleLabel;
     private Label _addrLabel;
     private Label _versionLabel;
+    private RoundedPanel _statusPill;
+    private PictureBox _logoBox;
+    private RoundedPanel _tilesCard;
+    private Label _tileRelayValue;
+    private Label _tileUptimeValue;
+    private Label _tileVersionValue;
+    private readonly System.Collections.Generic.List<Label> _tileCaptions = new System.Collections.Generic.List<Label>();
+    private readonly System.Collections.Generic.List<Panel> _tileDividers = new System.Collections.Generic.List<Panel>();
+    private System.Windows.Forms.Timer _uiTimer;
+    private string _statusState = "waiting";
     private Panel _leftRoot;
     private Panel _chatRoot;
     private SettingsForm _settingsForm;
@@ -131,14 +141,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.5.6 dimulai ===");
+            Log("=== MuseLink v2.5.7 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.5.6 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.5.7 dimulai");
             // Roda gigi melayang di bar judul, sebelah kiri minimize
             // (v2.5.1) — mengikuti gerak jendela utama.
             _captionGear = new CaptionGearForm(this);
@@ -148,6 +158,10 @@ public sealed class MainForm : Form
             SizeChanged += (s2, e2) => SyncCaptionGear();
             VisibleChanged += (s2, e2) => SyncCaptionGear();
             ApplyTheme();
+            RefreshTiles();
+            _uiTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+            _uiTimer.Tick += (s2, e2) => RefreshTiles();
+            _uiTimer.Start();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
             // sejak aplikasi mulai, tanpa tombol buka/tutup.
@@ -387,6 +401,24 @@ public sealed class MainForm : Form
             CornerRadius = 16,
             Padding = new Padding(16),
         };
+        // Logo rantai-M di kartu kepala (v2.5.7 — identitas ala
+        // sidebar Apple System Settings): ikon aplikasi sendiri
+        // digambar 40x40 di kiri judul.
+        _logoBox = new PictureBox
+        {
+            Size = new Size(40, 40),
+            Location = new Point(16, 14),
+            BackColor = Card,
+            SizeMode = PictureBoxSizeMode.Zoom,
+        };
+        try
+        {
+            using (var ic = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+                if (ic != null) _logoBox.Image = ic.ToBitmap();
+        }
+        catch { /* tanpa logo pun tata letak tetap rapi */ }
+        header.Controls.Add(_logoBox);
+
         var title = _titleLabel = new Label
         {
             Text = "MuseLink",
@@ -394,29 +426,42 @@ public sealed class MainForm : Form
             ForeColor = Ink,
             BackColor = Card,
             AutoSize = true,
-            Location = new Point(16, 14),
+            Location = new Point(66, 12),
         };
         header.Controls.Add(title);
+
+        // Pill status (v2.5.7 — ala Vercel/Linear: status adalah
+        // titik + kata di dalam pil berlatar warna semantik pudar;
+        // warna hanya dipakai untuk status, sisanya netral).
+        _statusPill = new RoundedPanel
+        {
+            Location = new Point(66, 46),
+            Size = new Size(300, 27),
+            CornerRadius = 13,
+            FillColor = Card,
+            BorderColor = Hairline,
+        };
+        header.Controls.Add(_statusPill);
 
         _statusDot = new RoundDot
         {
             Size = new Size(10, 10),
-            Location = new Point(16, 55),
+            Location = new Point(11, 8),
             BackColor = Card,
             DotColor = DotWaiting,
         };
-        header.Controls.Add(_statusDot);
+        _statusPill.Controls.Add(_statusDot);
 
         _statusLabel = new Label
         {
             Text = "Menunggu koneksi",
-            Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+            Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             ForeColor = Ink,
             BackColor = Card,
             AutoSize = true,
-            Location = new Point(34, 49),
+            Location = new Point(29, 5),
         };
-        header.Controls.Add(_statusLabel);
+        _statusPill.Controls.Add(_statusLabel);
 
         // MaximumSize membuat teks panjang ini membungkus (wrap) saat
         // panel kiri menyempit (chat terbuka) — tingginya sudah
@@ -428,8 +473,8 @@ public sealed class MainForm : Form
             ForeColor = InkDim,
             BackColor = Card,
             AutoSize = true,
-            MaximumSize = new Size(330, 0),
-            Location = new Point(16, 78),
+            MaximumSize = new Size(282, 0),
+            Location = new Point(66, 82),
         };
         header.Controls.Add(addr);
 
@@ -454,7 +499,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.5.6",
+            Text = "v2.5.7",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -488,9 +533,34 @@ public sealed class MainForm : Form
             BackColor = Card,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(16, 126),
+            Location = new Point(66, 126),
         };
         header.Controls.Add(_modeLabel);
+
+        // Tile status mini (v2.5.7 — ala kartu KPI Linear/Vercel:
+        // caption mikro huruf besar redup + nilai semibold).
+        // Dibungkus panel polos ber-padding atas untuk jarak 12px
+        // dari kartu kepala. Urutan Dock: tiles ditambahkan
+        // SEBELUM header agar header menempel paling atas.
+        var tilesWrap = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 70,
+            BackColor = Bg,
+            Padding = new Padding(0, 12, 0, 0),
+        };
+        var tiles = _tilesCard = new RoundedPanel
+        {
+            Dock = DockStyle.Fill,
+            FillColor = Card,
+            BorderColor = Hairline,
+            CornerRadius = 16,
+        };
+        tilesWrap.Controls.Add(tiles);
+        MakeTile(tiles, 0, "RELAY", "…", out _tileRelayValue);
+        MakeTile(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
+        MakeTile(tiles, 2, "VERSI", "2.5.7", out _tileVersionValue);
+        leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
 
         BuildChatPane();
@@ -992,12 +1062,98 @@ public sealed class MainForm : Form
     {
         _statusDot.DotColor = DotWaiting;
         _statusLabel.Text = "Menunggu koneksi";
+        _statusState = "waiting";
+        RefreshStatusPill();
     }
 
     private void SetStopped(string text)
     {
         _statusDot.DotColor = DotStopped;
         _statusLabel.Text = text;
+        _statusState = "stopped";
+        RefreshStatusPill();
+    }
+
+    // Campur dua warna: t = porsi warna pertama (0..1).
+    private static Color Blend(Color a, Color b, double t)
+    {
+        return Color.FromArgb(
+            (int)(a.R * t + b.R * (1 - t)),
+            (int)(a.G * t + b.G * (1 - t)),
+            (int)(a.B * t + b.B * (1 - t)));
+    }
+
+    // Warna pill status mengikuti keadaan: latar = warna titik
+    // dipudarkan ke warna kartu; teks tetap Ink agar terbaca.
+    private void RefreshStatusPill()
+    {
+        if (_statusPill == null) return;
+        Color dot = _statusState == "connected" ? Green
+                  : _statusState == "stopped" ? DotStopped : DotWaiting;
+        Color tint = Blend(dot, Card, AppTheme.IsDark ? 0.28 : 0.16);
+        _statusPill.FillColor = tint;
+        _statusPill.BorderColor = Blend(dot, Card, AppTheme.IsDark ? 0.45 : 0.35);
+        if (_statusDot != null) _statusDot.BackColor = tint;
+        if (_statusLabel != null) { _statusLabel.BackColor = tint; _statusLabel.ForeColor = Ink; }
+        _statusPill.Invalidate();
+    }
+
+    // Satu kolom tile: caption mikro + nilai; kolom ke-2 dst
+    // didahului garis pemisah tipis.
+    private void MakeTile(Control parent, int col, string caption, string value, out Label valueLabel)
+    {
+        int x = 16 + col * 118;
+        if (col > 0)
+        {
+            var div = new Panel
+            {
+                Size = new Size(1, 34),
+                Location = new Point(x - 13, 12),
+                BackColor = Hairline,
+            };
+            parent.Controls.Add(div);
+            _tileDividers.Add(div);
+        }
+        var cap = new Label
+        {
+            Text = caption,
+            Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
+            ForeColor = InkDim,
+            BackColor = Card,
+            AutoSize = true,
+            Location = new Point(x, 10),
+        };
+        parent.Controls.Add(cap);
+        _tileCaptions.Add(cap);
+        valueLabel = new Label
+        {
+            Text = value,
+            Font = new Font("Segoe UI Semibold", 10.5f),
+            ForeColor = Ink,
+            BackColor = Card,
+            AutoSize = true,
+            Location = new Point(x, 27),
+        };
+        parent.Controls.Add(valueLabel);
+    }
+
+    // Segarkan tile RELAY & UPTIME (VERSI statis). Relay membaca
+    // cache 60 detik di AgentServer — panggilan ini murah.
+    private void RefreshTiles()
+    {
+        try
+        {
+            if (_tileRelayValue != null)
+                _tileRelayValue.Text = AgentServer.TailscaleRelay();
+            if (_tileUptimeValue != null)
+            {
+                var up = DateTime.Now - Process.GetCurrentProcess().StartTime;
+                _tileUptimeValue.Text = up.TotalHours >= 1
+                    ? (int)up.TotalHours + "j " + up.Minutes + "m"
+                    : Math.Max(0, up.Minutes) + "m";
+            }
+        }
+        catch { /* tile hanya keterangan — jangan ganggu aplikasi */ }
     }
 
     // ---------- Pengaturan, tema & jangan tidur (v2.5.0) ----------
@@ -1099,6 +1255,14 @@ public sealed class MainForm : Form
             _modeLabel.ForeColor = Settings.IsElevated() ? Accent : InkDim;
             _modeLabel.BackColor = Card;
         }
+        if (_tilesCard != null) { _tilesCard.FillColor = Card; _tilesCard.BorderColor = Hairline; }
+        foreach (var c in _tileCaptions) { c.ForeColor = InkDim; c.BackColor = Card; }
+        foreach (var d in _tileDividers) d.BackColor = Hairline;
+        if (_tileRelayValue != null) { _tileRelayValue.ForeColor = Ink; _tileRelayValue.BackColor = Card; }
+        if (_tileUptimeValue != null) { _tileUptimeValue.ForeColor = Ink; _tileUptimeValue.BackColor = Card; }
+        if (_tileVersionValue != null) { _tileVersionValue.ForeColor = Ink; _tileVersionValue.BackColor = Card; }
+        if (_logoBox != null) _logoBox.BackColor = Card;
+        RefreshStatusPill();
         if (_logBox != null)
         {
             _logBox.BackColor = Card;
@@ -1172,6 +1336,8 @@ public sealed class MainForm : Form
         }
         _statusDot.DotColor = Green;
         _statusLabel.Text = "Muse terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
+        _statusState = "connected";
+        RefreshStatusPill();
     }
 
     /// <summary>Menulis satu baris ke log jendela (aman dari thread mana pun).</summary>
@@ -1185,11 +1351,22 @@ public sealed class MainForm : Form
         // v2.4.2: baris log dipotong rapi — perintah yang sangat
         // panjang (mis. naskah PowerShell) tidak lagi membanjiri
         // panel; intinya tetap terbaca.
-        if (message != null && message.Length > 140)
+        // v2.5.7: token raksasa tanpa spasi (mis. Base64) diringkas
+        // lebih dulu, lalu pewarnaan ala Vercel — cap waktu redup,
+        // isi netral, galat merah, baris "selesai" redup. Berkas
+        // log menerima baris yang sama ringkasnya.
+        if (message == null) message = "";
+        message = SummarizeTokens(message);
+        if (message.Length > 140)
             message = message.Substring(0, 140) + "…";
-        string line = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message;
-        _logBox.AppendText(line + Environment.NewLine);
-        AppendLogToFile(line);
+        string stamp = "[" + DateTime.Now.ToString("HH:mm:ss") + "] ";
+        _logBox.SelectionStart = _logBox.TextLength;
+        _logBox.SelectionLength = 0;
+        _logBox.SelectionColor = InkDim;
+        _logBox.AppendText(stamp);
+        _logBox.SelectionColor = LogColorFor(message);
+        _logBox.AppendText(message + Environment.NewLine);
+        AppendLogToFile(stamp + message);
         if (_logBox.Lines.Length > 500)
         {
             var lines = _logBox.Lines;
@@ -1197,6 +1374,28 @@ public sealed class MainForm : Form
         }
         _logBox.SelectionStart = _logBox.TextLength;
         _logBox.ScrollToCaret();
+    }
+
+    // Token tanpa spasi yang sangat panjang (Base64 dsb) diganti
+    // ringkasan — panel log tidak dibanjiri teks acak.
+    private static string SummarizeTokens(string s)
+    {
+        var parts = s.Split(' ');
+        for (int i = 0; i < parts.Length; i++)
+            if (parts[i].Length > 60)
+                parts[i] = "(diringkas " + parts[i].Length + " karakter)";
+        return string.Join(" ", parts);
+    }
+
+    // Warna isi baris log: hanya galat yang merah; baris hasil
+    // akhir ("selesai…") dan penanda mulai dibuat redup; sisanya
+    // warna teks utama. Warna hemat, hanya untuk makna.
+    private Color LogColorFor(string m)
+    {
+        string l = m.ToLowerInvariant();
+        if (l.Contains("gagal") || l.Contains("error") || l.Contains("timeout")) return Red;
+        if (l.StartsWith("selesai") || l.StartsWith("===")) return InkDim;
+        return Ink;
     }
 
     // ---------- Log persisten (v2.3.2) ----------

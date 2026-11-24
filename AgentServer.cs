@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.6\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.7\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -478,7 +478,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.5.6",
+                    ["version"] = "2.5.7",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -1422,6 +1422,15 @@ public sealed class AgentServer
         }
     }
 
+    // Args berisi "-EncodedCommand <base64>" dipotong jadi
+    // ringkasan untuk keperluan log (v2.5.7).
+    private static string SummarizeEncoded(string args)
+    {
+        int i = args.IndexOf("-EncodedCommand", StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return args;
+        return args.Substring(0, i) + "-EncodedCommand (diringkas)";
+    }
+
     private static Response Ok()
     {
         return Response.Json("{\"ok\":true}");
@@ -1459,7 +1468,12 @@ public sealed class AgentServer
         if (timeoutMs > MaxExecTimeoutMs) timeoutMs = MaxExecTimeoutMs;
 
         _onActivity();
-        _log("jalanin: " + command + (args.Length > 0 ? " " + args : ""));
+        // v2.5.7: scriptB64 sudah dicatat ringkas di atas; args
+        // untuk jalur itu berisi Base64 raksasa yang TIDAK boleh
+        // masuk log (dulu tercatat dua kali dan tumpah memenuhi
+        // panel log jendela).
+        if (string.IsNullOrWhiteSpace(scriptB64))
+            _log("jalanin: " + command + (args.Length > 0 ? " " + SummarizeEncoded(args) : ""));
 
         var psi = new ProcessStartInfo
         {
@@ -1882,7 +1896,7 @@ public sealed class AgentServer
     /// dibaca dari `tailscale status --json` di PC ini dan di-cache
     /// 60 detik agar /sysinfo tetap ringan. "" bila tidak terbaca.
     /// </summary>
-    private static string TailscaleRelay()
+    internal static string TailscaleRelay()
     {
         long now = Environment.TickCount64;
         if (now - _relayCacheTick < 60000) return _relayCache;
