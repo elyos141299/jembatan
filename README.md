@@ -1,4 +1,4 @@
-# MuseLink v2.7.6 — catatan pengembang
+# MuseLink v2.8.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,17 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.8.0 (dari v2.7.6) — ROMBAK TOTAL tampilan: gelap modern
+
+Cetak biru dari riset mendalam (token Radix Slate + pola Linear/VS Code/OBS), disetujui user dengan aksen indigo Linear.
+
+- **Palet gelap baru** (AppTheme): Bg #111113, Panel #18191B (token baru), Card #212225, LogBg #0B0B0D (token baru, sumur log), Ink #EDEEF0 / InkDim #B0B4BA / InkFaint #62666D, Hairline #26282C, Accent #5E6AD2, Green #3FB950, Red #F85149, DotWaiting #D29922, LightFill #272A2D. Palet terang tidak berubah; tema Gelap kini tampang utama.
+- **Bar judul terpadu gambar-sendiri** (FormBorderStyle None): logo + nama + titik status + tombol caption gambar-sendiri (CaptionButton: min/maks/pulihkan/tutup, hover tutup #E81123), seret via WM_NCLBUTTONDOWN, klik ganda = maks/pulihkan, tepi seret via WM_NCHITTEST, MaximizedBounds = area kerja. Roda gigi melayang (CaptionGearForm) pensiun.
+- **Panel kiri 380→332px**: kartu kepala dipadatkan (radius 8), tile status jadi grid 2x2 (nilai 13pt), grup AKSES berisi tombol Putuskan Akses/Sambungkan selebar panel, tombol Pengaturan menempel di bawah.
+- **Log pindah ke panel bawah** selebar jendela: kepala 30px "LOG AKTIVITAS" + lencana jumlah error sesi, badan sumur LogBg, bisa dilipat dari strip status dan digeser tingginya; keadaan + tinggi tersimpan (Settings LogPanelOpen/LogPanelHeight).
+- **Strip status 24px**: titik + teks status + uptime di kiri; Log + chevron + versi di kanan.
+- **Pengaturan**: radius kartu/tombol 8; saklar diganti geometri Fluent 40x20 dengan lintasan warna aksen (UiControls ToggleSwitch).
 
 ## Perubahan v2.7.6 (dari v2.7.5) — Poles tampilan ronde 3
 

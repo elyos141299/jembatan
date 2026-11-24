@@ -90,7 +90,7 @@ public sealed class SettingsForm : Form
             Text = label,
             Font = new Font("Segoe UI", 10f),
             AutoSize = true,
-            Location = new Point(66, y + 3),
+            Location = new Point(62, y + 2),
         };
         _labelsInk.Add(l);
         parent.Controls.Add(l);
@@ -106,7 +106,7 @@ public sealed class SettingsForm : Form
         {
             Location = new Point(20, 78),
             Size = new Size(360, 142),
-            CornerRadius = 16,
+            CornerRadius = 8,
             Padding = new Padding(12),
         };
         Controls.Add(_cardUmum);
@@ -119,7 +119,7 @@ public sealed class SettingsForm : Form
         {
             Location = new Point(20, 258),
             Size = new Size(360, 92),
-            CornerRadius = 16,
+            CornerRadius = 8,
             Padding = new Padding(12),
         };
         Controls.Add(_cardTema);
@@ -144,7 +144,7 @@ public sealed class SettingsForm : Form
         {
             Location = new Point(20, 388),
             Size = new Size(360, 100),
-            CornerRadius = 16,
+            CornerRadius = 8,
             Padding = new Padding(12),
         };
         Controls.Add(_cardKoneksi);
@@ -163,14 +163,14 @@ public sealed class SettingsForm : Form
             Text = "PUTUSKAN",
             Font = new Font("Segoe UI", 12f, FontStyle.Bold),
             ForeColor = Color.White,
-            CornerRadius = 12,
+            CornerRadius = 8,
             Location = new Point(14, 48),
             Size = new Size(332, 44),
         };
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v2.7.6", 20, 496, 8.5f, false, true);
+        MakeLabel("MuseLink v2.8.0", 20, 496, 8.5f, false, true);
     }
 
     private RoundedButton MakePill(string text, int x, Action onClick)
@@ -179,7 +179,7 @@ public sealed class SettingsForm : Form
         {
             Text = text,
             Font = new Font("Segoe UI", 9.5f),
-            CornerRadius = 12,
+            CornerRadius = 8,
             Location = new Point(x, 42),
             Size = new Size(104, 36),
         };

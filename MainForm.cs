@@ -36,6 +36,8 @@ public sealed class MainForm : Form
     private static Color Ink => AppTheme.Ink;
     private static Color InkDim => AppTheme.InkDim;
     private static Color InkFaint => AppTheme.InkFaint;
+    private static Color Panel => AppTheme.Panel;
+    private static Color LogBg => AppTheme.LogBg;
     private static Color Hairline => AppTheme.Hairline;
     private static Color Accent => AppTheme.Accent;
     private static Color Green => AppTheme.Green;
@@ -52,7 +54,7 @@ public sealed class MainForm : Form
     private RichTextBox _logBox;
     private Label _modeLabel;
     private RoundedPanel _headerCard;
-    private RoundedPanel _logCard;
+    private Panel _logCard;
     private Label _titleLabel;
     private Label _addrLabel;
     private Label _versionLabel;
@@ -70,7 +72,31 @@ public sealed class MainForm : Form
     private Panel _leftRoot;
     private Panel _chatRoot;
     private SettingsForm _settingsForm;
-    private CaptionGearForm _captionGear;
+    // v2.8.0 — permukaan rombak total: bar judul, strip status,
+    // panel log bawah, tombol akses & pengaturan di panel kiri.
+    private SplitContainer _outerSplit;
+    private Panel _titleBar;
+    private Label _barTitle;
+    private PictureBox _titleLogo;
+    private RoundDot _titleDot;
+    private CaptionButton _capMin;
+    private CaptionButton _capMax;
+    private CaptionButton _capClose;
+    private Panel _statusStrip;
+    private RoundDot _stripDot;
+    private Label _stripLabel;
+    private Label _stripUptime;
+    private Label _stripLogLabel;
+    private ChevronButton _stripChevron;
+    private Panel _logPanel;
+    private Panel _logHeader;
+    private Panel _logHair;
+    private RoundedPanel _errBadge;
+    private Label _errBadgeLabel;
+    private RoundedButton _serverBtn;
+    private RoundedButton _settingsBtn;
+    private Label _aksesLabel;
+    private bool _logSetupDone;
     private bool _autoStartEnabled;
 
     /// <summary>Keadaan jalan otomatis saat ini (untuk jendela Pengaturan).</summary>
@@ -118,11 +144,23 @@ public sealed class MainForm : Form
             if (Settings.WindowMaximized)
                 WindowState = FormWindowState.Maximized;
         }
+        // v2.8.0: jendela tanpa bingkai Windows (bar judul gambar
+        // sendiri di BuildLayout); batas maksimal = area kerja
+        // layar agar tidak menutupi taskbar saat termaksimalkan.
+        try { MaximizedBounds = Screen.PrimaryScreen.WorkingArea; } catch { /* abaikan */ }
         BackColor = Bg;
         ForeColor = Ink;
         Font = new Font("Segoe UI", 10f);
 
         BuildLayout();
+        SizeChanged += (s, e) =>
+        {
+            if (_capMax != null)
+            {
+                _capMax.Maximized = WindowState == FormWindowState.Maximized;
+                _capMax.Invalidate();
+            }
+        };
         InitTrayIcon();
         FormClosing += OnMainFormClosing;
 
@@ -143,22 +181,17 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.7.6 dimulai ===");
+            Log("=== MuseLink v2.8.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.7.6 dimulai");
-            // Roda gigi melayang di bar judul, sebelah kiri minimize
-            // (v2.5.1) — mengikuti gerak jendela utama.
-            _captionGear = new CaptionGearForm(this);
-            _captionGear.Show(this);
-            SyncCaptionGear();
-            LocationChanged += (s2, e2) => SyncCaptionGear();
-            SizeChanged += (s2, e2) => SyncCaptionGear();
-            VisibleChanged += (s2, e2) => SyncCaptionGear();
+            EventLog.Add("app-start", "MuseLink v2.8.0 dimulai");
+            // v2.8.0: roda gigi melayang di bar judul PENSIUN —
+            // Pengaturan kini tombol tetap di bawah panel kiri.
+            try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
             ApplyTheme();
             RefreshTiles();
             _uiTimer = new System.Windows.Forms.Timer { Interval = 5000 };
@@ -171,7 +204,13 @@ public sealed class MainForm : Form
             // langsung dibuat & dibuka ke muse.ai. InitChatAsync
             // menelan semua galatnya sendiri (panel menampilkan
             // pesan galat; jembatan utama tidak terganggu).
-            if (_split.Width > 480) _split.SplitterDistance = 380;
+            if (_split.Width > 480) _split.SplitterDistance = 332;
+            if (_outerSplit != null && !_outerSplit.Panel2Collapsed)
+            {
+                try { _outerSplit.SplitterDistance = Math.Max(240, _outerSplit.Height - Settings.LogPanelHeight); }
+                catch { /* abaikan */ }
+            }
+            _logSetupDone = true;
             _ = InitChatAsync();
             try
             {
@@ -348,12 +387,166 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        // Tata letak: SplitContainer — Panel1 (kiri, ±380px) berisi
-        // panel kendali (kepala, log, tombol PUTUSKAN); Panel2
-        // (kanan) berisi panel chat Muse yang MENYATU permanen
-        // sejak v2.4.1 (tidak lagi disembunyikan/dibuka via tombol).
-        // SplitterDistance diatur di Load (lebar final diketahui
-        // setelah jendela terbentuk).
+        // v2.8.0 — ROMBAK TOTAL tampilan (cetak biru riset gelap
+        // modern; aksen indigo Linear pilihan user): bar judul
+        // terpadu gambar-sendiri 36px di atas, strip status 24px di
+        // bawah, dan di tengah pemisah horizontal — atas berisi
+        // panel kendali (kiri 332px) + chat, bawah berisi panel log
+        // selebar jendela yang bisa dilipat & digeser tingginya
+        // (pola VS Code/OBS). Panel kiri: kartu kepala, tile 2x2,
+        // grup AKSES (tombol Putuskan/Sambungkan), tombol
+        // Pengaturan menempel di bawah.
+        FormBorderStyle = FormBorderStyle.None;
+
+        // ---------- Bar judul terpadu ----------
+        var titleBar = _titleBar = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 36,
+            BackColor = Panel,
+            Tag = "panelbg",
+        };
+        _titleLogo = new PictureBox
+        {
+            Size = new Size(20, 20),
+            Location = new Point(10, 8),
+            BackColor = Panel,
+            SizeMode = PictureBoxSizeMode.Zoom,
+        };
+        try
+        {
+            using (var ic = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+                if (ic != null) _titleLogo.Image = ic.ToBitmap();
+        }
+        catch { /* tanpa logo pun rapi */ }
+        titleBar.Controls.Add(_titleLogo);
+        var barTitle = _barTitle = new Label
+        {
+            Text = "MuseLink",
+            Font = new Font("Segoe UI Semibold", 9.5f),
+            ForeColor = Ink,
+            BackColor = Panel,
+            AutoSize = true,
+            Location = new Point(38, 10),
+        };
+        titleBar.Controls.Add(barTitle);
+        _titleDot = new RoundDot
+        {
+            Size = new Size(8, 8),
+            Location = new Point(112, 14),
+            BackColor = Panel,
+            DotColor = DotWaiting,
+        };
+        titleBar.Controls.Add(_titleDot);
+        _capMin = new CaptionButton { Kind = CaptionButton.GlyphKind.Minimize, Dock = DockStyle.Right };
+        _capMax = new CaptionButton { Kind = CaptionButton.GlyphKind.Maximize, Dock = DockStyle.Right };
+        _capClose = new CaptionButton { Kind = CaptionButton.GlyphKind.Close, Dock = DockStyle.Right };
+        titleBar.Controls.Add(_capMin);
+        titleBar.Controls.Add(_capMax);
+        titleBar.Controls.Add(_capClose);
+        _capMin.Click += (s, e) => WindowState = FormWindowState.Minimized;
+        _capMax.Click += (s, e) => ToggleMaximize();
+        _capClose.Click += (s, e) => Close();
+        titleBar.MouseDown += TitleBarMouseDown;
+        _titleLogo.MouseDown += TitleBarMouseDown;
+        barTitle.MouseDown += TitleBarMouseDown;
+        _titleDot.MouseDown += TitleBarMouseDown;
+
+        // ---------- Strip status bawah ----------
+        var strip = _statusStrip = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 24,
+            BackColor = Panel,
+            Tag = "panelbg",
+        };
+        _stripDot = new RoundDot
+        {
+            Size = new Size(8, 8),
+            Location = new Point(10, 8),
+            BackColor = Panel,
+            DotColor = DotWaiting,
+        };
+        strip.Controls.Add(_stripDot);
+        _stripLabel = new Label
+        {
+            Text = "Menunggu koneksi",
+            Font = new Font("Segoe UI", 9f),
+            ForeColor = InkDim,
+            BackColor = Panel,
+            AutoSize = true,
+            Location = new Point(24, 4),
+        };
+        strip.Controls.Add(_stripLabel);
+        _stripUptime = new Label
+        {
+            Text = "",
+            Font = new Font("Segoe UI", 9f),
+            ForeColor = InkDim,
+            BackColor = Panel,
+            AutoSize = true,
+            Location = new Point(340, 4),
+        };
+        strip.Controls.Add(_stripUptime);
+        var stripRight = new Panel
+        {
+            Dock = DockStyle.Right,
+            Width = 176,
+            BackColor = Panel,
+            Tag = "panelbg",
+        };
+        strip.Controls.Add(stripRight);
+        _stripChevron = new ChevronButton { Dock = DockStyle.Right, Width = 24, Down = Settings.LogPanelOpen };
+        stripRight.Controls.Add(_stripChevron);
+        _stripLogLabel = new Label
+        {
+            Text = "Log",
+            Font = new Font("Segoe UI", 9f),
+            ForeColor = InkDim,
+            BackColor = Panel,
+            AutoSize = false,
+            Size = new Size(30, 24),
+            TextAlign = ContentAlignment.MiddleRight,
+            Dock = DockStyle.Right,
+            Cursor = Cursors.Hand,
+        };
+        stripRight.Controls.Add(_stripLogLabel);
+        var version = _versionLabel = new Label
+        {
+            Text = "v2.8.0",
+            Font = new Font("Segoe UI", 8.5f),
+            ForeColor = InkDim,
+            BackColor = Panel,
+            AutoSize = false,
+            Size = new Size(64, 24),
+            TextAlign = ContentAlignment.MiddleRight,
+            Dock = DockStyle.Right,
+        };
+        stripRight.Controls.Add(version);
+        _stripLogLabel.Click += (s, e) => ToggleLogPanel();
+        _stripChevron.Click += (s, e) => ToggleLogPanel();
+
+        // ---------- Pemisah luar: atas (panel+chat) / bawah (log) ----------
+        _outerSplit = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            Panel1MinSize = 300,
+            Panel2MinSize = 110,
+            SplitterWidth = 6,
+            BackColor = Bg,
+            Panel2Collapsed = !Settings.LogPanelOpen,
+        };
+        _outerSplit.SplitterMoved += (s, e) =>
+        {
+            if (_logSetupDone && !_outerSplit.Panel2Collapsed)
+            {
+                try { Settings.LogPanelHeight = Math.Max(110, _outerSplit.Height - _outerSplit.SplitterDistance); }
+                catch { /* abaikan */ }
+            }
+        };
+
+        // ---------- Pemisah dalam: panel kiri + chat ----------
         _split = new SplitContainer
         {
             Dock = DockStyle.Fill,
@@ -363,73 +556,107 @@ public sealed class MainForm : Form
             Panel2Collapsed = false,
             BackColor = Bg,
         };
-        Controls.Add(_split);
+        _outerSplit.Panel1.Controls.Add(_split);
 
-        // Panel kiri dibungkus panel luar ber-padding 12px (v2.3.3):
-        // kartu-kartu putih melayang di atas latar #F5F5F7 dengan
-        // jarak tepi dan jarak antar kartu yang seragam.
-        var leftRoot = _leftRoot = new Panel
+        // ---------- Panel log bawah ----------
+        var logPanel = _logPanel = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Bg,
-            Padding = new Padding(12),
+            BackColor = Panel,
+            Tag = "panelbg",
         };
-        _split.Panel1.Controls.Add(leftRoot);
+        _outerSplit.Panel2.Controls.Add(logPanel);
 
-        // Kartu log di tengah (Dock Fill) ditambahkan PERTAMA agar
-        // mengisi sisa ruang. Kotak log tinggal langsung di dalam
-        // kartu dengan padding kartu sebagai bantalan teksnya.
         _logBox = new RichTextBox
         {
             Dock = DockStyle.Fill,
             ReadOnly = true,
             BorderStyle = BorderStyle.None,
-            BackColor = Card,
+            BackColor = LogBg,
             ForeColor = Ink,
             Font = new Font("Consolas", 9.5f),
             DetectUrls = false,
-            // v2.4.2 (permintaan user): batang gulir disembunyikan —
-            // log tetap bisa digulir roda mouse dan Log() selalu
-            // menggulir ke entri terbaru, jadi tidak ada yang hilang.
             ScrollBars = RichTextBoxScrollBars.None,
         };
-        var logCard = _logCard = new RoundedPanel
+        var logBody = _logCard = new Panel
         {
             Dock = DockStyle.Fill,
-            FillColor = Card,
-            BorderColor = Hairline,
-            CornerRadius = 16,
-            Padding = new Padding(12, 10, 12, 10),
+            BackColor = LogBg,
+            Padding = new Padding(12, 8, 12, 8),
         };
-        logCard.Controls.Add(_logBox);
-        leftRoot.Controls.Add(logCard);
+        logBody.Controls.Add(_logBox);
+        var logHair = _logHair = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 1,
+            BackColor = Hairline,
+        };
+        var logHeader = _logHeader = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 30,
+            BackColor = Panel,
+            Tag = "panelbg",
+        };
+        var logTitle = new Label
+        {
+            Text = "LOG AKTIVITAS",
+            Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+            ForeColor = InkDim,
+            BackColor = Panel,
+            AutoSize = true,
+            Location = new Point(12, 8),
+        };
+        logHeader.Controls.Add(logTitle);
+        _errBadge = new RoundedPanel
+        {
+            Location = new Point(112, 6),
+            Size = new Size(60, 18),
+            CornerRadius = 9,
+            FillColor = Panel,
+            BorderColor = Hairline,
+            BackColor = Panel,
+            Visible = false,
+        };
+        _errBadgeLabel = new Label
+        {
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+            BackColor = Panel,
+            ForeColor = Ink,
+            Text = "0 error",
+        };
+        _errBadge.Controls.Add(_errBadgeLabel);
+        logHeader.Controls.Add(_errBadge);
+        logPanel.Controls.Add(logBody);
+        logPanel.Controls.Add(logHair);
+        logPanel.Controls.Add(logHeader);
 
-        // (Panel bawah + tombol PUTUSKAN besar DIHAPUS di v2.5.0
-        // atas permintaan user: tombolnya pindah ke jendela
-        // Pengaturan. Kartu log kini mengisi penuh sampai bawah.)
+        // ---------- Panel kiri ----------
+        var leftRoot = _leftRoot = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Panel,
+            Padding = new Padding(12),
+            Tag = "panelbg",
+        };
+        _split.Panel1.Controls.Add(leftRoot);
 
-        // Kartu kepala: judul + status + alamat + dua saklar + label
-        // mode. Semua elemen kiri rata di garis x=16 (padding dalam
-        // kartu) dengan jarak vertikal antarbaris yang rata; baris
-        // saklar memakai lebar kartu penuh (tidak berebut ruang
-        // dengan wadah kanan), jadi teks labelnya muat utuh juga
-        // saat panel kiri menyempit ke ±380px (chat terbuka).
+        // Kartu kepala: logo + judul + pill status + alamat + mode.
         var header = _headerCard = new RoundedPanel
         {
             Dock = DockStyle.Top,
-            Height = 168,
+            Height = 144,
             FillColor = Card,
             BorderColor = Hairline,
-            CornerRadius = 16,
-            Padding = new Padding(16),
+            CornerRadius = 8,
+            Padding = new Padding(14),
         };
-        // Logo rantai-M di kartu kepala (v2.5.7 — identitas ala
-        // sidebar Apple System Settings): ikon aplikasi sendiri
-        // digambar 40x40 di kiri judul.
         _logoBox = new PictureBox
         {
-            Size = new Size(40, 40),
-            Location = new Point(16, 14),
+            Size = new Size(36, 36),
+            Location = new Point(14, 12),
             BackColor = Card,
             SizeMode = PictureBoxSizeMode.Zoom,
         };
@@ -444,21 +671,18 @@ public sealed class MainForm : Form
         var title = _titleLabel = new Label
         {
             Text = "MuseLink",
-            Font = new Font("Segoe UI Semibold", 15f),
+            Font = new Font("Segoe UI Semibold", 13.5f),
             ForeColor = Ink,
             BackColor = Card,
             AutoSize = true,
-            Location = new Point(66, 12),
+            Location = new Point(60, 11),
         };
         header.Controls.Add(title);
 
-        // Pill status (v2.5.7 — ala Vercel/Linear: status adalah
-        // titik + kata di dalam pil berlatar warna semantik pudar;
-        // warna hanya dipakai untuk status, sisanya netral).
         _statusPill = new RoundedPanel
         {
-            Location = new Point(66, 46),
-            Size = new Size(300, 27),
+            Location = new Point(60, 42),
+            Size = new Size(228, 26),
             CornerRadius = 13,
             FillColor = Card,
             BorderColor = Hairline,
@@ -468,7 +692,7 @@ public sealed class MainForm : Form
         _statusDot = new RoundDot
         {
             Size = new Size(10, 10),
-            Location = new Point(11, 8),
+            Location = new Point(10, 8),
             BackColor = Card,
             DotColor = DotWaiting,
         };
@@ -477,20 +701,17 @@ public sealed class MainForm : Form
         _statusLabel = new Label
         {
             Text = "Menunggu koneksi",
-            Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+            Font = new Font("Segoe UI", 9f, FontStyle.Bold),
             ForeColor = Ink,
             BackColor = Card,
             AutoSize = false,
             AutoEllipsis = true,
             TextAlign = ContentAlignment.MiddleLeft,
-            Size = new Size(262, 18),
-            Location = new Point(29, 4),
+            Size = new Size(192, 18),
+            Location = new Point(27, 4),
         };
         _statusPill.Controls.Add(_statusLabel);
 
-        // MaximumSize membuat teks panjang ini membungkus (wrap) saat
-        // panel kiri menyempit (chat terbuka) — tingginya sudah
-        // dihitung dalam tinggi kartu.
         var addr = _addrLabel = new Label
         {
             Text = "Port " + AgentServer.Port + " • Hanya bisa dijangkau lewat jaringan Tailscale kamu — tidak terbuka ke internet.",
@@ -498,58 +719,11 @@ public sealed class MainForm : Form
             ForeColor = InkDim,
             BackColor = Card,
             AutoSize = true,
-            MaximumSize = new Size(282, 0),
-            Location = new Point(66, 82),
+            MaximumSize = new Size(228, 0),
+            Location = new Point(60, 76),
         };
         header.Controls.Add(addr);
 
-        // Wadah sisi kanan kepala (perbaikan v2.3.1, dipertahankan):
-        // panel ini di-Dock ke tepi kanan kartu sehingga selalu
-        // menempel di kanan pada lebar Panel1 berapa pun. Di dalam
-        // wadah ter-Dock ini cukup posisi kiri-atas biasa — jangan
-        // kembali ke Anchor=Right pada panel lebar (itu bug v2.3.0:
-        // jarak tepi kanan terkunci terhadap lebar awal 200px dan
-        // kontrolnya terlempar keluar layar).
-        var headerRight = new Panel
-        {
-            Dock = DockStyle.Right,
-            Width = 116,
-            BackColor = Card,
-            Tag = "cardbg",
-        };
-        header.Controls.Add(headerRight);
-
-        // Label versi: kecil abu-abu, rata kanan, di pojok kanan
-        // bawah kartu kepala. Tinggi wadah kanan pasti (250 kartu −
-        // 2×16 padding = 218), jadi posisi bawahnya tetap.
-        var version = _versionLabel = new Label
-        {
-            Text = "v2.7.6",
-            Font = new Font("Segoe UI", 8.5f),
-            ForeColor = InkDim,
-            BackColor = Card,
-            AutoSize = false,
-            Size = new Size(112, 22),
-            TextAlign = ContentAlignment.MiddleRight,
-            Location = new Point(2, 108),
-        };
-        headerRight.Controls.Add(version);
-
-        // (Tombol roda gigi PINDAH ke bar judul di v2.5.1 —
-        // lihat CaptionGearForm; di sini tinggal label versi.)
-
-        // (Tombol "💬 Chat Muse" DIHAPUS di v2.4.1: chat kini
-        // menyatu permanen di sebelah panel — tidak ada lagi yang
-        // perlu dibuka lewat tombol.)
-
-        // (Saklar Jalan otomatis & Mode Administrator PINDAH ke
-        // jendela Pengaturan di v2.5.0 — lihat SettingsForm.)
-
-        // Penanda level proses INI apa adanya (dari hak sebenarnya,
-        // bukan dari pengaturan): hak proses tidak berubah selama
-        // berjalan, jadi teksnya diisi sekali di sini. Gayanya
-        // mengikuti tema terang: abu sekunder, atau biru aksen saat
-        // proses ini administrator.
         bool elevatedNow = Settings.IsElevated();
         _modeLabel = new Label
         {
@@ -558,20 +732,17 @@ public sealed class MainForm : Form
             BackColor = Card,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(66, 126),
+            Location = new Point(60, 112),
         };
         header.Controls.Add(_modeLabel);
 
-        // Tile status mini (v2.5.7 — ala kartu KPI Linear/Vercel:
-        // caption mikro huruf besar redup + nilai semibold).
-        // Dibungkus panel polos ber-padding atas untuk jarak 12px
-        // dari kartu kepala. Urutan Dock: tiles ditambahkan
-        // SEBELUM header agar header menempel paling atas.
+        // Tile status 2x2 (v2.8.0 — panel menyempit, tile jadi grid).
         var tilesWrap = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 70,
-            BackColor = Bg,
+            Height = 128,
+            BackColor = Panel,
+            Tag = "panelbg",
             Padding = new Padding(0, 12, 0, 0),
         };
         var tiles = _tilesCard = new RoundedPanel
@@ -579,17 +750,80 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             FillColor = Card,
             BorderColor = Hairline,
-            CornerRadius = 16,
+            CornerRadius = 8,
         };
         tilesWrap.Controls.Add(tiles);
-        MakeTile(tiles, 0, "RELAY", "…", out _tileRelayValue);
-        MakeTile(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
-        MakeTile(tiles, 2, "CAPTURE", "…", out _tileCaptureValue);
-        MakeTile(tiles, 3, "VERSI", "2.7.6", out _tileVersionValue);
+        MakeTile2(tiles, 0, 0, "RELAY", "…", out _tileRelayValue);
+        MakeTile2(tiles, 0, 1, "UPTIME", "0m", out _tileUptimeValue);
+        MakeTile2(tiles, 1, 0, "CAPTURE", "…", out _tileCaptureValue);
+        MakeTile2(tiles, 1, 1, "VERSI", "2.8.0", out _tileVersionValue);
+
+        // Grup AKSES: tombol putus/sambung besar (dulu hanya di
+        // jendela Pengaturan; kini juga di muka panel).
+        var aksesWrap = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 72,
+            BackColor = Panel,
+            Tag = "panelbg",
+        };
+        var aksesLabel = _aksesLabel = new Label
+        {
+            Text = "AKSES",
+            Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+            ForeColor = InkDim,
+            BackColor = Panel,
+            AutoSize = true,
+            Location = new Point(2, 12),
+        };
+        aksesWrap.Controls.Add(aksesLabel);
+        _serverBtn = new RoundedButton
+        {
+            Text = "Putuskan Akses",
+            Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+            CornerRadius = 8,
+            Location = new Point(0, 32),
+            Size = new Size(304, 34),
+            Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+        };
+        _serverBtn.Click += (s, e) => ToggleServer();
+        aksesWrap.Controls.Add(_serverBtn);
+
+        // Tombol Pengaturan menempel di bawah panel (pengganti roda
+        // gigi melayang yang pensiun di v2.8.0).
+        var settingsWrap = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 46,
+            BackColor = Panel,
+            Tag = "panelbg",
+            Padding = new Padding(0, 10, 0, 0),
+        };
+        _settingsBtn = new RoundedButton
+        {
+            Text = "Pengaturan",
+            Font = new Font("Segoe UI", 10f),
+            CornerRadius = 8,
+            Dock = DockStyle.Fill,
+            BackColor = Card,
+            ForeColor = Ink,
+        };
+        _settingsBtn.Click += (s, e) => OpenSettings();
+        settingsWrap.Controls.Add(_settingsBtn);
+
+        // Urutan tambah menentukan urutan dok (terbalik): bawah
+        // dulu, lalu atas dari yang paling jauh ke yang teratas.
+        leftRoot.Controls.Add(settingsWrap);
+        leftRoot.Controls.Add(aksesWrap);
         leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
 
         BuildChatPane();
+
+        // Susunan dok form: isi dulu, lalu bawah, lalu atas.
+        Controls.Add(_outerSplit);
+        Controls.Add(strip);
+        Controls.Add(titleBar);
     }
 
     // ---------- Panel chat Muse ----------
@@ -625,7 +859,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             FillColor = Card,
             BorderColor = Hairline,
-            CornerRadius = 16,
+            CornerRadius = 8,
             Padding = new Padding(10),
         };
         root.Controls.Add(_chatBody);
@@ -1122,23 +1356,41 @@ public sealed class MainForm : Form
         if (_statusDot != null) _statusDot.BackColor = tint;
         if (_statusLabel != null) { _statusLabel.BackColor = tint; _statusLabel.ForeColor = Ink; }
         _statusPill.Invalidate();
+        // v2.8.0: titik & teks status yang sama dicerminkan ke bar
+        // judul dan strip bawah; tombol akses ikut disegarkan.
+        if (_titleDot != null) _titleDot.DotColor = dot;
+        if (_stripDot != null) _stripDot.DotColor = dot;
+        if (_stripLabel != null && _statusLabel != null) _stripLabel.Text = _statusLabel.Text;
+        RefreshServerButtonPanel();
     }
 
     // Satu kolom tile: caption mikro + nilai; kolom ke-2 dst
     // didahului garis pemisah tipis.
-    private void MakeTile(Control parent, int col, string caption, string value, out Label valueLabel)
+    // Satu sel tile grid 2x2: caption mikro huruf besar redup +
+    // nilai semibold besar; pemisah vertikal & horizontal digambar
+    // sekali dari sel pertama.
+    private void MakeTile2(Control parent, int row, int col, string caption, string value, out Label valueLabel)
     {
-        int x = 14 + col * 85;
-        if (col > 0)
+        int x = 14 + col * 144;
+        int y = 12 + row * 56;
+        if (row == 0 && col == 0)
         {
-            var div = new Panel
+            var divV = new Panel
             {
-                Size = new Size(1, 34),
-                Location = new Point(x - 11, 12),
+                Size = new Size(1, 92),
+                Location = new Point(150, 12),
                 BackColor = Hairline,
             };
-            parent.Controls.Add(div);
-            _tileDividers.Add(div);
+            parent.Controls.Add(divV);
+            _tileDividers.Add(divV);
+            var divH = new Panel
+            {
+                Size = new Size(276, 1),
+                Location = new Point(14, 62),
+                BackColor = Hairline,
+            };
+            parent.Controls.Add(divH);
+            _tileDividers.Add(divH);
         }
         var cap = new Label
         {
@@ -1147,18 +1399,18 @@ public sealed class MainForm : Form
             ForeColor = InkDim,
             BackColor = Card,
             AutoSize = true,
-            Location = new Point(x, 10),
+            Location = new Point(x, y),
         };
         parent.Controls.Add(cap);
         _tileCaptions.Add(cap);
         valueLabel = new Label
         {
             Text = value,
-            Font = new Font("Segoe UI Semibold", 10.5f),
+            Font = new Font("Segoe UI Semibold", 13f),
             ForeColor = Ink,
             BackColor = Card,
             AutoSize = true,
-            Location = new Point(x, 27),
+            Location = new Point(x, y + 16),
         };
         parent.Controls.Add(valueLabel);
     }
@@ -1180,8 +1432,87 @@ public sealed class MainForm : Form
             }
             if (_tileCaptureValue != null)
                 _tileCaptureValue.Text = DxgiCapture.ScaleMode == "gpu" ? "gpu" : DxgiCapture.Mode;
+            if (_stripUptime != null && _tileUptimeValue != null)
+                _stripUptime.Text = "Uptime " + _tileUptimeValue.Text;
         }
         catch { /* tile hanya keterangan — jangan ganggu aplikasi */ }
+    }
+
+    // ---------- Bar judul, panel log & strip status (v2.8.0) ----------
+
+    private void ToggleMaximize()
+    {
+        WindowState = WindowState == FormWindowState.Maximized
+            ? FormWindowState.Normal
+            : FormWindowState.Maximized;
+    }
+
+    // Seret jendela dari bar judul tanpa bingkai: trik klasik
+    // ReleaseCapture + WM_NCLBUTTONDOWN dengan HTCAPTION.
+    private void TitleBarMouseDown(object sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left) return;
+        if (e.Clicks == 2) { ToggleMaximize(); return; }
+        ReleaseCapture();
+        SendMessageDrag(Handle, 0xA1, (IntPtr)2, IntPtr.Zero);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessageDrag(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>Lipat / buka panel log bawah; keadaannya disimpan.</summary>
+    private void ToggleLogPanel()
+    {
+        if (_outerSplit == null) return;
+        bool open = _outerSplit.Panel2Collapsed;
+        _outerSplit.Panel2Collapsed = !open;
+        if (open)
+        {
+            try { _outerSplit.SplitterDistance = Math.Max(240, _outerSplit.Height - Settings.LogPanelHeight); }
+            catch { /* abaikan */ }
+        }
+        try { Settings.LogPanelOpen = open; } catch { /* abaikan */ }
+        if (_stripChevron != null) { _stripChevron.Down = open; _stripChevron.Invalidate(); }
+    }
+
+    /// <summary>Tombol akses di panel kiri mengikuti keadaan listener.</summary>
+    private void RefreshServerButtonPanel()
+    {
+        if (_serverBtn == null || _server == null) return;
+        if (_server.IsRunning)
+        {
+            _serverBtn.Text = "Putuskan Akses";
+            _serverBtn.BackColor = Blend(Red, Card, AppTheme.IsDark ? 0.22 : 0.14);
+            _serverBtn.ForeColor = AppTheme.IsDark ? Blend(Red, Color.White, 0.35) : Red;
+        }
+        else
+        {
+            _serverBtn.Text = "Sambungkan";
+            _serverBtn.BackColor = Accent;
+            _serverBtn.ForeColor = Color.White;
+        }
+    }
+
+    private int _errorCount;
+
+    /// <summary>Lencana jumlah error sesi ini di kepala panel log.</summary>
+    private void RefreshErrorBadge()
+    {
+        if (_errBadge == null) return;
+        _errBadge.Visible = _errorCount > 0;
+        Color tint = Blend(Red, Panel, AppTheme.IsDark ? 0.22 : 0.12);
+        if (_errBadgeLabel != null)
+        {
+            _errBadgeLabel.Text = _errorCount + " error";
+            _errBadgeLabel.ForeColor = AppTheme.IsDark ? Blend(Red, Color.White, 0.3) : Red;
+            _errBadgeLabel.BackColor = tint;
+        }
+        _errBadge.FillColor = tint;
+        _errBadge.BorderColor = Blend(Red, Panel, AppTheme.IsDark ? 0.4 : 0.3);
+        _errBadge.BackColor = Panel;
     }
 
     // ---------- Pengaturan, tema & jangan tidur (v2.5.0) ----------
@@ -1206,10 +1537,7 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Tempelkan roda gigi bar judul ke pojok kanan atas jendela ini.</summary>
-    private void SyncCaptionGear()
-    {
-        _captionGear?.SyncTo(Bounds, Visible && WindowState != FormWindowState.Minimized);
-    }
+
 
     /// <summary>Dipanggil jendela Pengaturan / endpoint /theme saat tema dipilih.</summary>
     internal void SetTheme(string theme)
@@ -1246,7 +1574,7 @@ public sealed class MainForm : Form
             return;
         }
         BackColor = Bg;
-        if (_leftRoot != null) _leftRoot.BackColor = Bg;
+        if (_leftRoot != null) _leftRoot.BackColor = Panel;
         if (_split != null)
         {
             _split.BackColor = Bg;
@@ -1259,12 +1587,7 @@ public sealed class MainForm : Form
             _headerCard.BorderColor = Hairline;
             _headerCard.BackColor = Bg;
         }
-        if (_logCard != null)
-        {
-            _logCard.FillColor = Card;
-            _logCard.BorderColor = Hairline;
-            _logCard.BackColor = Bg;
-        }
+        if (_logCard != null) _logCard.BackColor = LogBg;
         if (_chatBody != null)
         {
             _chatBody.FillColor = Card;
@@ -1277,7 +1600,7 @@ public sealed class MainForm : Form
         if (_statusLabel != null) { _statusLabel.ForeColor = Ink; _statusLabel.BackColor = Card; }
         if (_statusDot != null) _statusDot.BackColor = Card;
         if (_addrLabel != null) { _addrLabel.ForeColor = InkDim; _addrLabel.BackColor = Card; }
-        if (_versionLabel != null) { _versionLabel.ForeColor = InkDim; _versionLabel.BackColor = Card; }
+        if (_versionLabel != null) { _versionLabel.ForeColor = InkDim; _versionLabel.BackColor = Panel; }
         if (_modeLabel != null)
         {
             _modeLabel.ForeColor = Settings.IsElevated() ? Accent : InkDim;
@@ -1294,7 +1617,7 @@ public sealed class MainForm : Form
         RefreshStatusPill();
         if (_logBox != null)
         {
-            _logBox.BackColor = Card;
+            _logBox.BackColor = LogBg;
             _logBox.ForeColor = Ink;
             int pos = _logBox.SelectionStart;
             int len = _logBox.SelectionLength;
@@ -1304,6 +1627,27 @@ public sealed class MainForm : Form
         }
         if (_chatLoadingLabel != null) { _chatLoadingLabel.ForeColor = InkDim; _chatLoadingLabel.BackColor = Card; }
         if (_chatErrorLabel != null) { _chatErrorLabel.ForeColor = ErrorInk; _chatErrorLabel.BackColor = ErrorBg; }
+        // v2.8.0: permukaan rombak (bar judul, strip, panel log,
+        // tombol panel) — dicat SETELAH PaintThemedChildren agar
+        // tidak ditimpa aturan panel polosnya.
+        if (_titleBar != null) _titleBar.BackColor = Panel;
+        if (_statusStrip != null) _statusStrip.BackColor = Panel;
+        if (_outerSplit != null) _outerSplit.BackColor = Bg;
+        if (_barTitle != null) { _barTitle.ForeColor = Ink; _barTitle.BackColor = Panel; }
+        if (_titleLogo != null) _titleLogo.BackColor = Panel;
+        if (_titleDot != null) _titleDot.BackColor = Panel;
+        if (_stripDot != null) _stripDot.BackColor = Panel;
+        if (_stripLabel != null) { _stripLabel.ForeColor = InkDim; _stripLabel.BackColor = Panel; }
+        if (_stripUptime != null) { _stripUptime.ForeColor = InkDim; _stripUptime.BackColor = Panel; }
+        if (_stripLogLabel != null) { _stripLogLabel.ForeColor = InkDim; _stripLogLabel.BackColor = Panel; }
+        if (_logPanel != null) _logPanel.BackColor = Panel;
+        if (_logHeader != null) _logHeader.BackColor = Panel;
+        if (_logHair != null) _logHair.BackColor = Hairline;
+        if (_logCard != null) _logCard.BackColor = LogBg;
+        if (_aksesLabel != null) { _aksesLabel.ForeColor = InkDim; _aksesLabel.BackColor = Panel; }
+        if (_settingsBtn != null) { _settingsBtn.BackColor = Card; _settingsBtn.ForeColor = Ink; }
+        RefreshServerButtonPanel();
+        RefreshErrorBadge();
         _settingsForm?.ApplyTheme();
         Invalidate(true);
     }
@@ -1315,7 +1659,10 @@ public sealed class MainForm : Form
             if (c is ToggleSwitch ts) ts.BackColor = Card;
             else if (c is RoundDot rd) rd.BackColor = Card;
             else if (c is Panel p && p is not RoundedPanel)
-                p.BackColor = (p.Tag as string) == "cardbg" ? Card : Bg;
+            {
+                string tag = p.Tag as string;
+                p.BackColor = tag == "cardbg" ? Card : tag == "panelbg" ? Panel : Bg;
+            }
             PaintThemedChildren(c);
         }
     }
@@ -1351,6 +1698,22 @@ public sealed class MainForm : Form
             EventLog.Add("clipboard", len >= 0
                 ? "teks clipboard berubah (" + len + " karakter)"
                 : "clipboard berubah (bukan teks)");
+        }
+        // v2.8.0: tanpa bingkai Windows — tepi jendela tetap bisa
+        // diseret untuk mengubah ukuran lewat WM_NCHITTEST
+        // (HTLEFT=10 … HTBOTTOMRIGHT=17).
+        if (m.Msg == 0x0084 && WindowState == FormWindowState.Normal)
+        {
+            int lp = m.LParam.ToInt32();
+            var p = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+            const int g = 6;
+            bool l = p.X <= g, r = p.X >= Width - g - 1, t = p.Y <= g, b = p.Y >= Height - g - 1;
+            int code = 0;
+            if (t && l) code = 13; else if (t && r) code = 14;
+            else if (b && l) code = 16; else if (b && r) code = 17;
+            else if (l) code = 10; else if (r) code = 11;
+            else if (t) code = 12; else if (b) code = 15;
+            if (code != 0) { m.Result = (IntPtr)code; return; }
         }
         base.WndProc(ref m);
     }
@@ -1394,8 +1757,10 @@ public sealed class MainForm : Form
         _logBox.SelectionLength = 0;
         _logBox.SelectionColor = InkFaint;
         _logBox.AppendText(stamp);
-        _logBox.SelectionColor = LogColorFor(message);
+        var lineColor = LogColorFor(message);
+        _logBox.SelectionColor = lineColor;
         _logBox.AppendText(message + Environment.NewLine);
+        if (lineColor == Red) { _errorCount++; RefreshErrorBadge(); }
         AppendLogToFile(stamp + message);
         if (_logBox.Lines.Length > 500)
         {

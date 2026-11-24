@@ -61,6 +61,8 @@ internal static class Settings
 
     private const string ThemeValueName = "Theme";
     private const string KeepAwakeValueName = "KeepAwake";
+    private const string LogPanelOpenValueName = "LogPanelOpen";
+    private const string LogPanelHeightValueName = "LogPanelHeight";
 
     /// <summary>
     /// Pilihan tema tampilan (v2.5.0): "device" (bawaan, mengikuti
@@ -116,6 +118,56 @@ internal static class Settings
             using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
             {
                 key?.SetValue(KeepAwakeValueName, value ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+    }
+
+    /// <summary>Panel log bawah terbuka? (v2.8.0) Bawaan terbuka.</summary>
+    public static bool LogPanelOpen
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
+                {
+                    if (key?.GetValue(LogPanelOpenValueName) is int v)
+                        return v != 0;
+                }
+            }
+            catch { /* anggap terbuka */ }
+            return true;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(LogPanelOpenValueName, value ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+    }
+
+    /// <summary>Tinggi panel log bawah tersimpan (v2.8.0). Bawaan 190.</summary>
+    public static int LogPanelHeight
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
+                {
+                    if (key?.GetValue(LogPanelHeightValueName) is int v && v >= 110 && v <= 600)
+                        return v;
+                }
+            }
+            catch { /* bawaan */ }
+            return 190;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(LogPanelHeightValueName, value, RegistryValueKind.DWord);
             }
         }
     }

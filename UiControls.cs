@@ -88,9 +88,9 @@ public class ToggleSwitch : Control
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
                  ControlStyles.Selectable, true);
-        Size = new Size(44, 26);
-        MinimumSize = new Size(44, 26);
-        MaximumSize = new Size(44, 26);
+        Size = new Size(40, 20);
+        MinimumSize = new Size(40, 20);
+        MaximumSize = new Size(40, 20);
         TabStop = true;
         Cursor = Cursors.Hand;
         BackColor = Color.White;
@@ -134,8 +134,8 @@ public class ToggleSwitch : Control
 
         var trackRect = new Rectangle(0, 0, Width - 1, Height - 1);
         Color track = _checked
-            ? Color.FromArgb(52, 199, 89)
-            : (AppTheme.IsDark ? Color.FromArgb(57, 57, 61) : Color.FromArgb(232, 232, 237));
+            ? AppTheme.Accent
+            : (AppTheme.IsDark ? Color.FromArgb(58, 61, 66) : Color.FromArgb(232, 232, 237));
         using (var path = RoundedPanel.RoundRectPath(trackRect, Height / 2))
         {
             using (var brush = new SolidBrush(track))
@@ -146,7 +146,7 @@ public class ToggleSwitch : Control
                 g.DrawPath(pen, path);
         }
 
-        const int knob = 22;
+        int knob = Math.Max(10, Height - 4);
         int kx = _checked ? Width - knob - 2 : 2;
         // Bayangan lembut kenop (elips semi-transparan bergeser 1px
         // ke bawah) — kesan kedalaman ala iOS (v2.3.5).
@@ -163,7 +163,7 @@ public class ToggleSwitch : Control
 
         if (Focused)
         {
-            using (var pen = new Pen(Color.FromArgb(0, 113, 227), 1f))
+            using (var pen = new Pen(AppTheme.Accent, 1f))
             {
                 pen.DashStyle = DashStyle.Dot;
                 g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
@@ -294,5 +294,124 @@ public class RoundDot : Control
         var r = new RectangleF(0.5f, 0.5f, Math.Max(0f, Width - 1f), Math.Max(0f, Height - 1f));
         using (var brush = new SolidBrush(_dotColor))
             g.FillEllipse(brush, r);
+    }
+
+}
+
+/// <summary>
+/// Tombol bar judul gambar-sendiri (v2.8.0 — bar judul terpadu):
+/// persegi datar 46x36, glif digambar garis (min / maks / pulihkan /
+/// tutup), hover memakai isian terang tema — khusus Tutup memakai
+/// merah Windows #E81123 dengan glif putih. Tanpa tepi, tanpa teks.
+/// </summary>
+public class CaptionButton : Control
+{
+    public enum GlyphKind { Minimize, Maximize, Close }
+
+    public GlyphKind Kind { get; set; } = GlyphKind.Close;
+    /// <summary>True saat jendela pemilik termaksimalkan (glif pulihkan).</summary>
+    public bool Maximized { get; set; }
+
+    private bool _hover;
+    private bool _pressed;
+
+    public CaptionButton()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Size = new Size(46, 36);
+        TabStop = false;
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); _hover = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _hover = false; _pressed = false; Invalidate(); }
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Left) { _pressed = true; Invalidate(); }
+    }
+    protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); _pressed = false; Invalidate(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        bool closeHover = Kind == GlyphKind.Close && (_hover || _pressed);
+        Color bg = closeHover ? Color.FromArgb(232, 17, 35)
+            : _pressed ? ControlPaint.Dark(AppTheme.LightFill, 0.1f)
+            : _hover ? AppTheme.LightFill
+            : (Parent != null ? Parent.BackColor : AppTheme.Panel);
+        using (var b = new SolidBrush(bg)) g.FillRectangle(b, ClientRectangle);
+        Color ink = closeHover ? Color.White : AppTheme.Ink;
+        using (var pen = new Pen(ink, 1f))
+        {
+            int cx = Width / 2, cy = Height / 2;
+            switch (Kind)
+            {
+                case GlyphKind.Minimize:
+                    g.DrawLine(pen, cx - 5, cy, cx + 5, cy);
+                    break;
+                case GlyphKind.Maximize:
+                    if (!Maximized)
+                        g.DrawRectangle(pen, cx - 5, cy - 5, 10, 10);
+                    else
+                    {
+                        g.DrawRectangle(pen, cx - 6, cy - 2, 8, 8);
+                        g.DrawRectangle(pen, cx - 2, cy - 6, 8, 8);
+                    }
+                    break;
+                default:
+                    g.DrawLine(pen, cx - 5, cy - 5, cx + 5, cy + 5);
+                    g.DrawLine(pen, cx + 5, cy - 5, cx - 5, cy + 5);
+                    break;
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Tombol panah lipat kecil (v2.8.0) untuk strip status: menggambar
+/// chevron; Down=true berarti panel log sedang terbuka.
+/// </summary>
+public class ChevronButton : Control
+{
+    public bool Down { get; set; } = true;
+    private bool _hover;
+
+    public ChevronButton()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        Size = new Size(24, 24);
+        TabStop = false;
+        Cursor = Cursors.Hand;
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); _hover = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _hover = false; Invalidate(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        using (var b = new SolidBrush(Parent != null ? Parent.BackColor : AppTheme.Panel))
+            g.FillRectangle(b, ClientRectangle);
+        Color ink = _hover ? AppTheme.Ink : AppTheme.InkDim;
+        using (var pen = new Pen(ink, 1.6f))
+        {
+            int cx = Width / 2, cy = Height / 2;
+            if (Down)
+            {
+                g.DrawLine(pen, cx - 5, cy - 3, cx, cy + 2);
+                g.DrawLine(pen, cx, cy + 2, cx + 5, cy - 3);
+            }
+            else
+            {
+                g.DrawLine(pen, cx - 5, cy + 3, cx, cy - 2);
+                g.DrawLine(pen, cx, cy - 2, cx + 5, cy + 3);
+            }
+        }
     }
 }
