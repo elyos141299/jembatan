@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.9\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.0\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -478,7 +478,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.5.9",
+                    ["version"] = "2.6.0",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -574,7 +574,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.5.9",
+                    ["version"] = "2.6.0",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -644,30 +644,187 @@ public sealed class AgentServer
                 int ry = ParseClamp(GetQueryParam(req.Query, "ry"), 0, 0, 4320);
                 int rw = ParseClamp(GetQueryParam(req.Query, "rw"), 0, 0, 7680);
                 int rh = ParseClamp(GetQueryParam(req.Query, "rh"), 0, 0, 4320);
+                // Grid koordinat (v2.6.0): garis + label koordinat
+                // LAYAR digambar di salinan gambar (layar user tidak
+                // berubah) — Muse membaca koordinat klik persis
+                // dari label, bukan menebak piksel.
+                bool gridOn = GetQueryParam(req.Query, "grid") == "1";
+                int gridStep = ParseClamp(GetQueryParam(req.Query, "step"), 100, 25, 500);
                 byte[] jpeg;
                 if (rw > 0 && rh > 0)
                 {
-                    using (var bmp = CaptureRegionBitmap(new Rectangle(rx, ry, rw, rh), fw, out _))
+                    using (var bmp = CaptureRegionBitmap(new Rectangle(rx, ry, rw, rh), fw, out var effR))
+                    {
+                        if (gridOn) DrawGrid(bmp, effR, gridStep);
                         jpeg = EncodeJpeg(bmp, fq);
-                    _log($"bingkai wilayah diambil ({rx},{ry} {rw}x{rh} -> {fw}px, q{fq})");
+                    }
+                    _log($"bingkai wilayah diambil ({rx},{ry} {rw}x{rh} -> {fw}px, q{fq})" + (gridOn ? " +grid" : ""));
                 }
                 else
                 {
-                    // Tangkap cepat (v2.5.0): StretchBlt mengecilkan
-                    // di pengemudi grafis; jalur lama jadi cadangan.
+                    var scrB = Screen.PrimaryScreen != null
+                        ? Screen.PrimaryScreen.Bounds
+                        : new Rectangle(0, 0, 1280, 720);
                     try
                     {
                         using (var bmp = NativeInput.CaptureScreenScaled(fw))
+                        {
+                            if (gridOn) DrawGrid(bmp, scrB, gridStep);
                             jpeg = EncodeJpeg(bmp, fq);
+                        }
                     }
                     catch
                     {
                         using (var bmp = CaptureScaledBitmap(fw))
+                        {
+                            if (gridOn) DrawGrid(bmp, scrB, gridStep);
                             jpeg = EncodeJpeg(bmp, fq);
+                        }
                     }
-                    _log($"bingkai instan diambil ({fw}px, q{fq})");
+                    _log($"bingkai instan diambil ({fw}px, q{fq})" + (gridOn ? " +grid" : ""));
                 }
                 return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
+            }
+
+            if (req.Method == "GET" && req.Path == "/burst")
+            {
+                _onActivity();
+                // Snapshot beruntun (v2.6.0): beberapa bingkai
+                // ditangkap di sisi PC lalu disusun vertikal jadi
+                // SATU gambar berlabel waktu — Muse bisa membaca
+                // gerakan (loading, animasi) dalam satu panggilan.
+                int bn = ParseClamp(GetQueryParam(req.Query, "n"), 4, 2, 8);
+                int bw = ParseClamp(GetQueryParam(req.Query, "w"), 640, 320, 1280);
+                int bq = ParseClamp(GetQueryParam(req.Query, "q"), 60, 30, 95);
+                int bgap = ParseClamp(GetQueryParam(req.Query, "gap"), 350, 0, 2000);
+                var frames = new List<Bitmap>();
+                var stamps = new List<long>();
+                var swBurst = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    for (int i = 0; i < bn; i++)
+                    {
+                        if (i > 0 && bgap > 0) Thread.Sleep(bgap);
+                        Bitmap f;
+                        try { f = NativeInput.CaptureScreenScaled(bw); }
+                        catch { f = CaptureScaledBitmap(bw); }
+                        frames.Add(f);
+                        stamps.Add(swBurst.ElapsedMilliseconds);
+                    }
+                    int fwSheet = frames[0].Width;
+                    int fh = frames[0].Height;
+                    using (var sheet = new Bitmap(fwSheet, fh * bn))
+                    using (var g = Graphics.FromImage(sheet))
+                    {
+                        int fontPx = Math.Max(10, fwSheet / 56);
+                        using (var font = new Font("Consolas", fontPx, FontStyle.Bold, GraphicsUnit.Pixel))
+                        using (var bgB = new SolidBrush(Color.FromArgb(190, 0, 0, 0)))
+                        using (var fgB = new SolidBrush(Color.White))
+                        {
+                            for (int i = 0; i < bn; i++)
+                            {
+                                g.DrawImage(frames[i], 0, i * fh);
+                                string t = "#" + (i + 1) + " +" + stamps[i] + "ms";
+                                var sz = g.MeasureString(t, font);
+                                g.FillRectangle(bgB, 4, i * fh + 4, sz.Width + 6, sz.Height + 3);
+                                g.DrawString(t, font, fgB, 7, i * fh + 5);
+                            }
+                        }
+                        var jpeg = EncodeJpeg(sheet, bq);
+                        _log($"burst {bn} bingkai ({bw}px, jeda {bgap}ms) diambil");
+                        return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
+                    }
+                }
+                finally
+                {
+                    foreach (var f in frames) f.Dispose();
+                }
+            }
+
+            if (req.Method == "GET" && req.Path == "/diff")
+            {
+                _onActivity();
+                // Sorotan perubahan layar (v2.6.0): panggilan
+                // pertama menyimpan garis dasar; panggilan
+                // berikutnya membandingkan per blok 32px dan
+                // mengembalikan blok yang berubah (koordinat
+                // layar) + persen cakupan. Garis dasar bergeser
+                // tiap panggilan (perubahan sejak panggilan
+                // terakhir). reset=1 memaksa garis dasar baru.
+                int dx = ParseClamp(GetQueryParam(req.Query, "x"), 0, 0, 7680);
+                int dy = ParseClamp(GetQueryParam(req.Query, "y"), 0, 0, 4320);
+                int dw = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
+                int dh = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
+                bool reset = GetQueryParam(req.Query, "reset") == "1";
+                var scrD = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 1280, 720);
+                var mintaD = (dw > 0 && dh > 0) ? new Rectangle(dx, dy, dw, dh) : scrD;
+                lock (_diffLock)
+                {
+                    using (var cur = CaptureRegionBitmap(mintaD, 0, out var effD))
+                    {
+                        if (_diffBase == null || _diffRegion != effD || reset)
+                        {
+                            if (_diffBase != null) _diffBase.Dispose();
+                            _diffBase = new Bitmap(cur);
+                            _diffRegion = effD;
+                            _log($"diff: garis dasar disimpan ({effD.Width}x{effD.Height})");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["baseline"] = true,
+                                ["changedBlocks"] = 0,
+                                ["coveragePct"] = 0.0,
+                                ["bounds"] = null,
+                                ["blocks"] = new List<Dictionary<string, object>>(),
+                                ["region"] = new Dictionary<string, object>
+                                {
+                                    ["x"] = effD.X, ["y"] = effD.Y,
+                                    ["w"] = effD.Width, ["h"] = effD.Height,
+                                },
+                            });
+                        }
+                        var blocks = CompareBlocks(_diffBase, cur, 32, 16, effD.X, effD.Y, out int totalBlocks);
+                        _diffBase.Dispose();
+                        _diffBase = new Bitmap(cur);
+                        double cov = totalBlocks > 0 ? Math.Round(blocks.Count * 100.0 / totalBlocks, 1) : 0.0;
+                        Dictionary<string, object> boundsDict = null;
+                        if (blocks.Count > 0)
+                        {
+                            var u = blocks[0];
+                            foreach (var b in blocks) u = Rectangle.Union(u, b);
+                            boundsDict = new Dictionary<string, object>
+                            {
+                                ["x"] = u.X, ["y"] = u.Y, ["w"] = u.Width, ["h"] = u.Height,
+                            };
+                        }
+                        var bl = new List<Dictionary<string, object>>();
+                        foreach (var b in blocks)
+                        {
+                            if (bl.Count >= 60) break;
+                            bl.Add(new Dictionary<string, object>
+                            {
+                                ["x"] = b.X, ["y"] = b.Y, ["w"] = b.Width, ["h"] = b.Height,
+                            });
+                        }
+                        _log($"diff: {blocks.Count} blok berubah ({cov}%)");
+                        return Response.JsonObject(new Dictionary<string, object>
+                        {
+                            ["ok"] = true,
+                            ["baseline"] = false,
+                            ["changedBlocks"] = blocks.Count,
+                            ["coveragePct"] = cov,
+                            ["bounds"] = boundsDict,
+                            ["blocks"] = bl,
+                            ["region"] = new Dictionary<string, object>
+                            {
+                                ["x"] = effD.X, ["y"] = effD.Y,
+                                ["w"] = effD.Width, ["h"] = effD.Height,
+                            },
+                        });
+                    }
+                }
             }
 
             if (req.Method == "GET" && req.Path == "/events")
@@ -719,13 +876,18 @@ public sealed class AgentServer
                 var minta = (ow > 0 && oh > 0) ? new Rectangle(ox, oy, ow, oh) : scr;
                 var wilayah = Rectangle.Intersect(scr, minta);
                 if (wilayah.Width <= 0 || wilayah.Height <= 0) wilayah = scr;
+                // Baca DIPERKUAT (v2.6.0): ?enhance=1 memperbesar +
+                // kontras dulu — teks kecil terbaca lebih sering.
+                bool enhanceOn = GetQueryParam(req.Query, "enhance") == "1";
                 OcrReader.Result hasil;
                 using (var bmp = CaptureRegionBitmap(wilayah, 0, out var eff))
                 {
                     wilayah = eff;
                     try
                     {
-                        hasil = OcrReader.Read(bmp, eff.X, eff.Y);
+                        hasil = enhanceOn
+                            ? OcrReader.ReadEnhanced(bmp, eff.X, eff.Y)
+                            : OcrReader.Read(bmp, eff.X, eff.Y);
                     }
                     catch (Exception ex)
                     {
@@ -746,10 +908,11 @@ public sealed class AgentServer
                         ["h"] = wd.Rect.Height,
                     });
                 }
-                _log($"OCR wilayah {wilayah.X},{wilayah.Y} {wilayah.Width}x{wilayah.Height}: {kata.Count} kata");
+                _log($"OCR wilayah {wilayah.X},{wilayah.Y} {wilayah.Width}x{wilayah.Height}: {kata.Count} kata" + (enhanceOn ? " (diperkuat)" : ""));
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
+                    ["enhanced"] = enhanceOn,
                     ["text"] = hasil.Text,
                     ["words"] = kata,
                     ["region"] = new Dictionary<string, object>
@@ -1318,7 +1481,7 @@ public sealed class AgentServer
                                     : new Rectangle(0, 0, 1280, 720);
                                 using (var bmp = CaptureRegionBitmap(scr, 0, out var eff))
                                 {
-                                    var hasil = OcrReader.Read(bmp, eff.X, eff.Y);
+                                    var hasil = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
                                     var words = hasil.Words;
                                     string ql = q.Trim();
                                     bool phrase = ql.Contains(" ");
@@ -2155,6 +2318,101 @@ public sealed class AgentServer
         }
         catch { /* relay hanya keterangan */ }
         return _relayCache;
+    }
+
+    // Keadaan /diff (v2.6.0): garis dasar perbandingan layar.
+    private static Bitmap _diffBase;
+    private static Rectangle _diffRegion;
+    private static readonly object _diffLock = new object();
+
+    /// <summary>
+    /// Gambar kisi koordinat LAYAR di atas salinan bitmap
+    /// (v2.6.0): garis tiap step piksel layar + label angka
+    /// koordinatnya. Layar user sendiri tidak pernah disentuh —
+    /// grid hanya ada di gambar yang dikirim ke Muse, supaya
+    /// koordinat klik dibaca dari label, bukan ditebak.
+    /// </summary>
+    private static void DrawGrid(Bitmap bmp, Rectangle eff, int step)
+    {
+        if (eff.Width <= 0 || eff.Height <= 0) return;
+        double sx = bmp.Width / (double)eff.Width;
+        double sy = bmp.Height / (double)eff.Height;
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+            int fontPx = Math.Max(9, bmp.Width / 110);
+            using (var font = new Font("Consolas", fontPx, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (var pen = new Pen(Color.FromArgb(120, 0, 200, 255), 1))
+            using (var bg = new SolidBrush(Color.FromArgb(175, 0, 0, 0)))
+            using (var fg = new SolidBrush(Color.FromArgb(255, 255, 230, 120)))
+            {
+                int stepImg = Math.Max(1, (int)(step * sx));
+                int skip = Math.Max(1, (int)Math.Ceiling(34.0 / stepImg));
+                int k = 0;
+                for (int x = (int)(Math.Ceiling(eff.X / (double)step) * step); x < eff.X + eff.Width; x += step, k++)
+                {
+                    int ix = (int)((x - eff.X) * sx);
+                    g.DrawLine(pen, ix, 0, ix, bmp.Height);
+                    if (k % skip == 0)
+                    {
+                        string t = x.ToString();
+                        var sz = g.MeasureString(t, font);
+                        g.FillRectangle(bg, ix + 1, 1, sz.Width + 4, sz.Height + 2);
+                        g.DrawString(t, font, fg, ix + 3, 2);
+                    }
+                }
+                int stepImgY = Math.Max(1, (int)(step * sy));
+                int skipY = Math.Max(1, (int)Math.Ceiling(34.0 / stepImgY));
+                k = 0;
+                for (int y = (int)(Math.Ceiling(eff.Y / (double)step) * step); y < eff.Y + eff.Height; y += step, k++)
+                {
+                    int iy = (int)((y - eff.Y) * sy);
+                    g.DrawLine(pen, 0, iy, bmp.Width, iy);
+                    if (k % skipY == 0)
+                    {
+                        string t = y.ToString();
+                        var sz = g.MeasureString(t, font);
+                        g.FillRectangle(bg, 1, iy + 1, sz.Width + 4, sz.Height + 2);
+                        g.DrawString(t, font, fg, 3, iy + 2);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Bandingkan dua bitmap seukuran per blok (v2.6.0):
+    /// kecilkan keduanya ke kisi blok (tiap piksel kisi =
+    /// rata-rata satu blok), tandai blok yang selisih warna
+    /// rata-ratanya melewati ambang. Hasil: daftar persegi
+    /// blok dalam koordinat layar.
+    /// </summary>
+    private static List<Rectangle> CompareBlocks(Bitmap a, Bitmap b, int block, int threshold, int offX, int offY, out int total)
+    {
+        int gw = Math.Max(1, (int)Math.Ceiling(a.Width / (double)block));
+        int gh = Math.Max(1, (int)Math.Ceiling(a.Height / (double)block));
+        total = gw * gh;
+        var hasil = new List<Rectangle>();
+        using (var sa = new Bitmap(a, new Size(gw, gh)))
+        using (var sb = new Bitmap(b, new Size(gw, gh)))
+        {
+            for (int y = 0; y < gh; y++)
+            {
+                for (int x = 0; x < gw; x++)
+                {
+                    var pa = sa.GetPixel(x, y);
+                    var pb = sb.GetPixel(x, y);
+                    int d = Math.Abs(pa.R - pb.R) + Math.Abs(pa.G - pb.G) + Math.Abs(pa.B - pb.B);
+                    if (d > threshold * 3)
+                    {
+                        int bw = Math.Min(block, a.Width - x * block);
+                        int bh = Math.Min(block, a.Height - y * block);
+                        hasil.Add(new Rectangle(offX + x * block, offY + y * block, bw, bh));
+                    }
+                }
+            }
+        }
+        return hasil;
     }
 
     /// <summary>

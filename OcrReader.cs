@@ -54,10 +54,53 @@ public static class OcrReader
     /// </summary>
     public static Result Read(Bitmap bmp, int offsetX, int offsetY)
     {
-        return Task.Run(() => ReadAsync(bmp, offsetX, offsetY)).GetAwaiter().GetResult();
+        return Task.Run(() => ReadAsync(bmp, offsetX, offsetY, 1.0)).GetAwaiter().GetResult();
     }
 
-    private static async Task<Result> ReadAsync(Bitmap bmp, int offsetX, int offsetY)
+    /// <summary>
+    /// Baca DIPERKUAT (v2.6.0): bitmap diperbesar dulu (maks
+    /// 2x, dimensi terbesar dibatasi 2600) + abu-abu kontras
+    /// tinggi — teks kecil yang luput dari mesin OCR pada
+    /// ukuran asli terbaca jauh lebih sering. Kotak kata
+    /// dipetakan kembali ke koordinat asli lewat faktor skala.
+    /// </summary>
+    public static Result ReadEnhanced(Bitmap bmp, int offsetX, int offsetY)
+    {
+        int maxDim = Math.Max(bmp.Width, bmp.Height);
+        double f = Math.Min(2.0, 2600.0 / Math.Max(1, maxDim));
+        if (f < 1.0) f = 1.0;
+        using (var up = Enhance(bmp, f))
+            return Task.Run(() => ReadAsync(up, offsetX, offsetY, f)).GetAwaiter().GetResult();
+    }
+
+    /// <summary>Perbesar + abu-abu + kontras untuk OCR.</summary>
+    private static Bitmap Enhance(Bitmap src, double f)
+    {
+        int w = Math.Max(1, (int)(src.Width * f));
+        int h = Math.Max(1, (int)(src.Height * f));
+        var dst = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        float c = 1.35f;
+        float t = 0.5f * (1f - c);
+        var cm = new System.Drawing.Imaging.ColorMatrix(new[]
+        {
+            new[] { 0.299f * c, 0.587f * c, 0.114f * c, 0f, 0f },
+            new[] { 0.299f * c, 0.587f * c, 0.114f * c, 0f, 0f },
+            new[] { 0.299f * c, 0.587f * c, 0.114f * c, 0f, 0f },
+            new[] { 0f, 0f, 0f, 1f, 0f },
+            new[] { t, t, t, 0f, 1f },
+        });
+        using (var g = Graphics.FromImage(dst))
+        using (var attrs = new System.Drawing.Imaging.ImageAttributes())
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+            attrs.SetColorMatrix(cm);
+            g.DrawImage(src, new Rectangle(0, 0, w, h), 0, 0, src.Width, src.Height, GraphicsUnit.Pixel, attrs);
+        }
+        return dst;
+    }
+
+    private static async Task<Result> ReadAsync(Bitmap bmp, int offsetX, int offsetY, double scale)
     {
         var engine = OcrEngine.TryCreateFromUserProfileLanguages()
                      ?? OcrEngine.TryCreateFromLanguage(new Language("en-US"));
@@ -93,8 +136,8 @@ public static class OcrReader
                     {
                         Text = w.Text ?? "",
                         Rect = new Rectangle(
-                            offsetX + (int)r.X, offsetY + (int)r.Y,
-                            Math.Max(1, (int)r.Width), Math.Max(1, (int)r.Height)),
+                            offsetX + (int)(r.X / scale), offsetY + (int)(r.Y / scale),
+                            Math.Max(1, (int)(r.Width / scale)), Math.Max(1, (int)(r.Height / scale))),
                     });
                 }
                 if (hasil.Words.Count >= 600) break;

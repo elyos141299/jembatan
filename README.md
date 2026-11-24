@@ -1,4 +1,4 @@
-# MuseLink v2.5.9 — catatan pengembang
+# MuseLink v2.6.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,26 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.0 (dari v2.5.9) — Empat Fitur Penglihatan
+
+Dipilih user 24 Nov ("gas keempatnya") dari daftar push
+penglihatan; semuanya fitur MELIHAT (baca), bukan kendali
+baru, dan layar user tidak pernah disentuh:
+
+- **Grid koordinat** — GET /frame?grid=1&step= (bawaan 100):
+  garis + label koordinat layar digambar di salinan gambar
+  sebelum dikirim; koordinat klik dibaca dari label.
+- **Sorotan perubahan** — GET /diff?x&y&w&h&reset=:
+  panggilan pertama = garis dasar; berikutnya mengembalikan
+  blok 32px yang berubah + cakupan persen + kotak gabungan.
+- **OCR diperkuat** — OcrReader.ReadEnhanced: perbesar
+  (maks 2x, dimensi maks 2600) + abu-abu kontras 1.35 dulu;
+  /ocr?enhance=1 memakainya, dan /find kini selalu memakai
+  jalur diperkuat.
+- **Snapshot beruntun** — GET /burst?n&w&q&gap= (n maks 8):
+  bingkai ditangkap di sisi PC dan disusun vertikal jadi
+  satu JPEG berlabel waktu (+ms) untuk membaca gerakan.
 
 ## Perubahan v2.5.9 (dari v2.5.8) — Konteks Instan + Cari di Layar
 
