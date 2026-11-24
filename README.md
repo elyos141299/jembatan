@@ -1,4 +1,4 @@
-# MuseLink v2.7.1 — catatan pengembang
+# MuseLink v2.7.2 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,10 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.2 (dari v2.7.1) — Stream: matikan jeda Nagle
+
+- **client.NoDelay = true** pada semua koneksi masuk + **satu kali tulis per frame stream** (header+JPEG+CRLF digabung satu buffer). Di v2.7.1 stream lokal dengan sumber video 60fps hanya mencapai ±35fps (lebar 640): tiga tulis kecil per frame kena jeda Nagle/delayed-ACK. Batas fisik sisanya: monitor user 55Hz — desktop tidak pernah menghasilkan lebih dari ±55 frame berbeda per detik.
 
 ## Perubahan v2.7.1 (dari v2.7.0) — Stream 60fps
 

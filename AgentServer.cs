@@ -115,6 +115,7 @@ public sealed class AgentServer
             {
                 break; // listener dihentikan / token dibatalkan
             }
+            client.NoDelay = true; // v2.7.2: matikan Nagle (stream menulis potongan kecil)
             _ = Task.Run(() => HandleClient(client));
         }
     }
@@ -394,7 +395,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.1\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.2\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -553,7 +554,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.1",
+                    ["version"] = "2.7.2",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -651,7 +652,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.1",
+                    ["version"] = "2.7.2",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -3053,9 +3054,14 @@ public sealed class AgentServer
                         var partHead = Encoding.ASCII.GetBytes(
                             "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
                             jpeg.Length + "\r\n\r\n");
-                        stream.Write(partHead, 0, partHead.Length);
-                        stream.Write(jpeg, 0, jpeg.Length);
-                        stream.Write(crlf, 0, crlf.Length);
+                        // v2.7.2: header+JPEG+CRLF digabung jadi SATU tulis
+                        // per frame — tiga tulis kecil kena jeda Nagle /
+                        // delayed-ACK (±10ms per frame terbuang di v2.7.1).
+                        var frameBytes = new byte[partHead.Length + jpeg.Length + crlf.Length];
+                        Buffer.BlockCopy(partHead, 0, frameBytes, 0, partHead.Length);
+                        Buffer.BlockCopy(jpeg, 0, frameBytes, partHead.Length, jpeg.Length);
+                        Buffer.BlockCopy(crlf, 0, frameBytes, partHead.Length + jpeg.Length, crlf.Length);
+                        stream.Write(frameBytes, 0, frameBytes.Length);
                         stream.Flush();
                         lastHash = hash;
                         lastSentMs = clock.ElapsedMilliseconds;
