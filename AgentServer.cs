@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.0\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.1\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -375,10 +375,52 @@ public sealed class AgentServer
                 int sy = ParseClamp(GetQueryParam(req.Query, "y"), 0, 0, 4320);
                 int sw = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
                 int sh = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
-                var png = (sw > 0 && sh > 0)
-                    ? OnUi(() => CaptureScreenshotRegion(sx, sy, sw, sh))
-                    : OnUi(CaptureScreenshot);
-                _log("screenshot layar diambil" + (sw > 0 && sh > 0 ? $" (wilayah {sx},{sy} {sw}x{sh})" : ""));
+                // Grid koordinat di PNG penuh (v2.6.1): sama
+                // seperti /frame?grid=1 tapi di resolusi asli —
+                // presisi maksimal untuk target mungil.
+                bool sGrid = GetQueryParam(req.Query, "grid") == "1";
+                int sStep = ParseClamp(GetQueryParam(req.Query, "step"), 100, 25, 500);
+                byte[] png;
+                if (sw > 0 && sh > 0)
+                {
+                    png = OnUi(() =>
+                    {
+                        using (var bmp = CaptureScreenshotRegionBitmap(sx, sy, sw, sh, out var effS))
+                        {
+                            if (sGrid) DrawGrid(bmp, effS, sStep);
+                            using (var ms = new MemoryStream())
+                            {
+                                bmp.Save(ms, ImageFormat.Png);
+                                return ms.ToArray();
+                            }
+                        }
+                    });
+                }
+                else if (sGrid)
+                {
+                    png = OnUi(() =>
+                    {
+                        var bnd = Screen.PrimaryScreen != null
+                            ? Screen.PrimaryScreen.Bounds
+                            : new Rectangle(0, 0, 1280, 720);
+                        using (var bmp = new Bitmap(bnd.Width, bnd.Height))
+                        {
+                            using (var g = Graphics.FromImage(bmp))
+                                g.CopyFromScreen(bnd.Location, Point.Empty, bnd.Size);
+                            DrawGrid(bmp, bnd, sStep);
+                            using (var ms = new MemoryStream())
+                            {
+                                bmp.Save(ms, ImageFormat.Png);
+                                return ms.ToArray();
+                            }
+                        }
+                    });
+                }
+                else
+                {
+                    png = OnUi(CaptureScreenshot);
+                }
+                _log("screenshot layar diambil" + (sw > 0 && sh > 0 ? $" (wilayah {sx},{sy} {sw}x{sh})" : "") + (sGrid ? " +grid" : ""));
                 return new Response { ContentType = "image/png", BodyBytes = png };
             }
 
@@ -478,7 +520,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.0",
+                    ["version"] = "2.6.1",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -574,7 +616,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.0",
+                    ["version"] = "2.6.1",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -697,6 +739,14 @@ public sealed class AgentServer
                 int bw = ParseClamp(GetQueryParam(req.Query, "w"), 640, 320, 1280);
                 int bq = ParseClamp(GetQueryParam(req.Query, "q"), 60, 30, 95);
                 int bgap = ParseClamp(GetQueryParam(req.Query, "gap"), 350, 0, 2000);
+                // Burst wilayah (v2.6.1): rx/ry/rw/rh membatasi
+                // bingkai ke satu wilayah — teks di tiap bingkai
+                // kebaca, muatan lebih kecil.
+                int brx = ParseClamp(GetQueryParam(req.Query, "rx"), 0, 0, 7680);
+                int bry = ParseClamp(GetQueryParam(req.Query, "ry"), 0, 0, 4320);
+                int brw = ParseClamp(GetQueryParam(req.Query, "rw"), 0, 0, 7680);
+                int brh = ParseClamp(GetQueryParam(req.Query, "rh"), 0, 0, 4320);
+                bool burstRegion = brw > 0 && brh > 0;
                 var frames = new List<Bitmap>();
                 var stamps = new List<long>();
                 var swBurst = System.Diagnostics.Stopwatch.StartNew();
@@ -706,8 +756,15 @@ public sealed class AgentServer
                     {
                         if (i > 0 && bgap > 0) Thread.Sleep(bgap);
                         Bitmap f;
-                        try { f = NativeInput.CaptureScreenScaled(bw); }
-                        catch { f = CaptureScaledBitmap(bw); }
+                        if (burstRegion)
+                        {
+                            f = CaptureRegionBitmap(new Rectangle(brx, bry, brw, brh), bw, out _);
+                        }
+                        else
+                        {
+                            try { f = NativeInput.CaptureScreenScaled(bw); }
+                            catch { f = CaptureScaledBitmap(bw); }
+                        }
                         frames.Add(f);
                         stamps.Add(swBurst.ElapsedMilliseconds);
                     }
@@ -731,7 +788,7 @@ public sealed class AgentServer
                             }
                         }
                         var jpeg = EncodeJpeg(sheet, bq);
-                        _log($"burst {bn} bingkai ({bw}px, jeda {bgap}ms) diambil");
+                        _log($"burst {bn} bingkai ({bw}px, jeda {bgap}ms) diambil" + (burstRegion ? $" (wilayah {brx},{bry} {brw}x{brh})" : ""));
                         return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
                     }
                 }
@@ -953,6 +1010,29 @@ public sealed class AgentServer
                                 return Response.Json("{\"ok\":false,\"error\":\"actions wajib berupa array\"}", 400);
                             bool stopOnError = !root.TryGetProperty("stopOnError", out var soe) ||
                                                soe.ValueKind != JsonValueKind.False;
+                            // diffAfter (v2.6.1): garis dasar
+                            // diambil SEBELUM aksi jalan; sesudah
+                            // rangkaian selesai, perubahan layar
+                            // dihitung dan ditempel ke respons —
+                            // lingkaran klik->cek jadi satu
+                            // panggilan (pasangan /diff).
+                            bool diffAfter = root.TryGetProperty("diffAfter", out var daf) &&
+                                             daf.ValueKind == JsonValueKind.True;
+                            Bitmap diffBefore = null;
+                            Rectangle diffRegion = Rectangle.Empty;
+                            if (diffAfter)
+                            {
+                                var scrDiff = Screen.PrimaryScreen != null
+                                    ? Screen.PrimaryScreen.Bounds
+                                    : new Rectangle(0, 0, 1280, 720);
+                                int dX = GetInt(root, "diffX", 0);
+                                int dY = GetInt(root, "diffY", 0);
+                                int dW = GetInt(root, "diffW", 0);
+                                int dH = GetInt(root, "diffH", 0);
+                                var mintaDiff = (dW > 0 && dH > 0)
+                                    ? new Rectangle(dX, dY, dW, dH) : scrDiff;
+                                diffBefore = CaptureRegionBitmap(mintaDiff, 0, out diffRegion);
+                            }
                             var results = new List<object>();
                             int doneCount = 0;
                             foreach (var action in actions.EnumerateArray())
@@ -1114,6 +1194,54 @@ public sealed class AgentServer
                                     {
                                         ["ok"] = false, ["error"] = ex.Message,
                                     };
+                                }
+                            }
+                            if (diffAfter && diffBefore != null)
+                            {
+                                try
+                                {
+                                    using (var curDiff = CaptureRegionBitmap(diffRegion, 0, out var effDiff))
+                                    {
+                                        var dBlocks = CompareBlocks(diffBefore, curDiff, 32, 16, effDiff.X, effDiff.Y, out int dTotal);
+                                        double dCov = dTotal > 0 ? Math.Round(dBlocks.Count * 100.0 / dTotal, 1) : 0.0;
+                                        Dictionary<string, object> dBounds = null;
+                                        if (dBlocks.Count > 0)
+                                        {
+                                            var u = dBlocks[0];
+                                            foreach (var b in dBlocks) u = Rectangle.Union(u, b);
+                                            dBounds = new Dictionary<string, object>
+                                            {
+                                                ["x"] = u.X, ["y"] = u.Y, ["w"] = u.Width, ["h"] = u.Height,
+                                            };
+                                        }
+                                        var dList = new List<Dictionary<string, object>>();
+                                        foreach (var b in dBlocks)
+                                        {
+                                            if (dList.Count >= 60) break;
+                                            dList.Add(new Dictionary<string, object>
+                                            {
+                                                ["x"] = b.X, ["y"] = b.Y, ["w"] = b.Width, ["h"] = b.Height,
+                                            });
+                                        }
+                                        batchResp["diff"] = new Dictionary<string, object>
+                                        {
+                                            ["changedBlocks"] = dBlocks.Count,
+                                            ["coveragePct"] = dCov,
+                                            ["bounds"] = dBounds,
+                                            ["blocks"] = dList,
+                                        };
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    batchResp["diff"] = new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false, ["error"] = ex.Message,
+                                    };
+                                }
+                                finally
+                                {
+                                    diffBefore.Dispose();
                                 }
                             }
                             return Response.JsonObject(batchResp);
@@ -2525,6 +2653,25 @@ public sealed class AgentServer
                 return ms.ToArray();
             }
         }
+    }
+
+    /// <summary>
+    /// Versi bitmap dari screenshot wilayah (v2.6.1) — untuk
+    /// pemanggil yang perlu menggambar di atasnya dulu (grid)
+    /// sebelum mengenkode PNG. Pemanggil membuang bitmap-nya.
+    /// eff = wilayah efektif sesudah penjepitan ke layar.
+    /// </summary>
+    private static Bitmap CaptureScreenshotRegionBitmap(int x, int y, int w, int h, out Rectangle eff)
+    {
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        eff = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
+        if (eff.Width <= 0 || eff.Height <= 0) eff = bounds;
+        var bmp = new Bitmap(eff.Width, eff.Height);
+        using (var g = Graphics.FromImage(bmp))
+            g.CopyFromScreen(eff.Location, Point.Empty, eff.Size);
+        return bmp;
     }
 
     /// <summary>

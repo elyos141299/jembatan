@@ -1,4 +1,4 @@
-# MuseLink v2.6.0 — catatan pengembang
+# MuseLink v2.6.1 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,21 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.1 (dari v2.6.0) — Pasangan Fitur Penglihatan
+
+Dipilih user 24 Nov ("gas ketiganya") sebagai lanjutan
+paket penglihatan v2.6.0:
+
+- **diffAfter di /batch** — {diffAfter:true, diffX/Y/W/H?}:
+  garis dasar ditangkap sebelum aksi pertama jalan, lalu
+  perubahan (blok 32px + cakupan + bounds) ditempel ke
+  respons sebagai "diff". Lingkaran klik->cek = 1 panggilan.
+- **Grid di /screenshot** — ?grid=1&step= kini juga di
+  screenshot PNG (wilayah maupun layar penuh, resolusi
+  asli) lewat CaptureScreenshotRegionBitmap baru.
+- **Burst wilayah** — /burst kini menerima rx/ry/rw/rh:
+  bingkai hanya wilayah itu (dijepit + diskala ke w).
 
 ## Perubahan v2.6.0 (dari v2.5.9) — Empat Fitur Penglihatan
 
