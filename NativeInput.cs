@@ -141,9 +141,6 @@ public static class NativeInput
     private const int SwMaximize = 3;
     private const uint WmClose = 0x0010;
 
-    [DllImport("user32.dll")]
-    private static extern bool IsIconic(IntPtr hWnd);
-
     /// <summary>True bila jendela sedang terminimize (v2.7.3).</summary>
     public static bool IsWindowMinimized(IntPtr hWnd)
     {
