@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 
@@ -104,9 +105,10 @@ public static class DxgiCapture
         try
         {
             var hr = D3D11.D3D11CreateDevice(
+                (IDXGIAdapter)null,
                 DriverType.Hardware,
                 DeviceCreationFlags.BgraSupport,
-                null,
+                new[] { FeatureLevel.Level_11_0 },
                 out _device, out _context);
             if (hr.Failure || _device == null) { DisposeLocked(); return false; }
 
@@ -133,7 +135,7 @@ public static class DxgiCapture
     /// </summary>
     private static bool DrainOnce(int timeoutMs)
     {
-        var hr = _dup.AcquireNextFrame(timeoutMs, out _, out var resource);
+        var hr = _dup.AcquireNextFrame((uint)timeoutMs, out _, out var resource);
         if (hr.Code == WaitTimeout) return false;
         if (hr.Failure || resource == null)
             throw new InvalidOperationException("AcquireNextFrame gagal: 0x" + hr.Code.ToString("X8"));
@@ -176,7 +178,7 @@ public static class DxgiCapture
 
     private static Bitmap ReadStaging()
     {
-        var map = _context.Map(_staging, 0, MapMode.Read, MapFlags.None);
+        var map = _context.Map(_staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
         try
         {
             var bmp = new Bitmap(_width, _height, PixelFormat.Format32bppArgb);
