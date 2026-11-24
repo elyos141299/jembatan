@@ -21,6 +21,11 @@ namespace Jembatan;
 /// </summary>
 public sealed class SettingsForm : Form
 {
+    // v2.9.1: bar judul jendela dipaksa mengikuti tema (DWM
+    // immersive dark mode) agar tidak belang putih di tema gelap.
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
     private readonly MainForm _owner;
 
     private RoundedPanel _cardUmum;
@@ -170,7 +175,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v2.9.0", 20, 496, 8.5f, false, true);
+        MakeLabel("MuseLink v2.9.1", 20, 496, 8.5f, false, true);
     }
 
     private RoundedButton MakePill(string text, int x, Action onClick)
@@ -240,6 +245,12 @@ public sealed class SettingsForm : Form
         foreach (Control c in _cardKoneksi.Controls) if (c is Label l3) l3.BackColor = AppTheme.Card;
         RefreshPills();
         RefreshServerButton();
+        try
+        {
+            int dark = AppTheme.IsDark ? 1 : 0;
+            DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+        }
+        catch { /* OS lama tanpa DWM: abaikan */ }
         Invalidate(true);
     }
 }

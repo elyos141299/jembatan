@@ -60,6 +60,8 @@ public sealed class MainForm : Form
     private Label _addrLabel;
     private Label _versionLabel;
     private RoundedPanel _statusPill;
+    private GradientBar _gradBar;
+    private string _statusTextFull = "Menunggu koneksi";
     private PictureBox _logoBox;
     private RoundedPanel _tilesCard;
     private Label _tileRelayValue;
@@ -183,14 +185,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.9.0 dimulai ===");
+            Log("=== MuseLink v2.9.1 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.9.0 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.9.1 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -515,7 +517,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v2.9.0",
+            Text = "v2.9.1",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -738,6 +740,19 @@ public sealed class MainForm : Form
         };
         header.Controls.Add(_modeLabel);
 
+        // v2.9.1: garis aksen gradasi di tepi atas kartu kepala
+        // (tanda tangan Midnight Rich; hanya tampil di tema gelap).
+        _gradBar = new GradientBar
+        {
+            Location = new Point(14, 6),
+            Size = new Size(276, 3),
+            StartColor = Accent,
+            EndColor = AccentAlt,
+            Visible = AppTheme.IsDark,
+        };
+        header.Controls.Add(_gradBar);
+        _gradBar.BringToFront();
+
         // Tile status 2x2 (v2.8.0 — panel menyempit, tile jadi grid).
         var tilesWrap = new Panel
         {
@@ -758,7 +773,7 @@ public sealed class MainForm : Form
         MakeTile2(tiles, 0, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile2(tiles, 0, 1, "UPTIME", "0m", out _tileUptimeValue);
         MakeTile2(tiles, 1, 0, "CAPTURE", "…", out _tileCaptureValue);
-        MakeTile2(tiles, 1, 1, "VERSI", "2.9.0", out _tileVersionValue);
+        MakeTile2(tiles, 1, 1, "VERSI", "2.9.1", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -1323,7 +1338,8 @@ public sealed class MainForm : Form
     private void SetWaiting()
     {
         _statusDot.DotColor = DotWaiting;
-        _statusLabel.Text = "Menunggu koneksi";
+        _statusTextFull = "Menunggu koneksi";
+        _statusLabel.Text = _statusTextFull;
         _statusState = "waiting";
         RefreshStatusPill();
     }
@@ -1331,6 +1347,7 @@ public sealed class MainForm : Form
     private void SetStopped(string text)
     {
         _statusDot.DotColor = DotStopped;
+        _statusTextFull = text;
         _statusLabel.Text = text;
         _statusState = "stopped";
         RefreshStatusPill();
@@ -1362,7 +1379,11 @@ public sealed class MainForm : Form
         // judul dan strip bawah; tombol akses ikut disegarkan.
         if (_titleDot != null) _titleDot.DotColor = dot;
         if (_stripDot != null) _stripDot.DotColor = dot;
-        if (_stripLabel != null && _statusLabel != null) _stripLabel.Text = _statusLabel.Text;
+        if (_stripLabel != null) _stripLabel.Text = _statusTextFull;
+        // v2.9.1: teks di dalam pill dipersingkat agar tidak
+        // terpotong elipsis (pill hanya 228px); strip bawah tetap
+        // memakai teks penuh dari _statusTextFull.
+        if (_statusLabel != null) _statusLabel.Text = ShortenPillText(_statusTextFull);
         RefreshServerButtonPanel();
     }
 
@@ -1500,6 +1521,15 @@ public sealed class MainForm : Form
             _serverBtn.BackColor = Accent;
             _serverBtn.ForeColor = Color.White;
         }
+    }
+
+    // v2.9.1: versi singkat teks status khusus pill.
+    private static string ShortenPillText(string text)
+    {
+        const string prefix = "Terhubung \u2022 aktivitas terakhir ";
+        if (text.StartsWith(prefix)) return "Terhubung \u2022 " + text.Substring(prefix.Length);
+        if (text.StartsWith("Terputus")) return "Terputus";
+        return text;
     }
 
     private int _errorCount;
@@ -1644,6 +1674,7 @@ public sealed class MainForm : Form
         if (_titleDot != null) _titleDot.BackColor = Panel;
         if (_stripDot != null) _stripDot.BackColor = Panel;
         if (_stripLabel != null) { _stripLabel.ForeColor = InkDim; _stripLabel.BackColor = Panel; }
+        if (_gradBar != null) { _gradBar.Visible = AppTheme.IsDark; _gradBar.StartColor = Accent; _gradBar.EndColor = AccentAlt; _gradBar.Invalidate(); }
         if (_stripUptime != null) { _stripUptime.ForeColor = InkDim; _stripUptime.BackColor = Panel; }
         if (_stripLogLabel != null) { _stripLogLabel.ForeColor = InkDim; _stripLogLabel.BackColor = Panel; }
         if (_logPanel != null) _logPanel.BackColor = Panel;
@@ -1734,7 +1765,8 @@ public sealed class MainForm : Form
             return;
         }
         _statusDot.DotColor = Green;
-        _statusLabel.Text = "Terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
+        _statusTextFull = "Terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
+        _statusLabel.Text = _statusTextFull;
         _statusState = "connected";
         RefreshStatusPill();
     }

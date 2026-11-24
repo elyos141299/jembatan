@@ -32,6 +32,20 @@ public class RoundedPanel : Panel
         BackColor = Color.FromArgb(245, 245, 247);
     }
 
+    /// <summary>v2.9.1: warna permukaan EFEKTIF di belakang sebuah
+    /// kontrol — induk RoundedPanel berarti FillColor-nya, selain itu
+    /// BackColor induk. Dipakai mewarnai sudut di luar lengkung.
+    /// Sebelumnya RoundedPanel memakai BackColor-nya sendiri yang
+    /// bawaan #F5F5F7: tak terlihat di tema terang, tetapi di tema
+    /// gelap tampil sebagai segitiga putih di keempat sudut kartu
+    /// (dilaporkan user 25 Nov 04:21).</summary>
+    internal static Color SurfaceOf(Control parent)
+    {
+        if (parent == null) return Color.FromArgb(245, 245, 247);
+        if (parent is RoundedPanel rp) return rp.FillColor;
+        return parent.BackColor;
+    }
+
     internal static GraphicsPath RoundRectPath(Rectangle r, int radius)
     {
         var path = new GraphicsPath();
@@ -55,11 +69,12 @@ public class RoundedPanel : Panel
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        // Sudut di luar lengkung: cat warna latar dulu (BackColor
-        // panel memang disamakan dengan latar form #F5F5F7), supaya
-        // lengkung anti-alias menyatu mulus dengan latar — pengganti
-        // Region yang bergerigi (v2.3.5).
-        using (var bg = new SolidBrush(BackColor))
+        // Sudut di luar lengkung: cat warna permukaan induk dulu,
+        // supaya lengkung anti-alias menyatu mulus dengan latar —
+        // pengganti Region yang bergerigi (v2.3.5). v2.9.1: warna
+        // permukaan EFEKTIF induk (SurfaceOf), bukan BackColor
+        // sendiri — sumber segitiga putih di tema gelap.
+        using (var bg = new SolidBrush(SurfaceOf(Parent)))
             g.FillRectangle(bg, ClientRectangle);
         using (var path = RoundRectPath(ClientRectangle, CornerRadius))
         using (var fill = new SolidBrush(FillColor))
@@ -129,7 +144,7 @@ public class ToggleSwitch : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        using (var bg = new SolidBrush(BackColor))
+        using (var bg = new SolidBrush(RoundedPanel.SurfaceOf(Parent)))
             g.FillRectangle(bg, ClientRectangle);
 
         var trackRect = new Rectangle(0, 0, Width - 1, Height - 1);
@@ -246,7 +261,7 @@ public class RoundedButton : Button
         // Sudut di luar lengkung dicat warna latar induk langsung,
         // supaya lengkung anti-alias menyatu mulus — pengganti
         // pemotongan Region yang bergerigi (v2.3.5).
-        Color surround = Parent != null ? Parent.BackColor : Color.FromArgb(245, 245, 247);
+        Color surround = RoundedPanel.SurfaceOf(Parent);
         using (var bg = new SolidBrush(surround))
             g.FillRectangle(bg, ClientRectangle);
 
@@ -428,5 +443,36 @@ public class ChevronButton : Control
                 g.DrawLine(pen, cx, cy - 2, cx + 5, cy + 3);
             }
         }
+    }
+}
+
+
+/// <summary>
+/// v2.9.1: garis aksen gradasi horizontal (Blurple -> fuchsia,
+/// tanda tangan Midnight Rich) untuk tepi atas kartu kepala.
+/// Sudutnya dibulatkan penuh dan sudut luarnya dicat warna
+/// permukaan induk seperti kontrol bundar lainnya.
+/// </summary>
+public class GradientBar : Control
+{
+    public Color StartColor { get; set; } = Color.FromArgb(88, 101, 242);
+    public Color EndColor { get; set; } = Color.FromArgb(235, 69, 158);
+
+    public GradientBar()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        using (var bg = new SolidBrush(RoundedPanel.SurfaceOf(Parent)))
+            g.FillRectangle(bg, ClientRectangle);
+        using (var path = RoundedPanel.RoundRectPath(ClientRectangle, Math.Max(1, Height / 2)))
+        using (var brush = new LinearGradientBrush(ClientRectangle, StartColor, EndColor, LinearGradientMode.Horizontal))
+            g.FillPath(brush, path);
     }
 }

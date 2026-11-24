@@ -1,4 +1,4 @@
-# MuseLink v2.9.0 — catatan pengembang
+# MuseLink v2.9.1 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,19 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.9.1 (dari v2.9.0) — Perbaikan inspeksi visual
+- SEGITIGA PUTIH di sudut kartu/tombol (keluhan user):
+  RoundedPanel mewarnai sudut luar lengkung dengan BackColor
+  bawaannya #F5F5F7 — di tema gelap jadi segitiga putih.
+  Semua kontrol bundar kini memakai warna permukaan efektif
+  induk (RoundedPanel.SurfaceOf: induk RoundedPanel ->
+  FillColor, selain itu BackColor induk).
+- Teks pill status dipersingkat (Terhubung - jam) agar tidak
+  terpotong; strip bawah tetap teks penuh (_statusTextFull).
+- Bar judul Pengaturan mengikuti tema via DWM immersive dark.
+- Garis aksen gradasi Blurple->fuchsia (GradientBar baru) di
+  tepi atas kartu kepala, hanya tema gelap.
 
 ## Perubahan v2.9.0 (dari v2.8.1) — Arah Midnight Rich + logo baru
 - Arah gelap Linear DITOLAK user sesudah melihatnya langsung;
