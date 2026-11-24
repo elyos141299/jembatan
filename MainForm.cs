@@ -103,7 +103,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.4.3 dimulai ===");
+            Log("=== MuseLink v2.4.4 dimulai ===");
             InitStartOptions();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
@@ -425,7 +425,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.4.3",
+            Text = "v2.4.4",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,

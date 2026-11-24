@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -75,7 +76,19 @@ public static class NativeInput
         public IntPtr Handle;
         public string Title;
         public string Process;
+        // Kotak batas jendela (v2.4.4) — Muse bisa mengarahkan
+        // klik tanpa screenshot dulu.
+        public Rectangle Rect;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
     /// <summary>Daftar semua jendela tingkat atas yang terlihat & berjudul non-kosong.</summary>
     public static List<WindowInfo> ListWindows()
@@ -95,7 +108,14 @@ public static class NativeInput
                 proc = Process.GetProcessById((int)pid).ProcessName;
             }
             catch { /* proses sudah mati dsb. — nama proses dikosongkan */ }
-            result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = proc });
+            var rect = Rectangle.Empty;
+            try
+            {
+                if (GetWindowRect(hWnd, out RECT rr) && rr.Right > rr.Left && rr.Bottom > rr.Top)
+                    rect = new Rectangle(rr.Left, rr.Top, rr.Right - rr.Left, rr.Bottom - rr.Top);
+            }
+            catch { /* kotak batas hanya keterangan tambahan */ }
+            result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = proc, Rect = rect });
             return true;
         }, IntPtr.Zero);
         return result;

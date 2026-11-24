@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
@@ -10,9 +10,9 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>2.4.3</Version>
-    <AssemblyVersion>2.4.3.0</AssemblyVersion>
-    <FileVersion>2.4.3.0</FileVersion>
+    <Version>2.4.4</Version>
+    <AssemblyVersion>2.4.4.0</AssemblyVersion>
+    <FileVersion>2.4.4.0</FileVersion>
     <!-- WebView2 (panel chat v2.2): loader native-nya harus ikut
          ter-extract dari berkas tunggal hasil publish, kalau tidak
          panel chat gagal jalan dari Jembatan.exe single-file. -->
@@ -22,6 +22,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
   </ItemGroup>
+
+  <!-- OCR (v2.4.4): TargetFramework diarahkan ke permukaan SDK
+       Windows 10 19041 agar API WinRT Windows.Media.Ocr (mesin OCR
+       bawaan Windows) bisa dipakai. WinForms/WebView2/FlaUI tidak
+       terpengaruh oleh arahan ini. -->
 
   <!-- UI Automation (peta elemen jendela, v2.4.0): lewat FlaUI —
        rujukan rakitan kerangka UIAutomationClient tidak

@@ -345,7 +345,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.3\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.4\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -434,6 +434,10 @@ public sealed class AgentServer
                     {
                         ["title"] = w.Title,
                         ["process"] = w.Process,
+                        ["x"] = w.Rect.X,
+                        ["y"] = w.Rect.Y,
+                        ["w"] = w.Rect.Width,
+                        ["h"] = w.Rect.Height,
                     });
                 }
                 _log($"daftar jendela diminta ({list.Count} jendela)");
@@ -457,7 +461,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.4.3",
+                    ["version"] = "2.4.4",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -510,11 +514,88 @@ public sealed class AgentServer
                 // (pelajaran dari /stream v2.1).
                 int fw = ParseClamp(GetQueryParam(req.Query, "w"), 1280, 320, 1920);
                 int fq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
+                // Wilayah (v2.4.4): rx/ry/rw/rh membatasi tangkapan ke
+                // satu wilayah — muatan jauh lebih kecil daripada
+                // bingkai layar penuh (kurva audit #1: ukuran muatan
+                // adalah tuas kecepatan terbesar yang tersisa).
+                int rx = ParseClamp(GetQueryParam(req.Query, "rx"), 0, 0, 7680);
+                int ry = ParseClamp(GetQueryParam(req.Query, "ry"), 0, 0, 4320);
+                int rw = ParseClamp(GetQueryParam(req.Query, "rw"), 0, 0, 7680);
+                int rh = ParseClamp(GetQueryParam(req.Query, "rh"), 0, 0, 4320);
                 byte[] jpeg;
-                using (var bmp = CaptureScaledBitmap(fw))
-                    jpeg = EncodeJpeg(bmp, fq);
-                _log($"bingkai instan diambil ({fw}px, q{fq})");
+                if (rw > 0 && rh > 0)
+                {
+                    using (var bmp = CaptureRegionBitmap(new Rectangle(rx, ry, rw, rh), fw, out _))
+                        jpeg = EncodeJpeg(bmp, fq);
+                    _log($"bingkai wilayah diambil ({rx},{ry} {rw}x{rh} -> {fw}px, q{fq})");
+                }
+                else
+                {
+                    using (var bmp = CaptureScaledBitmap(fw))
+                        jpeg = EncodeJpeg(bmp, fq);
+                    _log($"bingkai instan diambil ({fw}px, q{fq})");
+                }
                 return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
+            }
+
+            if (req.Method == "GET" && req.Path == "/ocr")
+            {
+                _onActivity();
+                // Baca layar sebagai TEKS (v2.4.4): mesin OCR bawaan
+                // Windows membaca wilayah layar dan mengembalikan
+                // teks + kotak tiap kata. Respons teks ±1-2KB tiba
+                // secepat /ping sambil membawa info lebih dari
+                // bingkai JPEG puluhan KB — jalur baca tercepat
+                // untuk dialog, pesan error, dan log.
+                int ox = ParseClamp(GetQueryParam(req.Query, "x"), 0, 0, 7680);
+                int oy = ParseClamp(GetQueryParam(req.Query, "y"), 0, 0, 4320);
+                int ow = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
+                int oh = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
+                var scr = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 1280, 720);
+                var minta = (ow > 0 && oh > 0) ? new Rectangle(ox, oy, ow, oh) : scr;
+                var wilayah = Rectangle.Intersect(scr, minta);
+                if (wilayah.Width <= 0 || wilayah.Height <= 0) wilayah = scr;
+                OcrReader.Result hasil;
+                using (var bmp = CaptureRegionBitmap(wilayah, 0, out var eff))
+                {
+                    wilayah = eff;
+                    try
+                    {
+                        hasil = OcrReader.Read(bmp, eff.X, eff.Y);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log("OCR gagal: " + ex.Message);
+                        return Response.Json("{\"ok\":false,\"error\":\"" +
+                            ex.Message.Replace("\\", " ").Replace("\"", " ") + "\"}", 500);
+                    }
+                }
+                var kata = new List<Dictionary<string, object>>();
+                foreach (var wd in hasil.Words)
+                {
+                    kata.Add(new Dictionary<string, object>
+                    {
+                        ["t"] = wd.Text,
+                        ["x"] = wd.Rect.X,
+                        ["y"] = wd.Rect.Y,
+                        ["w"] = wd.Rect.Width,
+                        ["h"] = wd.Rect.Height,
+                    });
+                }
+                _log($"OCR wilayah {wilayah.X},{wilayah.Y} {wilayah.Width}x{wilayah.Height}: {kata.Count} kata");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["text"] = hasil.Text,
+                    ["words"] = kata,
+                    ["region"] = new Dictionary<string, object>
+                    {
+                        ["x"] = wilayah.X, ["y"] = wilayah.Y,
+                        ["w"] = wilayah.Width, ["h"] = wilayah.Height,
+                    },
+                });
             }
 
             if (req.Method == "POST")
@@ -718,6 +799,19 @@ public sealed class AgentServer
                             // Muse tidak perlu bolak-balik bertanya.
                             string wTitle = GetString(root, "windowTitle", "");
                             string fPath = GetString(root, "filePath", "");
+                            // Kondisi proses (v2.4.4): processGone —
+                            // tunggu sampai proses bernama itu TIDAK
+                            // jalan lagi (installer/build kelar);
+                            // processExists — tunggu sampai jalan.
+                            // Nama tanpa akhiran .exe.
+                            // see (v2.4.4, "wait-and-see"): bila
+                            // kondisi layar yang ketemu, respons
+                            // ditutup gambar wilayah yang dipantau.
+                            string pGone = GetString(root, "processGone", "");
+                            string pExists = GetString(root, "processExists", "");
+                            if (pGone.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) pGone = pGone.Substring(0, pGone.Length - 4);
+                            if (pExists.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) pExists = pExists.Substring(0, pExists.Length - 4);
+                            bool see = GetBool(root, "see", false);
                             // Mode layar (v2.4.2, usulan performa B):
                             // screenChange {x,y,w,h} — tunggu sampai
                             // piksel wilayah itu BERUBAH dari keadaan
@@ -747,8 +841,9 @@ public sealed class AgentServer
                                 if (quMs > 60000) quMs = 60000;
                             }
                             if (string.IsNullOrWhiteSpace(wTitle) && string.IsNullOrWhiteSpace(fPath) &&
-                                !hasChange && !hasQuiet)
-                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle, filePath, screenChange, atau screenQuiet wajib diisi\"}", 400);
+                                !hasChange && !hasQuiet &&
+                                string.IsNullOrWhiteSpace(pGone) && string.IsNullOrWhiteSpace(pExists))
+                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle, filePath, screenChange, screenQuiet, processGone, atau processExists wajib diisi\"}", 400);
                             int wTimeout = GetInt(root, "timeoutMs", 30000);
                             if (wTimeout < 1000) wTimeout = 1000;
                             if (wTimeout > MaxExecTimeoutMs) wTimeout = MaxExecTimeoutMs;
@@ -758,6 +853,8 @@ public sealed class AgentServer
                             if (!string.IsNullOrWhiteSpace(fPath)) condParts.Add("berkas " + fPath);
                             if (hasChange) condParts.Add("layar berubah");
                             if (hasQuiet) condParts.Add("layar diam");
+                            if (!string.IsNullOrWhiteSpace(pGone)) condParts.Add("proses " + pGone + " selesai");
+                            if (!string.IsNullOrWhiteSpace(pExists)) condParts.Add("proses " + pExists + " jalan");
                             _log($"tunggu kondisi (maks {wTimeout}ms): " + string.Join(" / ", condParts));
                             var wsw = Stopwatch.StartNew();
                             bool found = false;
@@ -783,6 +880,28 @@ public sealed class AgentServer
                                         }
                                     }
                                     if (found) break;
+                                }
+                                if (!found && !string.IsNullOrWhiteSpace(pGone))
+                                {
+                                    try
+                                    {
+                                        if (Process.GetProcessesByName(pGone).Length == 0)
+                                        {
+                                            found = true; via = "process-gone";
+                                        }
+                                    }
+                                    catch { /* nama aneh dsb. — anggap belum selesai */ }
+                                }
+                                if (!found && !string.IsNullOrWhiteSpace(pExists))
+                                {
+                                    try
+                                    {
+                                        if (Process.GetProcessesByName(pExists).Length > 0)
+                                        {
+                                            found = true; via = "process-exists";
+                                        }
+                                    }
+                                    catch { /* abaikan */ }
                                 }
                                 if (!found && hasChange)
                                 {
@@ -811,13 +930,39 @@ public sealed class AgentServer
                             long waited = wsw.ElapsedMilliseconds;
                             if (waited > wTimeout) waited = wTimeout;
                             _log(found ? $"kondisi ketemu via {via} setelah {waited}ms" : $"kondisi tidak ketemu ({wTimeout}ms)");
-                            return Response.JsonObject(new Dictionary<string, object>
+                            var waitResp = new Dictionary<string, object>
                             {
                                 ["ok"] = true,
                                 ["found"] = found,
                                 ["via"] = via,
                                 ["waitedMs"] = waited,
-                            });
+                            };
+                            // Wait-and-see: sertakan gambar wilayah
+                            // yang dipantau (yang berubah / yang
+                            // sudah diam) supaya Muse tidak perlu
+                            // satu panggilan gambar lagi.
+                            if (see && found && (via == "screen-change" || via == "screen-quiet"))
+                            {
+                                var wr = via == "screen-change"
+                                    ? new Rectangle(chX, chY, chW, chH)
+                                    : new Rectangle(quX, quY, quW, quH);
+                                try
+                                {
+                                    using (var wb = CaptureRegionBitmap(wr, 960, out var weff))
+                                    {
+                                        var wj = EncodeJpeg(wb, 70);
+                                        waitResp["frame"] = new Dictionary<string, object>
+                                        {
+                                            ["mime"] = "image/jpeg",
+                                            ["x"] = weff.X, ["y"] = weff.Y,
+                                            ["width"] = wb.Width, ["height"] = wb.Height,
+                                            ["b64"] = Convert.ToBase64String(wj),
+                                        };
+                                    }
+                                }
+                                catch { /* gambar bonus — gagal pun laporan tunggu tetap sah */ }
+                            }
+                            return Response.JsonObject(waitResp);
                         }
                         case "/uia/click":
                         {
@@ -840,6 +985,70 @@ public sealed class AgentServer
                                 ["type"] = item.Type,
                                 ["x"] = cx,
                                 ["y"] = cy,
+                            });
+                        }
+                        case "/uia/find":
+                        {
+                            // Cari elemen + (opsional) klik dalam
+                            // SATU panggilan (v2.4.4): pindai baru
+                            // jendela depan, saring berdasar nama
+                            // dan/atau tipe, kembalikan semua yang
+                            // cocok; click:true mengklik kecocokan
+                            // pertama. Menghemat satu perjalanan
+                            // penuh dibanding /uia lalu /uia/click.
+                            string fName = GetString(root, "name", "");
+                            string fType = GetString(root, "type", "");
+                            if (string.IsNullOrWhiteSpace(fName) && string.IsNullOrWhiteSpace(fType))
+                                return Response.Json("{\"ok\":false,\"error\":\"name atau type wajib diisi\"}", 400);
+                            bool fClick = GetBool(root, "click", false);
+                            int fMax = GetInt(root, "max", 20);
+                            if (fMax < 1) fMax = 1;
+                            if (fMax > 100) fMax = 100;
+                            var hasil = OnUi(() =>
+                            {
+                                var scan = UiaScan.ScanForeground(500);
+                                var cocok = new List<UiaScan.Item>();
+                                foreach (var it in scan)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(fName) &&
+                                        it.Name.IndexOf(fName, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                                    if (!string.IsNullOrWhiteSpace(fType) &&
+                                        it.Type.IndexOf(fType, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                                    cocok.Add(it);
+                                }
+                                bool clicked = false;
+                                if (fClick && cocok.Count > 0)
+                                {
+                                    NativeInput.Click(cocok[0].CenterX, cocok[0].CenterY, "left");
+                                    clicked = true;
+                                }
+                                return (cocok, clicked);
+                            });
+                            _onActivity();
+                            var fList = new List<Dictionary<string, object>>();
+                            foreach (var it in hasil.cocok)
+                            {
+                                if (fList.Count >= fMax) break;
+                                fList.Add(new Dictionary<string, object>
+                                {
+                                    ["name"] = it.Name,
+                                    ["type"] = it.Type,
+                                    ["x"] = it.Rect.X,
+                                    ["y"] = it.Rect.Y,
+                                    ["w"] = it.Rect.Width,
+                                    ["h"] = it.Rect.Height,
+                                    ["cx"] = it.CenterX,
+                                    ["cy"] = it.CenterY,
+                                    ["enabled"] = it.Enabled,
+                                });
+                            }
+                            _log($"uia find '{fName}'/'{fType}': {hasil.cocok.Count} cocok" + (hasil.clicked ? ", pertama diklik" : ""));
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["count"] = hasil.cocok.Count,
+                                ["clicked"] = hasil.clicked,
+                                ["matches"] = fList,
                             });
                         }
                         case "/window":
@@ -1456,6 +1665,32 @@ public sealed class AgentServer
     }
 
     /// <summary>
+    /// Tangkap SATU wilayah layar (v2.4.4), dijepit ke batas layar,
+    /// lalu kecilkan ke lebar maks bila maxWidth > 0 dan wilayah
+    /// lebih lebar. eff = wilayah efektif sesudah penjepitan.
+    /// Aman dipanggil dari thread mana pun. Pemanggil membuang
+    /// bitmap-nya.
+    /// </summary>
+    private static Bitmap CaptureRegionBitmap(Rectangle region, int maxWidth, out Rectangle eff)
+    {
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        eff = Rectangle.Intersect(bounds, region);
+        if (eff.Width <= 0 || eff.Height <= 0) eff = bounds;
+        var bmp = new Bitmap(eff.Width, eff.Height);
+        using (var g = Graphics.FromImage(bmp))
+            g.CopyFromScreen(eff.Location, Point.Empty, eff.Size);
+        if (maxWidth <= 0 || bmp.Width <= maxWidth)
+            return bmp;
+        int w = maxWidth;
+        int h = (int)(bmp.Height * (maxWidth / (double)bmp.Width));
+        var scaled = new Bitmap(bmp, new Size(w, h));
+        bmp.Dispose();
+        return scaled;
+    }
+
+    /// <summary>
     /// Tangkap layar utama dan kecilkan ke lebar maks (bila perlu).
     /// Aman dipanggil dari thread mana pun. Pemanggil membuang bitmap-nya.
     /// </summary>
@@ -1661,6 +1896,15 @@ public sealed class AgentServer
             root.TryGetProperty(name, out var v) &&
             v.ValueKind == JsonValueKind.String)
             return v.GetString() ?? fallback;
+        return fallback;
+    }
+
+    private static bool GetBool(JsonElement root, string name, bool fallback)
+    {
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var el) &&
+            (el.ValueKind == JsonValueKind.True || el.ValueKind == JsonValueKind.False))
+            return el.GetBoolean();
         return fallback;
     }
 
