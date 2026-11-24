@@ -1,4 +1,4 @@
-# MuseLink v2.5.8 — catatan pengembang
+# MuseLink v2.5.9 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,23 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.9 (dari v2.5.8) — Konteks Instan + Cari di Layar
+
+Dua fitur untuk Muse (dipilih user 24 Nov dari daftar ide
+"yang berguna untukmu juga") — tujuannya memangkas panggilan
+berantai Muse (tiap panggilan ±0,9 detik lewat relay):
+
+- **GET /context** — konteks instan: jendela terdepan +
+  daftar jendela (maks 25) + status aplikasi penting
+  (OBS/Chrome/wPlay/Spotify + judul jendela Spotify) + CPU/
+  RAM/idle + tema/relay/keepAwake + panjang clipboard (isi
+  tidak dibaca) dalam SATU respons.
+- **POST /find {text, click?, max?}** — cari apa pun di
+  layar: gabungan UIA (elemen jendela depan) + OCR (kata/
+  frasa sebaris di seluruh layar), kembali koordinat tengah
+  tiap kecocokan; click=true mengklik kecocokan pertama.
+  Teks kosong → 400.
 
 ## Perubahan v2.5.8 (dari v2.5.7) — Micro-fix Pill Status
 

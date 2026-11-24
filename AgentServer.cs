@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.8\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.9\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -478,7 +478,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.5.8",
+                    ["version"] = "2.5.9",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -497,6 +497,104 @@ public sealed class AgentServer
                     ["theme"] = Settings.Theme,
                     ["themeDark"] = AppTheme.IsDark,
                     ["tailscaleRelay"] = TailscaleRelay(),
+                    ["eventsLastSeq"] = EventLog.LastSeq,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/context")
+            {
+                _onActivity();
+                // Konteks instan (v2.5.9, fitur untuk Muse atas
+                // pilihan user): keadaan PC yang paling sering
+                // ditanyakan Muse dibungkus SATU respons —
+                // jendela depan + daftar jendela + aplikasi
+                // penting jalan/tidak + metrik ringan — mengganti
+                // 5-6 panggilan terpisah.
+                var snap = OnUi(() =>
+                {
+                    var wins = NativeInput.ListWindows();
+                    var fgHandle = NativeInput.ForegroundHandle();
+                    NativeInput.WindowInfo fg = null;
+                    foreach (var w in wins)
+                        if (w.Handle == fgHandle) { fg = w; break; }
+                    int clipLen = -1;
+                    try { clipLen = Clipboard.ContainsText() ? Clipboard.GetText().Length : 0; }
+                    catch { /* clipboard terkunci sesaat */ }
+                    return (wins, fg, clipLen);
+                });
+                var met = NativeInput.SystemMetrics();
+                var winList = new List<Dictionary<string, object>>();
+                foreach (var w in snap.wins)
+                {
+                    if (winList.Count >= 25) break;
+                    winList.Add(new Dictionary<string, object>
+                    {
+                        ["title"] = w.Title,
+                        ["process"] = w.Process,
+                        ["x"] = w.Rect.X, ["y"] = w.Rect.Y,
+                        ["w"] = w.Rect.Width, ["h"] = w.Rect.Height,
+                    });
+                }
+                Dictionary<string, object> fgDict = null;
+                if (snap.fg != null)
+                {
+                    fgDict = new Dictionary<string, object>
+                    {
+                        ["title"] = snap.fg.Title,
+                        ["process"] = snap.fg.Process,
+                        ["x"] = snap.fg.Rect.X, ["y"] = snap.fg.Rect.Y,
+                        ["w"] = snap.fg.Rect.Width, ["h"] = snap.fg.Rect.Height,
+                    };
+                }
+                string spotifyTitle = null;
+                bool spotifyRun = false;
+                try
+                {
+                    foreach (var p in Process.GetProcessesByName("Spotify"))
+                    {
+                        spotifyRun = true;
+                        try
+                        {
+                            if (!string.IsNullOrWhiteSpace(p.MainWindowTitle))
+                                spotifyTitle = p.MainWindowTitle;
+                        }
+                        catch { /* abaikan per proses */ }
+                    }
+                }
+                catch { /* abaikan */ }
+                bool Running(string name)
+                {
+                    try { return Process.GetProcessesByName(name).Length > 0; }
+                    catch { return false; }
+                }
+                var bounds = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 0, 0);
+                _log($"konteks instan diminta ({winList.Count} jendela)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["version"] = "2.5.9",
+                    ["admin"] = Settings.IsElevated(),
+                    ["foreground"] = fgDict,
+                    ["windows"] = winList,
+                    ["apps"] = new Dictionary<string, object>
+                    {
+                        ["obs"] = Running("obs64"),
+                        ["chrome"] = Running("chrome"),
+                        ["wplay"] = Running("wPlay"),
+                        ["spotify"] = spotifyRun,
+                    },
+                    ["spotifyTitle"] = spotifyTitle,
+                    ["cpuPercent"] = met.CpuPercent,
+                    ["ramPercent"] = met.RamPercent,
+                    ["idleSec"] = met.IdleSec,
+                    ["screen"] = bounds.Width + "x" + bounds.Height,
+                    ["appUptimeSec"] = (int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalSeconds,
+                    ["keepAwake"] = NativeInput.KeepAwakeOn,
+                    ["theme"] = Settings.Theme,
+                    ["relay"] = TailscaleRelay(),
+                    ["clipboardChars"] = snap.clipLen,
                     ["eventsLastSeq"] = EventLog.LastSeq,
                 });
             }
@@ -1169,6 +1267,119 @@ public sealed class AgentServer
                                 ["count"] = hasil.cocok.Count,
                                 ["clicked"] = hasil.clicked,
                                 ["matches"] = fList,
+                            });
+                        }
+                        case "/find":
+                        {
+                            // Cari apa pun di layar (v2.5.9, fitur
+                            // untuk Muse atas pilihan user):
+                            // gabungan UIA (elemen jendela depan) +
+                            // OCR (teks di seluruh layar) dalam satu
+                            // panggilan, kembali koordinat tengah
+                            // tiap kecocokan. {text, click?, max?}.
+                            string q = GetString(root, "text", "");
+                            if (string.IsNullOrWhiteSpace(q))
+                                return Response.Json("{\"ok\":false,\"error\":\"field wajib hilang: text\"}", 400);
+                            bool fClick = GetBool(root, "click", false);
+                            int fMax = GetInt(root, "max", 10);
+                            if (fMax < 1) fMax = 1;
+                            if (fMax > 30) fMax = 30;
+                            _onActivity();
+                            var matches = new List<Dictionary<string, object>>();
+                            int uiaCount = 0, ocrCount = 0;
+                            var uiaHits = OnUi(() =>
+                            {
+                                var scan = UiaScan.ScanForeground(500);
+                                var hits = new List<UiaScan.Item>();
+                                foreach (var it in scan)
+                                {
+                                    if (it.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                        hits.Add(it);
+                                }
+                                return hits;
+                            });
+                            foreach (var it in uiaHits)
+                            {
+                                uiaCount++;
+                                matches.Add(new Dictionary<string, object>
+                                {
+                                    ["source"] = "uia",
+                                    ["text"] = it.Name,
+                                    ["type"] = it.Type,
+                                    ["x"] = it.Rect.X, ["y"] = it.Rect.Y,
+                                    ["w"] = it.Rect.Width, ["h"] = it.Rect.Height,
+                                    ["cx"] = it.CenterX, ["cy"] = it.CenterY,
+                                });
+                            }
+                            try
+                            {
+                                var scr = Screen.PrimaryScreen != null
+                                    ? Screen.PrimaryScreen.Bounds
+                                    : new Rectangle(0, 0, 1280, 720);
+                                using (var bmp = CaptureRegionBitmap(scr, 0, out var eff))
+                                {
+                                    var hasil = OcrReader.Read(bmp, eff.X, eff.Y);
+                                    var words = hasil.Words;
+                                    string ql = q.Trim();
+                                    bool phrase = ql.Contains(" ");
+                                    for (int i = 0; i < words.Count; i++)
+                                    {
+                                        Rectangle? hit = null;
+                                        string hitText = null;
+                                        if (!phrase)
+                                        {
+                                            if (words[i].Text.IndexOf(ql, StringComparison.OrdinalIgnoreCase) >= 0)
+                                            { hit = words[i].Rect; hitText = words[i].Text; }
+                                        }
+                                        else
+                                        {
+                                            string acc = words[i].Text;
+                                            var uni = words[i].Rect;
+                                            for (int j = i + 1; j < words.Count && j <= i + 8; j++)
+                                            {
+                                                if (Math.Abs(words[j].Rect.Y - words[i].Rect.Y) > Math.Max(words[i].Rect.Height, words[j].Rect.Height)) break;
+                                                acc += " " + words[j].Text;
+                                                uni = Rectangle.Union(uni, words[j].Rect);
+                                                if (acc.IndexOf(ql, StringComparison.OrdinalIgnoreCase) >= 0)
+                                                { hit = uni; hitText = acc; break; }
+                                            }
+                                            if (hit == null && acc.IndexOf(ql, StringComparison.OrdinalIgnoreCase) >= 0)
+                                            { hit = uni; hitText = acc; }
+                                        }
+                                        if (hit != null)
+                                        {
+                                            ocrCount++;
+                                            var r = hit.Value;
+                                            matches.Add(new Dictionary<string, object>
+                                            {
+                                                ["source"] = "ocr",
+                                                ["text"] = hitText,
+                                                ["x"] = r.X, ["y"] = r.Y,
+                                                ["w"] = r.Width, ["h"] = r.Height,
+                                                ["cx"] = r.X + r.Width / 2, ["cy"] = r.Y + r.Height / 2,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _log("find OCR gagal: " + ex.Message);
+                            }
+                            bool clicked = false;
+                            if (matches.Count > fMax) matches.RemoveRange(fMax, matches.Count - fMax);
+                            if (fClick && matches.Count > 0)
+                            {
+                                NativeInput.Click((int)matches[0]["cx"], (int)matches[0]["cy"], "left");
+                                clicked = true;
+                            }
+                            _log($"find '{q}': {matches.Count} cocok (uia {uiaCount}, ocr {ocrCount})" + (clicked ? ", pertama diklik" : ""));
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["count"] = matches.Count,
+                                ["clicked"] = clicked,
+                                ["matches"] = matches,
                             });
                         }
                         case "/listen":
