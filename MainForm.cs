@@ -90,7 +90,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.3.3 dimulai ===");
+            Log("=== MuseLink v2.3.4 dimulai ===");
             InitStartOptions();
             try
             {
@@ -358,7 +358,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.3.3",
+            Text = "v2.3.4",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -398,7 +398,7 @@ public sealed class MainForm : Form
         header.Controls.Add(_autoStartCheck);
         var autoStartLabel = new Label
         {
-            Text = "Jalan otomatis saat Windows menyala",
+            Text = "Jalan otomatis",
             Font = new Font("Segoe UI", 10f),
             ForeColor = Ink,
             BackColor = Card,
@@ -418,7 +418,7 @@ public sealed class MainForm : Form
         header.Controls.Add(_adminCheck);
         var adminLabel = new Label
         {
-            Text = "Mode Administrator (akses penuh)",
+            Text = "Mode Administrator",
             Font = new Font("Segoe UI", 10f),
             ForeColor = Ink,
             BackColor = Card,
@@ -849,14 +849,30 @@ public sealed class MainForm : Form
     // dengan syarat yang sama (jalan otomatis + admin + proses admin).
     private void EnsureWatchdogTask()
     {
-        string psCommand =
-            "if ((Get-ItemProperty 'HKCU:\\Software\\Jembatan' -Name UserStopped -ErrorAction SilentlyContinue).UserStopped -ne 1) " +
-            "{ if (-not (Get-Process Jembatan -ErrorAction SilentlyContinue)) { Start-Process '" +
-            Application.ExecutablePath + "' } }";
-        // Kutip dalam -Command "..." ditulis \" agar utuh melewati
-        // penguraian baris perintah schtasks (pola yang sama seperti
-        // /TR tugas login di atas).
-        string tr = "powershell -NoProfile -WindowStyle Hidden -Command \\\"" + psCommand + "\\\"";
+        // v2.3.4: naskah penjaga ditulis ke berkas .ps1 dan tugas
+        // menjalankannya dengan -File. Cara lama (-Command sebaris)
+        // GAGAL di v2.3.3: nilai /TR schtasks mentok 261 karakter,
+        // perintah sebarisnya lebih panjang dari itu.
+        string scriptPath;
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Jembatan");
+            Directory.CreateDirectory(dir);
+            scriptPath = Path.Combine(dir, "watchdog.ps1");
+            string script =
+                "if ((Get-ItemProperty 'HKCU:\\Software\\Jembatan' -Name UserStopped -ErrorAction SilentlyContinue).UserStopped -ne 1) {\r\n" +
+                "  if (-not (Get-Process Jembatan -ErrorAction SilentlyContinue)) { Start-Process '" +
+                Application.ExecutablePath + "' }\r\n}\r\n";
+            File.WriteAllText(scriptPath, script);
+        }
+        catch (Exception ex)
+        {
+            Log("GAGAL menulis naskah penjaga: " + ex.Message);
+            return;
+        }
+        string tr = "powershell -NoProfile -WindowStyle Hidden -File \\\"" + scriptPath + "\\\"";
         string args = "/Create /TN \"" + WatchdogTaskName + "\" /TR \"" + tr +
                       "\" /SC MINUTE /MO 5 /RL HIGHEST /F";
         int code = RunSchtasks(args, out string output);

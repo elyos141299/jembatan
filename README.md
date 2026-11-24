@@ -1,4 +1,4 @@
-# MuseLink v2.3.3 — catatan pengembang
+# MuseLink v2.3.4 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -31,9 +31,9 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 
 | Metode & path | Body | Hasil |
 |---|---|---|
-| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3.3", admin}` — `admin` = hak proses saat ini |
+| `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3.4", admin}` — `admin` = hak proses saat ini |
 | `GET /screenshot` | — | PNG layar utama (binary `image/png`) |
-| `GET /sysinfo` | — | `{ok, version:"2.3.3", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
+| `GET /sysinfo` | — | `{ok, version:"2.3.4", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{title, process}]}` — jendela tingkat atas yang terlihat & berjudul |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
@@ -56,6 +56,17 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.3.4 (dari v2.3.3)
+
+- **Perbaikan tugas penjaga (watchdog)**: pendaftaran tugas
+  "MuseLink Watchdog" di v2.3.3 selalu GAGAL — nilai `/TR` schtasks
+  mentok 261 karakter dan perintah PowerShell sebarisnya lebih
+  panjang dari itu (kegagalan tercatat jujur di log). Kini naskah
+  penjaga ditulis ke `%LOCALAPPDATA%\Jembatan\watchdog.ps1` dan
+  tugas menjalankannya dengan `-File` (jauh di bawah batas).
+- **Label saklar dipendekkan**: "Jalan otomatis" dan "Mode
+  Administrator" — teks lama kepotong di kartu kepala sempit.
 
 ## Perubahan v2.3.3 (dari v2.3.2)
 
