@@ -6,7 +6,7 @@
 AppId={{7D1C9A42-5B3E-4F08-9E6A-2C4D8B0F5A71}
 AppName=MuseLink
 SetupIconFile=..\icon.ico
-AppVersion=2.7.5
+AppVersion=2.7.6
 AppPublisher=Muse
 ; DefaultDirName disematkan eksplisit ke folder lama {autopf}\Jembatan:
 ; nama tampil berubah jadi "MuseLink", folder pasang TIDAK ikut pindah.

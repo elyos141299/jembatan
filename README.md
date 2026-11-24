@@ -1,4 +1,4 @@
-# MuseLink v2.7.5 — catatan pengembang
+# MuseLink v2.7.6 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,12 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.6 (dari v2.7.5) — Poles tampilan ronde 3
+
+- **Log lebih lega & hierarkis**: jarak antar baris 15pt (PARAFORMAT2), cap waktu kini InkFaint (token tema baru), dan daftar baris rutin yang diredupkan diperluas (jalanin/klik/geser/frame instan/dll) — kejadian penting yang menonjol.
+- **Tile CAPTURE**: tile status kini 4 (RELAY/UPTIME/CAPTURE/VERSI, langkah kolom 85px); CAPTURE menampilkan jalur tangkap aktif ("gpu"/"dxgi"/"gdi") dari DxgiCapture, disegarkan timer 5 detik yang sama.
+- **Pengaturan dipadatkan**: tinggi jendela 560→524, kartu & label digeser rapat — ruang kosong bawah hilang.
 
 ## Perubahan v2.7.5 (dari v2.7.4) — Peras sisa CPU per frame stream
 

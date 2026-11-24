@@ -35,6 +35,7 @@ public sealed class MainForm : Form
     private static Color Card => AppTheme.Card;
     private static Color Ink => AppTheme.Ink;
     private static Color InkDim => AppTheme.InkDim;
+    private static Color InkFaint => AppTheme.InkFaint;
     private static Color Hairline => AppTheme.Hairline;
     private static Color Accent => AppTheme.Accent;
     private static Color Green => AppTheme.Green;
@@ -60,6 +61,7 @@ public sealed class MainForm : Form
     private RoundedPanel _tilesCard;
     private Label _tileRelayValue;
     private Label _tileUptimeValue;
+    private Label _tileCaptureValue;
     private Label _tileVersionValue;
     private readonly System.Collections.Generic.List<Label> _tileCaptions = new System.Collections.Generic.List<Label>();
     private readonly System.Collections.Generic.List<Panel> _tileDividers = new System.Collections.Generic.List<Panel>();
@@ -141,14 +143,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.7.5 dimulai ===");
+            Log("=== MuseLink v2.7.6 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.7.5 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.7.6 dimulai");
             // Roda gigi melayang di bar judul, sebelah kiri minimize
             // (v2.5.1) — mengikuti gerak jendela utama.
             _captionGear = new CaptionGearForm(this);
@@ -522,7 +524,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.7.5",
+            Text = "v2.7.6",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -582,7 +584,8 @@ public sealed class MainForm : Form
         tilesWrap.Controls.Add(tiles);
         MakeTile(tiles, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
-        MakeTile(tiles, 2, "VERSI", "2.7.5", out _tileVersionValue);
+        MakeTile(tiles, 2, "CAPTURE", "…", out _tileCaptureValue);
+        MakeTile(tiles, 3, "VERSI", "2.7.6", out _tileVersionValue);
         leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
 
@@ -1125,13 +1128,13 @@ public sealed class MainForm : Form
     // didahului garis pemisah tipis.
     private void MakeTile(Control parent, int col, string caption, string value, out Label valueLabel)
     {
-        int x = 16 + col * 118;
+        int x = 14 + col * 85;
         if (col > 0)
         {
             var div = new Panel
             {
                 Size = new Size(1, 34),
-                Location = new Point(x - 13, 12),
+                Location = new Point(x - 11, 12),
                 BackColor = Hairline,
             };
             parent.Controls.Add(div);
@@ -1175,6 +1178,8 @@ public sealed class MainForm : Form
                     ? (int)up.TotalHours + "j " + up.Minutes + "m"
                     : Math.Max(0, up.Minutes) + "m";
             }
+            if (_tileCaptureValue != null)
+                _tileCaptureValue.Text = DxgiCapture.ScaleMode == "gpu" ? "gpu" : DxgiCapture.Mode;
         }
         catch { /* tile hanya keterangan — jangan ganggu aplikasi */ }
     }
@@ -1283,6 +1288,7 @@ public sealed class MainForm : Form
         foreach (var d in _tileDividers) d.BackColor = Hairline;
         if (_tileRelayValue != null) { _tileRelayValue.ForeColor = Ink; _tileRelayValue.BackColor = Card; }
         if (_tileUptimeValue != null) { _tileUptimeValue.ForeColor = Ink; _tileUptimeValue.BackColor = Card; }
+        if (_tileCaptureValue != null) { _tileCaptureValue.ForeColor = Ink; _tileCaptureValue.BackColor = Card; }
         if (_tileVersionValue != null) { _tileVersionValue.ForeColor = Ink; _tileVersionValue.BackColor = Card; }
         if (_logoBox != null) _logoBox.BackColor = Card;
         RefreshStatusPill();
@@ -1382,10 +1388,11 @@ public sealed class MainForm : Form
         message = SummarizeTokens(message);
         if (message.Length > 140)
             message = message.Substring(0, 140) + "…";
+        if (!_logSpacingApplied) { _logSpacingApplied = true; ApplyLogSpacing(); }
         string stamp = "[" + DateTime.Now.ToString("HH:mm:ss") + "] ";
         _logBox.SelectionStart = _logBox.TextLength;
         _logBox.SelectionLength = 0;
-        _logBox.SelectionColor = InkDim;
+        _logBox.SelectionColor = InkFaint;
         _logBox.AppendText(stamp);
         _logBox.SelectionColor = LogColorFor(message);
         _logBox.AppendText(message + Environment.NewLine);
@@ -1394,6 +1401,7 @@ public sealed class MainForm : Form
         {
             var lines = _logBox.Lines;
             _logBox.Lines = lines.Skip(lines.Length - 400).ToArray();
+            _logSpacingApplied = false; // teks diganti total — terapkan ulang di Log berikutnya
         }
         _logBox.SelectionStart = _logBox.TextLength;
         _logBox.ScrollToCaret();
@@ -1417,9 +1425,76 @@ public sealed class MainForm : Form
     {
         string l = m.ToLowerInvariant();
         if (l.Contains("gagal") || l.Contains("error") || l.Contains("timeout")) return Red;
-        if (l.StartsWith("selesai") || l.StartsWith("===")) return InkDim;
+        // v2.7.6: baris rutin bervolume tinggi diredupkan supaya
+        // kejadian penting (stream, koneksi, galat) yang menonjol.
+        if (l.StartsWith("selesai") || l.StartsWith("===") ||
+            l.StartsWith("jalanin:") || l.StartsWith("geser mouse") ||
+            l.StartsWith("klik ") || l.StartsWith("bingkai instan") ||
+            l.StartsWith("daftar jendela") || l.StartsWith("konteks instan") ||
+            l.StartsWith("info sistem") || l.StartsWith("fokus ke jendela") ||
+            l.StartsWith("unggah berkas") || l.StartsWith("stream berhenti"))
+            return InkDim;
         return Ink;
     }
+
+    // ---------- Jarak antar baris log (v2.7.6) ----------
+    // RichTextBox tidak punya API terkelola untuk jarak baris —
+    // diatur lewat PARAFORMAT2 (EM_SETPARAFORMAT) sekali di Log
+    // pertama. Kosmetik murni: kegagalan apa pun diabaikan.
+    private bool _logSpacingApplied;
+
+    private void ApplyLogSpacing()
+    {
+        try
+        {
+            var fmt = new PARAFORMAT2
+            {
+                cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(PARAFORMAT2)),
+                dwMask = 0x00000100, // PFM_LINESPACING
+                bLineSpacingRule = 5, // persis — dyLineSpacing dlm 1/20 pt
+                dyLineSpacing = 300, // 15pt untuk font Consolas 9,5pt
+                rgxTabs = new int[32],
+            };
+            SendMessagePara(_logBox.Handle, 0x0444, new IntPtr(4), ref fmt); // EM_SETPARAFORMAT + SCF_ALL
+        }
+        catch { /* abaikan */ }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential,
+        CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    private struct PARAFORMAT2
+    {
+        public int cbSize;
+        public uint dwMask;
+        public short wNumbering;
+        public short wReserved;
+        public int dxStartIndent;
+        public int dxRightIndent;
+        public int dxOffset;
+        public short wAlignment;
+        public short cTabCount;
+        [System.Runtime.InteropServices.MarshalAs(
+            System.Runtime.InteropServices.UnmanagedType.ByValArray, SizeConst = 32)]
+        public int[] rgxTabs;
+        public int dySpaceBefore;
+        public int dySpaceAfter;
+        public int dyLineSpacing;
+        public short sStyle;
+        public byte bLineSpacingRule;
+        public byte bOutlineLevel;
+        public short wShadingWeight;
+        public short wShadingStyle;
+        public short wNumberingStart;
+        public short wNumberingStyle;
+        public short wNumberingTab;
+        public short wBorderSpace;
+        public short wBorderWidth;
+        public short wBorders;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    private static extern IntPtr SendMessagePara(IntPtr hWnd, int msg, IntPtr wParam, ref PARAFORMAT2 lParam);
 
     // ---------- Log persisten (v2.3.2) ----------
     // Setiap baris log jendela juga ditulis ke berkas

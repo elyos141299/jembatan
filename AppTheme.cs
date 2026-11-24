@@ -67,6 +67,7 @@ public static class AppTheme
     public static Color Card => IsDark ? Color.FromArgb(28, 28, 30) : Color.FromArgb(255, 255, 255);
     public static Color Ink => IsDark ? Color.FromArgb(245, 245, 247) : Color.FromArgb(29, 29, 31);
     public static Color InkDim => IsDark ? Color.FromArgb(152, 152, 159) : Color.FromArgb(110, 110, 115);
+    public static Color InkFaint => IsDark ? Color.FromArgb(94, 94, 99) : Color.FromArgb(174, 174, 178);
     public static Color Hairline => IsDark ? Color.FromArgb(56, 56, 58) : Color.FromArgb(227, 227, 232);
     public static Color Accent => IsDark ? Color.FromArgb(10, 132, 255) : Color.FromArgb(0, 113, 227);
     public static Color Green => IsDark ? Color.FromArgb(48, 209, 88) : Color.FromArgb(52, 199, 89);

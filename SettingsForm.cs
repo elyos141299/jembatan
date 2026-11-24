@@ -46,7 +46,7 @@ public sealed class SettingsForm : Form
         MinimizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(400, 560);
+        ClientSize = new Size(400, 524);
         Font = new Font("Segoe UI", 10f);
         if (owner.Icon != null) Icon = owner.Icon;
 
@@ -105,7 +105,7 @@ public sealed class SettingsForm : Form
         _cardUmum = new RoundedPanel
         {
             Location = new Point(20, 78),
-            Size = new Size(360, 148),
+            Size = new Size(360, 142),
             CornerRadius = 16,
             Padding = new Padding(12),
         };
@@ -114,10 +114,10 @@ public sealed class SettingsForm : Form
         _adminCheck = MakeToggleRow(_cardUmum, "Mode Administrator", 60);
         _awakeCheck = MakeToggleRow(_cardUmum, "Jangan tidur", 106);
 
-        MakeLabel("TAMPILAN", 20, 242, 9f, true, true);
+        MakeLabel("TAMPILAN", 20, 236, 9f, true, true);
         _cardTema = new RoundedPanel
         {
-            Location = new Point(20, 264),
+            Location = new Point(20, 258),
             Size = new Size(360, 92),
             CornerRadius = 16,
             Padding = new Padding(12),
@@ -139,11 +139,11 @@ public sealed class SettingsForm : Form
         _cardTema.Controls.Add(_pillGelap);
         _cardTema.Controls.Add(_pillPerangkat);
 
-        MakeLabel("KONEKSI", 20, 372, 9f, true, true);
+        MakeLabel("KONEKSI", 20, 366, 9f, true, true);
         _cardKoneksi = new RoundedPanel
         {
-            Location = new Point(20, 394),
-            Size = new Size(360, 106),
+            Location = new Point(20, 388),
+            Size = new Size(360, 100),
             CornerRadius = 16,
             Padding = new Padding(12),
         };
@@ -170,7 +170,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v2.7.5", 20, 518, 8.5f, false, true);
+        MakeLabel("MuseLink v2.7.6", 20, 496, 8.5f, false, true);
     }
 
     private RoundedButton MakePill(string text, int x, Action onClick)
