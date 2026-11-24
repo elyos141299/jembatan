@@ -138,7 +138,7 @@ public static class OcrReader
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = TessExe,
-                Arguments = "\"" + tmp + "\" stdout --tessdata-dir \"" + TessDataDir + "\" -l ind+eng --psm 6 tsv",
+                Arguments = "\"" + tmp + "\" stdout --tessdata-dir \"" + TessDataDir + "\" -l ind+eng --psm 6 -c tessedit_create_tsv=1",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

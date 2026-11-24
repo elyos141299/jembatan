@@ -1,4 +1,4 @@
-# MuseLink v2.6.5 — catatan pengembang
+# MuseLink v2.6.6 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,19 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.6 (dari v2.6.5) — Fix TSV Tesseract
+
+- **OcrReader.ReadTesseract**: keluaran TSV kini
+  diminta lewat `-c tessedit_create_tsv=1`, BUKAN
+  config bernama "tsv" — config itu tinggal di
+  tessdata/configs milik installer Tesseract penuh
+  dan TIDAK ikut di paket MuseLink, jadi build
+  #37 membaca 0 kata (diagnosis live 24 Nov:
+  tesseract mengeluh "Can't open tsv" lalu jatuh ke
+  teks polos). Fix satu baris; terverifikasi dengan
+  berkas configs SENGAJA dihapus dari folder
+  terpasang — hasil bacaan tetap keluar.
 
 ## Perubahan v2.6.5 (dari v2.6.4) — Klik-Tunggu + Mesin OCR Tesseract
 
