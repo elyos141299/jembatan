@@ -141,14 +141,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.5.7 dimulai ===");
+            Log("=== MuseLink v2.5.8 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.5.7 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.5.8 dimulai");
             // Roda gigi melayang di bar judul, sebelah kiri minimize
             // (v2.5.1) — mengikuti gerak jendela utama.
             _captionGear = new CaptionGearForm(this);
@@ -458,8 +458,11 @@ public sealed class MainForm : Form
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             ForeColor = Ink,
             BackColor = Card,
-            AutoSize = true,
-            Location = new Point(29, 5),
+            AutoSize = false,
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Size = new Size(262, 18),
+            Location = new Point(29, 4),
         };
         _statusPill.Controls.Add(_statusLabel);
 
@@ -499,7 +502,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.5.7",
+            Text = "v2.5.8",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -559,7 +562,7 @@ public sealed class MainForm : Form
         tilesWrap.Controls.Add(tiles);
         MakeTile(tiles, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
-        MakeTile(tiles, 2, "VERSI", "2.5.7", out _tileVersionValue);
+        MakeTile(tiles, 2, "VERSI", "2.5.8", out _tileVersionValue);
         leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
 
@@ -715,7 +718,7 @@ public sealed class MainForm : Form
         if (_server.IsRunning)
         {
             _server.Stop();
-            SetStopped("Terputus — Muse tidak bisa mengakses PC ini");
+            SetStopped("Terputus — akses Muse berhenti");
             Log("Listener DIMATIKAN oleh kamu — akses Muse berhenti total.");
         }
         else
@@ -1335,7 +1338,7 @@ public sealed class MainForm : Form
             return;
         }
         _statusDot.DotColor = Green;
-        _statusLabel.Text = "Muse terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
+        _statusLabel.Text = "Terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
         _statusState = "connected";
         RefreshStatusPill();
     }

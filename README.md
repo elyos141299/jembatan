@@ -1,4 +1,4 @@
-# MuseLink v2.5.7 — catatan pengembang
+# MuseLink v2.5.8 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,16 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.8 (dari v2.5.7) — Micro-fix Pill Status
+
+Teks pill status v2.5.7 kepotong di tepi kanan pil ("…13:46:"
+tanpa detik) — label AutoSize tumpah melewati pil. Diperbaiki:
+label pill kini lebar tetap + AutoEllipsis (teks kepanjangan
+dipotong "…" di dalam pil, tidak pernah tumpah), teks status
+terhubung dipersingkat "Terhubung • aktivitas terakhir …",
+dan teks terputus dipersingkat "Terputus — akses Muse
+berhenti". Murni tampilan MainForm + bump versi.
 
 ## Perubahan v2.5.7 (dari v2.5.6) — Poles Tampilan
 
