@@ -57,8 +57,8 @@ public sealed class MainForm : Form
     private Label _versionLabel;
     private Panel _leftRoot;
     private Panel _chatRoot;
-    private RoundedButton _settingsButton;
     private SettingsForm _settingsForm;
+    private CaptionGearForm _captionGear;
     private bool _autoStartEnabled;
 
     /// <summary>Keadaan jalan otomatis saat ini (untuk jendela Pengaturan).</summary>
@@ -131,14 +131,22 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.5.0 dimulai ===");
+            Log("=== MuseLink v2.5.1 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.5.0 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.5.1 dimulai");
+            // Roda gigi melayang di bar judul, sebelah kiri minimize
+            // (v2.5.1) — mengikuti gerak jendela utama.
+            _captionGear = new CaptionGearForm(this);
+            _captionGear.Show(this);
+            SyncCaptionGear();
+            LocationChanged += (s2, e2) => SyncCaptionGear();
+            SizeChanged += (s2, e2) => SyncCaptionGear();
+            VisibleChanged += (s2, e2) => SyncCaptionGear();
             ApplyTheme();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
@@ -194,9 +202,12 @@ public sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         var openItem = new ToolStripMenuItem("Buka MuseLink");
         openItem.Click += (s, e) => ShowFromTray();
+        var settingsItem = new ToolStripMenuItem("Pengaturan");
+        settingsItem.Click += (s, e) => { ShowFromTray(); OpenSettings(); };
         var exitItem = new ToolStripMenuItem("Keluar");
         exitItem.Click += (s, e) => ExitFromTray();
         menu.Items.Add(openItem);
+        menu.Items.Add(settingsItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(exitItem);
 
@@ -443,7 +454,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.5.0",
+            Text = "v2.5.1",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -454,22 +465,8 @@ public sealed class MainForm : Form
         };
         headerRight.Controls.Add(version);
 
-        // Tombol Pengaturan (v2.5.0, permintaan user): roda gigi di
-        // pojok kanan atas kartu kepala — tepat di bawah tombol
-        // minimize jendela. Membuka jendela Pengaturan tempat
-        // saklar, tema, dan tombol PUTUSKAN kini tinggal.
-        _settingsButton = new RoundedButton
-        {
-            Text = "\u2699",
-            Font = new Font("Segoe UI Symbol", 13f),
-            BackColor = LightFill,
-            ForeColor = Ink,
-            CornerRadius = 10,
-            Size = new Size(40, 40),
-            Location = new Point(72, 6),
-        };
-        _settingsButton.Click += (s2, e2) => OpenSettings();
-        headerRight.Controls.Add(_settingsButton);
+        // (Tombol roda gigi PINDAH ke bar judul di v2.5.1 —
+        // lihat CaptionGearForm; di sini tinggal label versi.)
 
         // (Tombol "💬 Chat Muse" DIHAPUS di v2.4.1: chat kini
         // menyatu permanen di sebelah panel — tidak ada lagi yang
@@ -990,7 +987,7 @@ public sealed class MainForm : Form
 
     // ---------- Pengaturan, tema & jangan tidur (v2.5.0) ----------
 
-    private void OpenSettings()
+    internal void OpenSettings()
     {
         if (_settingsForm != null && !_settingsForm.IsDisposed)
         {
@@ -999,7 +996,20 @@ public sealed class MainForm : Form
         }
         _settingsForm = new SettingsForm(this);
         _settingsForm.FormClosed += (s, e) => _settingsForm = null;
+        // Posisi dihitung manual (v2.5.1): CenterParent bawaan
+        // menaruhnya di pojok layar pada susunan panel ini.
+        _settingsForm.StartPosition = FormStartPosition.Manual;
+        var b = Bounds;
+        _settingsForm.Location = new Point(
+            b.Left + Math.Max(0, (b.Width - _settingsForm.Width) / 2),
+            b.Top + Math.Max(0, (b.Height - _settingsForm.Height) / 2));
         _settingsForm.Show(this);
+    }
+
+    /// <summary>Tempelkan roda gigi bar judul ke pojok kanan atas jendela ini.</summary>
+    private void SyncCaptionGear()
+    {
+        _captionGear?.SyncTo(Bounds, Visible && WindowState != FormWindowState.Minimized);
     }
 
     /// <summary>Dipanggil jendela Pengaturan / endpoint /theme saat tema dipilih.</summary>
@@ -1083,11 +1093,6 @@ public sealed class MainForm : Form
             _logBox.SelectAll();
             _logBox.SelectionColor = Ink;
             _logBox.Select(pos, len);
-        }
-        if (_settingsButton != null)
-        {
-            _settingsButton.BackColor = LightFill;
-            _settingsButton.ForeColor = Ink;
         }
         if (_chatLoadingLabel != null) { _chatLoadingLabel.ForeColor = InkDim; _chatLoadingLabel.BackColor = Card; }
         if (_chatErrorLabel != null) { _chatErrorLabel.ForeColor = ErrorInk; _chatErrorLabel.BackColor = ErrorBg; }

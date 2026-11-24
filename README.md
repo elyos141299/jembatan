@@ -1,4 +1,4 @@
-# MuseLink v2.5.0 — catatan pengembang
+# MuseLink v2.5.1 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,19 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.1 (dari v2.5.0) — Roda Gigi di Bar Judul
+
+- **Roda gigi PINDAH ke bar judul** (permintaan user: persis di
+  sebelah kiri minimize kanan atas): jendela pelacak tanpa
+  bingkai (`CaptionGearForm.cs`) milik jendela utama menempel di
+  kotak caption [Right-184, Right-138] dan mengikuti gerak/ubah
+  ukuran/sembunyi jendela utama; chrome bawaan Windows tidak
+  disentuh. Roda gigi di kartu kepala dihapus.
+- Menu tray kini juga punya item **Pengaturan** (jalan cadangan).
+- Jendela Pengaturan kini diposisikan di tengah jendela utama
+  secara manual (CenterParent menaruhnya di pojok pada susunan
+  panel ini).
 
 ## Perubahan v2.5.0 (dari v2.4.5) — "Lima Fitur + Pengaturan & Tema"
 
