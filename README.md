@@ -1,4 +1,4 @@
-# MuseLink v2.4.4 — catatan pengembang
+# MuseLink v2.4.5 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -66,6 +66,15 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.4.5 (dari v2.4.4) — Fix Interval Penjaga
+
+Satu baris yang terlewat di v2.4.4: penggantian interval tugas
+"MuseLink Watchdog" dari /MO 5 ke /MO 1 tidak benar-benar
+tertulis (jangkar teks meleset, ketahuan saat verifikasi live —
+interval masih PT5M). v2.4.5 memperbaikinya; tidak ada perubahan
+lain. Sesudah aplikasi v2.4.5 pertama kali jalan, tugas penjaga
+dibuat ulang sebagai /MO 1 (pulih dari mati ≤ ±1 menit).
 
 ## Perubahan v2.4.4 (dari v2.4.3) — "Versi Bukti" (paket performa hasil audit mendalam)
 

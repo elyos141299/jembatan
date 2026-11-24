@@ -103,7 +103,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.4.4 dimulai ===");
+            Log("=== MuseLink v2.4.5 dimulai ===");
             InitStartOptions();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
@@ -425,7 +425,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.4.4",
+            Text = "v2.4.5",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -837,7 +837,7 @@ public sealed class MainForm : Form
         }
         string tr = "powershell -NoProfile -WindowStyle Hidden -File \\\"" + scriptPath + "\\\"";
         string args = "/Create /TN \"" + WatchdogTaskName + "\" /TR \"" + tr +
-                      "\" /SC MINUTE /MO 5 /RL HIGHEST /F";
+                      "\" /SC MINUTE /MO 1 /RL HIGHEST /F";
         int code = RunSchtasks(args, out string output);
         if (code != 0)
             Log("GAGAL membuat tugas penjaga (kode " + code + "): " + output.Trim());
