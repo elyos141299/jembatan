@@ -131,14 +131,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.5.1 dimulai ===");
+            Log("=== MuseLink v2.5.2 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.5.1 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.5.2 dimulai");
             // Roda gigi melayang di bar judul, sebelah kiri minimize
             // (v2.5.1) — mengikuti gerak jendela utama.
             _captionGear = new CaptionGearForm(this);
@@ -454,7 +454,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.5.1",
+            Text = "v2.5.2",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -790,10 +790,14 @@ public sealed class MainForm : Form
     // dengan syarat yang sama (jalan otomatis + admin + proses admin).
     private void EnsureWatchdogTask()
     {
-        // v2.3.4: naskah penjaga ditulis ke berkas .ps1 dan tugas
-        // menjalankannya dengan -File. Cara lama (-Command sebaris)
-        // GAGAL di v2.3.3: nilai /TR schtasks mentok 261 karakter,
-        // perintah sebarisnya lebih panjang dari itu.
+        // v2.5.2: penjaga kini VBScript lewat wscript.exe — TANPA
+        // konsol sama sekali. Cara lama (powershell -File, sejak
+        // v2.3.4) walau memakai -WindowStyle Hidden tetap sempat
+        // menampilkan jendela konsol sepersekian detik di sebagian
+        // mesin (user melaporkannya sebagai jendela yang nongol
+        // beberapa milidetik, makin sering sejak interval penjaga
+        // dipendekkan ke 1 menit di v2.4.5). wscript tidak punya
+        // jendela konsol, jadi kedip itu hilang secara fisik.
         string scriptPath;
         try
         {
@@ -801,19 +805,30 @@ public sealed class MainForm : Form
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Jembatan");
             Directory.CreateDirectory(dir);
-            scriptPath = Path.Combine(dir, "watchdog.ps1");
+            scriptPath = Path.Combine(dir, "watchdog.vbs");
             string script =
-                "if ((Get-ItemProperty 'HKCU:\\Software\\Jembatan' -Name UserStopped -ErrorAction SilentlyContinue).UserStopped -ne 1) {\r\n" +
-                "  if (-not (Get-Process Jembatan -ErrorAction SilentlyContinue)) { Start-Process '" +
-                Application.ExecutablePath + "' }\r\n}\r\n";
+                "' Penjaga MuseLink (v2.5.2): VBScript - tanpa konsol sama sekali.\r\n" +
+                "On Error Resume Next\r\n" +
+                "Dim shell, stopped, procs\r\n" +
+                "Set shell = CreateObject(\"WScript.Shell\")\r\n" +
+                "stopped = 0\r\n" +
+                "stopped = shell.RegRead(\"HKCU\\Software\\Jembatan\\UserStopped\")\r\n" +
+                "If stopped <> 1 Then\r\n" +
+                "  Set procs = GetObject(\"winmgmts:\").ExecQuery(\"SELECT Name FROM Win32_Process WHERE Name = 'Jembatan.exe'\")\r\n" +
+                "  If procs.Count = 0 Then\r\n" +
+                "    shell.Run \"\"\"" + Application.ExecutablePath + "\"\"\", 0, False\r\n" +
+                "  End If\r\n" +
+                "End If\r\n";
             File.WriteAllText(scriptPath, script);
+            // Berkas penjaga lama (PowerShell) dibersihkan.
+            try { File.Delete(Path.Combine(dir, "watchdog.ps1")); } catch { /* abaikan */ }
         }
         catch (Exception ex)
         {
             Log("GAGAL menulis naskah penjaga: " + ex.Message);
             return;
         }
-        string tr = "powershell -NoProfile -WindowStyle Hidden -File \\\"" + scriptPath + "\\\"";
+        string tr = "wscript.exe \\\"" + scriptPath + "\\\"";
         string args = "/Create /TN \"" + WatchdogTaskName + "\" /TR \"" + tr +
                       "\" /SC MINUTE /MO 1 /RL HIGHEST /F";
         int code = RunSchtasks(args, out string output);

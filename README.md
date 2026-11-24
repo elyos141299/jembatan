@@ -1,4 +1,4 @@
-# MuseLink v2.5.1 — catatan pengembang
+# MuseLink v2.5.2 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,17 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.2 (dari v2.5.1) — Penjaga Tanpa Konsol
+
+- **Kedip jendela konsol DIHILANGKAN**: tugas penjaga tidak lagi
+  menjalankan `powershell -File watchdog.ps1` (walau
+  -WindowStyle Hidden, jendela konsolnya sempat nongol beberapa
+  milidetik — dilaporkan user; makin terasa sejak interval
+  penjaga 1 menit). Penjaga kini `watchdog.vbs` lewat
+  **wscript.exe**: cek bendera UserStopped (registry) + proses
+  Jembatan.exe (WMI) + nyalakan ulang — tanpa konsol sama sekali.
+  watchdog.ps1 lama dihapus saat tugas dibuat ulang.
 
 ## Perubahan v2.5.1 (dari v2.5.0) — Roda Gigi di Bar Judul
 
