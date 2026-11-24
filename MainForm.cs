@@ -141,14 +141,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.6.6 dimulai ===");
+            Log("=== MuseLink v2.7.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.6.6 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.7.0 dimulai");
             // Roda gigi melayang di bar judul, sebelah kiri minimize
             // (v2.5.1) — mengikuti gerak jendela utama.
             _captionGear = new CaptionGearForm(this);
@@ -186,6 +186,26 @@ public sealed class MainForm : Form
             {
                 SetStopped("Gagal memulai: " + ex.Message);
                 Log("GAGAL memulai layanan: " + ex.Message);
+            }
+            // v2.7.0 (permintaan user): mulai otomatis (login
+            // Windows / penjaga) → jendela menepi sendiri ke tray
+            // sesudah ±6 detik, supaya tidak menghalangi layar
+            // tiap PC menyala. Dibuka manual → blok ini tidak
+            // jalan dan jendela tetap tampil.
+            if (Program.StartedAuto)
+            {
+                var tmrAutoTray = new System.Windows.Forms.Timer { Interval = 6000 };
+                tmrAutoTray.Tick += (s2, e2) =>
+                {
+                    tmrAutoTray.Stop();
+                    tmrAutoTray.Dispose();
+                    if (!_exitRequested && Visible)
+                    {
+                        Hide();
+                        Log("Jendela otomatis disembunyikan ke system tray (mulai otomatis).");
+                    }
+                };
+                tmrAutoTray.Start();
             }
         };
         FormClosed += (s, e) =>
@@ -502,7 +522,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = _versionLabel = new Label
         {
-            Text = "v2.6.6",
+            Text = "v2.7.0",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -562,7 +582,7 @@ public sealed class MainForm : Form
         tilesWrap.Controls.Add(tiles);
         MakeTile(tiles, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
-        MakeTile(tiles, 2, "VERSI", "2.6.6", out _tileVersionValue);
+        MakeTile(tiles, 2, "VERSI", "2.7.0", out _tileVersionValue);
         leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
 
@@ -767,7 +787,7 @@ public sealed class MainForm : Form
     private static string ExpectedRunCommand()
     {
         // Path exe dikutip agar aman dari spasi di nama folder.
-        return "\"" + Application.ExecutablePath + "\"";
+        return "\"" + Application.ExecutablePath + "\" --auto";
     }
 
     private static bool HasAutoStartValue()
@@ -847,7 +867,7 @@ public sealed class MainForm : Form
         // Path exe di dalam nilai /TR harus terbungkus tanda kutip —
         // pola baku schtasks: /TR "\"C:\...\Jembatan.exe\"".
         string args = "/Create /TN \"" + TaskName + "\" /TR \"\\\"" +
-                      Application.ExecutablePath + "\\\"\" /SC ONLOGON /RL HIGHEST /F";
+                      Application.ExecutablePath + "\\\" --auto\" /SC ONLOGON /RL HIGHEST /F";
         int code = RunSchtasks(args, out string output);
         if (code != 0)
             Log("GAGAL membuat tugas terjadwal admin (kode " + code + "): " + output.Trim());
@@ -889,7 +909,7 @@ public sealed class MainForm : Form
                 "If stopped <> 1 Then\r\n" +
                 "  Set procs = GetObject(\"winmgmts:\").ExecQuery(\"SELECT Name FROM Win32_Process WHERE Name = 'Jembatan.exe'\")\r\n" +
                 "  If procs.Count = 0 Then\r\n" +
-                "    shell.Run \"\"\"" + Application.ExecutablePath + "\"\"\", 0, False\r\n" +
+                "    shell.Run \"\"\"" + Application.ExecutablePath + "\"\" --auto\", 0, False\r\n" +
                 "  End If\r\n" +
                 "End If\r\n";
             File.WriteAllText(scriptPath, script);

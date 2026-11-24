@@ -15,9 +15,20 @@ internal static class Program
     /// </summary>
     internal static bool ElevationDeclined { get; private set; }
 
+    /// <summary>
+    /// True bila proses ini dimulai OTOMATIS (tugas login / nilai
+    /// Run / penjaga — semuanya menambahkan argumen "--auto").
+    /// MainForm memakainya untuk menepi sendiri ke system tray
+    /// sesudah ±6 detik (v2.7.0, permintaan user). Dibuka manual
+    /// oleh user → jendela tetap tampil seperti biasa.
+    /// </summary>
+    internal static bool StartedAuto { get; private set; }
+
     [STAThread]
     private static void Main(string[] args)
     {
+        StartedAuto = args != null && Array.IndexOf(args, "--auto") >= 0;
+
         // Penjaga satu instans: jalan otomatis (Tugas Terjadwal / Run)
         // dan pembukaan manual bisa berbenturan — instans kedua keluar
         // diam-diam. Pengecekan dicoba berulang sebentar karena saat

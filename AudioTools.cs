@@ -4,6 +4,7 @@ using System.IO;
 using System.Speech.Synthesis;
 using System.Threading;
 using NAudio.Wave;
+using NAudio.CoreAudioApi;
 
 namespace Jembatan;
 
@@ -52,16 +53,60 @@ public static class AudioTools
             cap.StopRecording();
         }
 
-        // Format loopback umumnya float 32-bit, 44,1/48kHz, stereo.
+        byte[] data;
+        lock (kunci) { data = mentah.ToArray(); }
+        return ConvertToWav16kMono(data, fmt, seconds);
+    }
+
+    /// <summary>
+    /// Rekam MIKROFON (perangkat tangkap bawaan Windows) selama
+    /// seconds detik → byte WAV mono 16kHz (v2.7.0). Pasangan
+    /// sumber "mic" di /listen: mendengar ruangan lewat mic —
+    /// beda dari loopback yang mendengar suara yang DIMAINKAN PC.
+    /// </summary>
+    public static byte[] CaptureMicWav(int seconds)
+    {
+        if (seconds < 1) seconds = 1;
+        if (seconds > 30) seconds = 30;
+
+        var mentah = new List<byte>();
+        var kunci = new object();
+        WaveFormat fmt;
+        using (var cap = new WasapiCapture())
+        {
+            fmt = cap.WaveFormat;
+            cap.DataAvailable += (s, e) =>
+            {
+                if (e.BytesRecorded <= 0) return;
+                var potong = new byte[e.BytesRecorded];
+                Array.Copy(e.Buffer, potong, e.BytesRecorded);
+                lock (kunci) { mentah.AddRange(potong); }
+            };
+            cap.StartRecording();
+            Thread.Sleep(seconds * 1000);
+            cap.StopRecording();
+        }
+        byte[] data;
+        lock (kunci) { data = mentah.ToArray(); }
+        return ConvertToWav16kMono(data, fmt, seconds);
+    }
+
+    /// <summary>
+    /// Ubah tangkapan WASAPI mentah (umumnya float 32-bit,
+    /// 44,1/48kHz, stereo) menjadi WAV mono 16kHz 16-bit:
+    /// tiap jendela cuplikan dirata-rata (downsample kasar,
+    /// cukup untuk ucapan & bunyi isyarat). Kekurangan data
+    /// diisi keheningan agar durasi sesuai permintaan.
+    /// </summary>
+    private static byte[] ConvertToWav16kMono(byte[] data, WaveFormat fmt, int seconds)
+    {
+        // Format sumber umumnya float 32-bit, 44,1/48kHz, stereo.
         int channels = Math.Max(1, fmt.Channels);
         int rate = fmt.SampleRate;
         bool isFloat = fmt.Encoding == WaveFormatEncoding.IeeeFloat;
         int bytesPerSample = fmt.BitsPerSample / 8;
         if (bytesPerSample <= 0) bytesPerSample = isFloat ? 4 : 2;
         int frameBytes = bytesPerSample * channels;
-
-        byte[] data;
-        lock (kunci) { data = mentah.ToArray(); }
         int frames = frameBytes > 0 ? data.Length / frameBytes : 0;
 
         const int outRate = 16000;

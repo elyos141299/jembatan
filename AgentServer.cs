@@ -351,6 +351,38 @@ public sealed class AgentServer
 
     // ---------- Routing ----------
 
+    // ---------- Rutinitas tersimpan (v2.7.0) ----------
+
+    private static bool ValidRoutineName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        name = name.Trim();
+        if (name.Length > 40) return false;
+        foreach (char c in name)
+        {
+            if (!char.IsLetterOrDigit(c) && c != ' ' && c != '_' && c != '-')
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Saring isi rutinitas: tiap aksi wajib objek ber-"do", dan
+    /// aksi yang bisa memanggil rutinitas lain / batch bersarang
+    /// dilarang (cegah rekursi tak berujung). null = bersih.
+    /// </summary>
+    private static string ScanRoutineActions(JsonElement actions)
+    {
+        foreach (var a in actions.EnumerateArray())
+        {
+            if (a.ValueKind != JsonValueKind.Object) return "tiap aksi wajib berupa objek";
+            string d = GetString(a, "do", "");
+            if (d == "") return "ada aksi tanpa field do";
+            if (d == "batch" || d.StartsWith("routines")) return "aksi terlarang di rutinitas: " + d;
+        }
+        return null;
+    }
+
     private Response Route(Request req)
     {
         try
@@ -362,7 +394,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.6\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.0\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -405,10 +437,8 @@ public sealed class AgentServer
                         var bnd = Screen.PrimaryScreen != null
                             ? Screen.PrimaryScreen.Bounds
                             : new Rectangle(0, 0, 1280, 720);
-                        using (var bmp = new Bitmap(bnd.Width, bnd.Height))
+                        using (var bmp = CaptureFullBitmap())
                         {
-                            using (var g = Graphics.FromImage(bmp))
-                                g.CopyFromScreen(bnd.Location, Point.Empty, bnd.Size);
                             if (sGrid) DrawGrid(bmp, bnd, sStep);
                             if (sMark) DrawClickMark(bmp, bnd);
                             using (var ms = new MemoryStream())
@@ -523,7 +553,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.6",
+                    ["version"] = "2.7.0",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -543,6 +573,8 @@ public sealed class AgentServer
                     ["themeDark"] = AppTheme.IsDark,
                     ["tailscaleRelay"] = TailscaleRelay(),
                     ["eventsLastSeq"] = EventLog.LastSeq,
+                    // v2.7.0: mesin tangkap layar yang sedang aktif.
+                    ["capture"] = DxgiCapture.Mode,
                 });
             }
 
@@ -619,7 +651,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.6",
+                    ["version"] = "2.7.0",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -887,6 +919,25 @@ public sealed class AgentServer
                     inspResp["relative"] = relI;
                 }
                 return Response.JsonObject(inspResp);
+            }
+
+            if (req.Method == "GET" && req.Path == "/routines")
+            {
+                _onActivity();
+                var daftar = new List<object>();
+                foreach (var kv in Routines.List())
+                {
+                    daftar.Add(new Dictionary<string, object>
+                    {
+                        ["name"] = kv.Key,
+                        ["steps"] = kv.Value,
+                    });
+                }
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["routines"] = daftar,
+                });
             }
 
             if (req.Method == "GET" && req.Path == "/lastops")
@@ -1288,6 +1339,84 @@ public sealed class AgentServer
                     var root = doc.RootElement;
                     switch (req.Path)
                     {
+                        case "/routines/save":
+                        {
+                            // Simpan rutinitas bernama (v2.7.0):
+                            // {name, actions:[...]} — actions persis
+                            // format /batch, disimpan di PC.
+                            string nama = GetString(root, "name", "").Trim();
+                            if (!ValidRoutineName(nama))
+                                return Response.Json("{\"ok\":false,\"error\":\"nama rutinitas tidak sah (1-40 huruf/angka/spasi/_/-)\"}", 400);
+                            if (!root.TryGetProperty("actions", out var acts) ||
+                                acts.ValueKind != JsonValueKind.Array ||
+                                acts.GetArrayLength() < 1 || acts.GetArrayLength() > 100)
+                                return Response.Json("{\"ok\":false,\"error\":\"actions wajib array 1-100 aksi\"}", 400);
+                            string saring = ScanRoutineActions(acts);
+                            if (saring != null)
+                                return Response.Json("{\"ok\":false,\"error\":\"" + saring + "\"}", 400);
+                            Routines.Save(nama, acts.GetRawText());
+                            _onActivity();
+                            _log($"rutinitas '{nama}' disimpan ({acts.GetArrayLength()} aksi)");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["name"] = nama,
+                                ["steps"] = acts.GetArrayLength(),
+                            });
+                        }
+                        case "/routines/delete":
+                        {
+                            string nama = GetString(root, "name", "").Trim();
+                            bool ada = Routines.Delete(nama);
+                            _onActivity();
+                            _log($"rutinitas '{nama}' dihapus: {ada}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["deleted"] = ada,
+                            });
+                        }
+                        case "/routines/run":
+                        {
+                            // Jalankan rutinitas tersimpan lewat mesin
+                            // /batch yang sama (satu panggilan jaringan
+                            // untuk seluruh rangkaian).
+                            string nama = GetString(root, "name", "").Trim();
+                            if (!Routines.TryGet(nama, out var actsJson))
+                                return Response.Json("{\"ok\":false,\"error\":\"rutinitas tidak ditemukan\"}", 404);
+                            using (var dokActs = JsonDocument.Parse(actsJson))
+                            {
+                                string saring = ScanRoutineActions(dokActs.RootElement);
+                                if (saring != null)
+                                    return Response.Json("{\"ok\":false,\"error\":\"" + saring + "\"}", 400);
+                            }
+                            bool stopOnError = !root.TryGetProperty("stopOnError", out var soe) ||
+                                               soe.ValueKind != JsonValueKind.False;
+                            string bodyBatch = "{\"actions\":" + actsJson +
+                                               ",\"stopOnError\":" + (stopOnError ? "true" : "false") + "}";
+                            _onActivity();
+                            _log($"rutinitas '{nama}' dijalankan");
+                            var respBatch = Route(new Request
+                            {
+                                Method = "POST", Path = "/batch", Query = "", Body = bodyBatch,
+                            });
+                            try
+                            {
+                                using (var dok = JsonDocument.Parse(Encoding.UTF8.GetString(respBatch.BodyBytes)))
+                                {
+                                    if (dok.RootElement.ValueKind == JsonValueKind.Object)
+                                    {
+                                        var gab = new Dictionary<string, object>();
+                                        foreach (var p in dok.RootElement.EnumerateObject())
+                                            gab[p.Name] = p.Value.Clone();
+                                        gab["routine"] = nama;
+                                        return Response.JsonObject(gab);
+                                    }
+                                }
+                            }
+                            catch { /* respons batch bukan JSON — teruskan apa adanya */ }
+                            return respBatch;
+                        }
                         case "/batch":
                         {
                             // Rangkaian aksi dalam SATU panggilan
@@ -2231,12 +2360,21 @@ public sealed class AgentServer
                             int detik = GetInt(root, "seconds", 5);
                             if (detik < 1) detik = 1;
                             if (detik > 30) detik = 30;
+                            // Sumber suara (v2.7.0): "system" = loopback
+                            // (suara yang dimainkan PC — perilaku sejak
+                            // v2.5.0), "mic" = mikrofon perangkat
+                            // tangkap bawaan Windows.
+                            string sumber = GetString(root, "source", "system");
+                            if (sumber != "system" && sumber != "mic")
+                                return Response.Json("{\"ok\":false,\"error\":\"source harus system atau mic\"}", 400);
                             _onActivity();
-                            _log($"dengar audio PC ({detik} detik)…");
+                            _log(sumber == "mic" ? $"dengar mikrofon ({detik} detik)…" : $"dengar audio PC ({detik} detik)…");
                             byte[] wav;
                             try
                             {
-                                wav = AudioTools.CaptureLoopbackWav(detik);
+                                wav = sumber == "mic"
+                                    ? AudioTools.CaptureMicWav(detik)
+                                    : AudioTools.CaptureLoopbackWav(detik);
                             }
                             catch (Exception ex)
                             {
@@ -3216,6 +3354,29 @@ public sealed class AgentServer
     /// Aman dipanggil dari thread mana pun. Pemanggil membuang
     /// bitmap-nya.
     /// </summary>
+    /// <summary>
+    /// Bingkai layar penuh resolusi asli: DXGI lebih dulu
+    /// (v2.7.0 — permukaan D3D seperti pratinjau OBS & game
+    /// tertangkap benar), GDI (CopyFromScreen) sebagai cadangan.
+    /// Pemanggil membuang bitmap-nya.
+    /// </summary>
+    private static Bitmap CaptureFullBitmap()
+    {
+        try
+        {
+            var dx = DxgiCapture.TryCapture();
+            if (dx != null) return dx;
+        }
+        catch { /* jatuh ke GDI */ }
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        var bmp = new Bitmap(bounds.Width, bounds.Height);
+        using (var g = Graphics.FromImage(bmp))
+            g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+        return bmp;
+    }
+
     private static Bitmap CaptureRegionBitmap(Rectangle region, int maxWidth, out Rectangle eff)
     {
         var bounds = Screen.PrimaryScreen != null
@@ -3223,9 +3384,9 @@ public sealed class AgentServer
             : new Rectangle(0, 0, 1280, 720);
         eff = Rectangle.Intersect(bounds, region);
         if (eff.Width <= 0 || eff.Height <= 0) eff = bounds;
-        var bmp = new Bitmap(eff.Width, eff.Height);
-        using (var g = Graphics.FromImage(bmp))
-            g.CopyFromScreen(eff.Location, Point.Empty, eff.Size);
+        Bitmap bmp;
+        using (var full = CaptureFullBitmap())
+            bmp = full.Clone(new Rectangle(eff.X - bounds.X, eff.Y - bounds.Y, eff.Width, eff.Height), full.PixelFormat);
         if (maxWidth <= 0 || bmp.Width <= maxWidth)
             return bmp;
         int w = maxWidth;
@@ -3241,12 +3402,7 @@ public sealed class AgentServer
     /// </summary>
     private static Bitmap CaptureScaledBitmap(int maxWidth)
     {
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
-        var bmp = new Bitmap(bounds.Width, bounds.Height);
-        using (var g = Graphics.FromImage(bmp))
-            g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+        var bmp = CaptureFullBitmap();
         if (bmp.Width <= maxWidth)
             return bmp;
         int w = maxWidth;
@@ -3306,13 +3462,8 @@ public sealed class AgentServer
 
     private static byte[] CaptureScreenshot()
     {
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
-        using (var bmp = new Bitmap(bounds.Width, bounds.Height))
+        using (var bmp = CaptureFullBitmap())
         {
-            using (var g = Graphics.FromImage(bmp))
-                g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
             using (var ms = new MemoryStream())
             {
                 bmp.Save(ms, ImageFormat.Png);
@@ -3334,10 +3485,8 @@ public sealed class AgentServer
             : new Rectangle(0, 0, 1280, 720);
         eff = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
         if (eff.Width <= 0 || eff.Height <= 0) eff = bounds;
-        var bmp = new Bitmap(eff.Width, eff.Height);
-        using (var g = Graphics.FromImage(bmp))
-            g.CopyFromScreen(eff.Location, Point.Empty, eff.Size);
-        return bmp;
+        using (var full = CaptureFullBitmap())
+            return full.Clone(new Rectangle(eff.X - bounds.X, eff.Y - bounds.Y, eff.Width, eff.Height), full.PixelFormat);
     }
 
     /// <summary>
@@ -3352,10 +3501,9 @@ public sealed class AgentServer
             : new Rectangle(0, 0, 1280, 720);
         var region = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
         if (region.Width <= 0 || region.Height <= 0) region = bounds;
-        using (var bmp = new Bitmap(region.Width, region.Height))
+        using (var full = CaptureFullBitmap())
+        using (var bmp = full.Clone(new Rectangle(region.X - bounds.X, region.Y - bounds.Y, region.Width, region.Height), full.PixelFormat))
         {
-            using (var g = Graphics.FromImage(bmp))
-                g.CopyFromScreen(region.Location, Point.Empty, region.Size);
             using (var ms = new MemoryStream())
             {
                 bmp.Save(ms, ImageFormat.Png);
@@ -3380,10 +3528,9 @@ public sealed class AgentServer
             ? Rectangle.Intersect(bounds, new Rectangle(x, y, w, h))
             : bounds;
         if (region.Width <= 0 || region.Height <= 0) region = bounds;
-        using (var bmp = new Bitmap(region.Width, region.Height))
+        using (var full = CaptureFullBitmap())
+        using (var bmp = full.Clone(new Rectangle(region.X - bounds.X, region.Y - bounds.Y, region.Width, region.Height), full.PixelFormat))
         {
-            using (var g = Graphics.FromImage(bmp))
-                g.CopyFromScreen(region.Location, Point.Empty, region.Size);
             if (bmp.Width <= 96)
                 return HashBitmap(bmp);
             int ph = Math.Max(1, (int)(bmp.Height * (96.0 / bmp.Width)));

@@ -497,6 +497,33 @@ public static class NativeInput
     /// </summary>
     public static Bitmap CaptureScreenScaled(int maxWidth)
     {
+        // v2.7.0: jalur DXGI lebih dulu — bingkai langsung dari
+        // pipa GPU (permukaan D3D seperti pratinjau OBS & game
+        // tertangkap benar, tidak putih/hitam seperti GDI).
+        // Tidak tersedia/gagal → jalur StretchBlt lama di bawah.
+        try
+        {
+            var full = DxgiCapture.TryCapture();
+            if (full != null)
+            {
+                var bnd0 = Screen.PrimaryScreen != null
+                    ? Screen.PrimaryScreen.Bounds
+                    : new Rectangle(0, 0, 1280, 720);
+                int tw0 = Math.Min(maxWidth, bnd0.Width);
+                if (tw0 <= 0) tw0 = bnd0.Width;
+                int th0 = Math.Max(1, (int)(bnd0.Height * (tw0 / (double)bnd0.Width)));
+                if (full.Width == tw0 && full.Height == th0) return full;
+                var kecil = new Bitmap(tw0, th0);
+                using (var g = Graphics.FromImage(kecil))
+                {
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
+                    g.DrawImage(full, 0, 0, tw0, th0);
+                }
+                full.Dispose();
+                return kecil;
+            }
+        }
+        catch { /* jatuh ke GDI */ }
         var bounds = Screen.PrimaryScreen != null
             ? Screen.PrimaryScreen.Bounds
             : new Rectangle(0, 0, 1280, 720);

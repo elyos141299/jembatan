@@ -1,4 +1,4 @@
-# MuseLink v2.6.6 — catatan pengembang
+# MuseLink v2.7.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,34 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.0 (dari v2.6.6) — DXGI, mic, rutinitas, auto-tray
+
+Empat hal dalam satu versi (tiga diminta/disetujui user, satu tambahan user):
+
+1. **Tangkap layar DXGI Desktop Duplication** (berkas baru `DxgiCapture.cs`,
+   paket Vortice.Direct3D11 3.6.1): bingkai diambil langsung dari pipa GPU.
+   Pratinjau OBS & game (permukaan D3D) kini tertangkap BENAR — tidak lagi
+   putih/hitam seperti jalur GDI. Semua jalur tangkap (frame, screenshot,
+   stream, burst, delta, wilayah/OCR) melewati `CaptureFullBitmap()` /
+   `NativeInput.CaptureScreenScaled` yang mencoba DXGI lebih dulu dan
+   jatuh ke GDI (StretchBlt/CopyFromScreen) bila DXGI gagal; kegagalan
+   memasang jeda dingin 30 detik lalu init ulang (pulih sendiri).
+   `/sysinfo` melaporkan `"capture": "dxgi"|"gdi"`.
+2. **/listen sumber mic**: `{source:"mic"}` merekam mikrofon perangkat
+   tangkap bawaan (`AudioTools.CaptureMicWav`, WASAPI). Bawaan tetap
+   `"system"` = loopback (perilaku sejak v2.5.0 — klarifikasi: /listen
+   memang SELALU loopback sejak lahir; yang baru di versi ini mic-nya).
+   Konversi ke WAV mono 16kHz kini berbagi `ConvertToWav16kMono`.
+3. **Rutinitas tersimpan** (berkas baru `Routines.cs`): rangkaian aksi
+   format /batch disimpan bernama di `%LOCALAPPDATA%\Jembatan\routines.json`.
+   Endpoint: GET /routines, POST /routines/save, /routines/delete,
+   /routines/run (menjalankan lewat mesin /batch; aksi pemanggil
+   rutinitas/batch bersarang disaring — cegah rekursi).
+4. **Auto-tray saat mulai otomatis** (permintaan user): tugas login,
+   nilai Run, dan penjaga kini menambahkan argumen `--auto`;
+   `Program.StartedAuto` membacanya dan MainForm menyembunyikan
+   jendela ke tray sesudah 6 detik. Dibuka manual → tetap tampil.
 
 ## Perubahan v2.6.6 (dari v2.6.5) — Fix TSV Tesseract
 
