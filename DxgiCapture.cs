@@ -442,8 +442,10 @@ public static class DxgiCapture
                 if (_vpDevice.CreateVideoProcessorInputView(tex, _vpEnum, ivd, out inView).Failure)
                     return null;
                 var stream = new VideoProcessorStream { Enable = true, InputSurface = inView };
-                if (_vpContext.VideoProcessorBlt(_vpProc, _vpOutView, 0, 1, new[] { stream }).Failure)
-                    return null;
+                // VideoProcessorBlt di Vortice 3.6.x bertipe void —
+                // kegagalan muncul sebagai pengecualian SharpGen
+                // dan tertangkap penangan VP di luar.
+                _vpContext.VideoProcessorBlt(_vpProc, _vpOutView, 0, 1, new[] { stream });
             }
             finally { inView?.Dispose(); }
             _context.CopyResource(_vpStaging, _vpOutTex);
