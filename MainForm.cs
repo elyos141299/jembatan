@@ -40,6 +40,7 @@ public sealed class MainForm : Form
     private static Color LogBg => AppTheme.LogBg;
     private static Color Hairline => AppTheme.Hairline;
     private static Color Accent => AppTheme.Accent;
+    private static Color AccentAlt => AppTheme.AccentAlt;
     private static Color Green => AppTheme.Green;
     private static Color Red => AppTheme.Red;
     private static Color LightFill => AppTheme.LightFill;
@@ -182,14 +183,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.8.1 dimulai ===");
+            Log("=== MuseLink v2.9.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.8.1 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.9.0 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -514,7 +515,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v2.8.1",
+            Text = "v2.9.0",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -757,7 +758,7 @@ public sealed class MainForm : Form
         MakeTile2(tiles, 0, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile2(tiles, 0, 1, "UPTIME", "0m", out _tileUptimeValue);
         MakeTile2(tiles, 1, 0, "CAPTURE", "…", out _tileCaptureValue);
-        MakeTile2(tiles, 1, 1, "VERSI", "2.8.1", out _tileVersionValue);
+        MakeTile2(tiles, 1, 1, "VERSI", "2.9.0", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -1486,12 +1487,16 @@ public sealed class MainForm : Form
         if (_server.IsRunning)
         {
             _serverBtn.Text = "Putuskan Akses";
+            _serverBtn.GradientEnd = null;
             _serverBtn.BackColor = Blend(Red, Card, AppTheme.IsDark ? 0.22 : 0.14);
             _serverBtn.ForeColor = AppTheme.IsDark ? Blend(Red, Color.White, 0.35) : Red;
         }
         else
         {
             _serverBtn.Text = "Sambungkan";
+            // v2.9.0: tombol utama memakai gradasi Blurple->fuchsia
+            // di tema gelap (tanda tangan Midnight Rich).
+            _serverBtn.GradientEnd = AppTheme.IsDark ? (Color?)AccentAlt : null;
             _serverBtn.BackColor = Accent;
             _serverBtn.ForeColor = Color.White;
         }

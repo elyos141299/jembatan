@@ -1,4 +1,4 @@
-# MuseLink v2.8.1 — catatan pengembang
+# MuseLink v2.9.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,20 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.9.0 (dari v2.8.1) — Arah Midnight Rich + logo baru
+- Arah gelap Linear DITOLAK user sesudah melihatnya langsung;
+  riset ronde dua dijalankan dan user memilih Midnight Rich.
+- Token gelap diganti tangga navy bertinta: Bg #16182B, Panel
+  #101222, LogBg #0D0E1A, Card #232642, garis #343860; teks
+  kebiruan #EDEEF7 / #B5B8D6 / #7A7EA3; aksen Discord Blurple
+  #5865F2; warna status set Discord (#23A55A, #F0B232, #F23F43).
+- RoundedButton mendukung gradasi diagonal (GradientEnd);
+  tombol Sambungkan di tema gelap memakai gradasi Blurple ->
+  fuchsia #EB459E. Palet terang tidak berubah.
+- Logo & ikon diganti: ubin gradasi Blurple->fuchsia + glif
+  rantai-M putih yang sama, sudut transparan; master baru
+  logo-midnight.png, icon.ico dibangun ulang 9 ukuran.
 
 ## Perubahan v2.8.1 (dari v2.8.0) — Dua perbaikan visual
 

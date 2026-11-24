@@ -135,7 +135,7 @@ public class ToggleSwitch : Control
         var trackRect = new Rectangle(0, 0, Width - 1, Height - 1);
         Color track = _checked
             ? AppTheme.Accent
-            : (AppTheme.IsDark ? Color.FromArgb(58, 61, 66) : Color.FromArgb(232, 232, 237));
+            : (AppTheme.IsDark ? Color.FromArgb(58, 61, 92) : Color.FromArgb(232, 232, 237));
         using (var path = RoundedPanel.RoundRectPath(trackRect, Height / 2))
         {
             using (var brush = new SolidBrush(track))
@@ -181,6 +181,10 @@ public class ToggleSwitch : Control
 public class RoundedButton : Button
 {
     public int CornerRadius { get; set; } = 12;
+
+    /// <summary>v2.9.0: bila diisi, isi tombol digambar sebagai
+    /// gradasi diagonal dari BackColor ke warna ini.</summary>
+    public Color? GradientEnd { get; set; }
 
     private bool _hover;
     private bool _pressed;
@@ -247,13 +251,24 @@ public class RoundedButton : Button
             g.FillRectangle(bg, ClientRectangle);
 
         Color fill = BackColor;
-        if (!Enabled) fill = ControlPaint.LightLight(fill);
-        else if (_pressed) fill = ControlPaint.Dark(fill, 0.08f);
-        else if (_hover) fill = ControlPaint.Dark(fill, 0.04f);
+        Color fillEnd = GradientEnd ?? BackColor;
+        if (!Enabled) { fill = ControlPaint.LightLight(fill); fillEnd = ControlPaint.LightLight(fillEnd); }
+        else if (_pressed) { fill = ControlPaint.Dark(fill, 0.08f); fillEnd = ControlPaint.Dark(fillEnd, 0.08f); }
+        else if (_hover) { fill = ControlPaint.Dark(fill, 0.04f); fillEnd = ControlPaint.Dark(fillEnd, 0.04f); }
 
         using (var path = RoundedPanel.RoundRectPath(ClientRectangle, CornerRadius))
-        using (var brush = new SolidBrush(fill))
-            g.FillPath(brush, path);
+        {
+            if (GradientEnd.HasValue)
+            {
+                using (var brush = new LinearGradientBrush(ClientRectangle, fill, fillEnd, LinearGradientMode.ForwardDiagonal))
+                    g.FillPath(brush, path);
+            }
+            else
+            {
+                using (var brush = new SolidBrush(fill))
+                    g.FillPath(brush, path);
+            }
+        }
 
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, ForeColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
