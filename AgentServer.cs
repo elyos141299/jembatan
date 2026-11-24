@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.1\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.6.2\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -379,6 +379,7 @@ public sealed class AgentServer
                 // seperti /frame?grid=1 tapi di resolusi asli —
                 // presisi maksimal untuk target mungil.
                 bool sGrid = GetQueryParam(req.Query, "grid") == "1";
+                bool sMark = GetQueryParam(req.Query, "mark") == "1";
                 int sStep = ParseClamp(GetQueryParam(req.Query, "step"), 100, 25, 500);
                 byte[] png;
                 if (sw > 0 && sh > 0)
@@ -388,6 +389,7 @@ public sealed class AgentServer
                         using (var bmp = CaptureScreenshotRegionBitmap(sx, sy, sw, sh, out var effS))
                         {
                             if (sGrid) DrawGrid(bmp, effS, sStep);
+                            if (sMark) DrawClickMark(bmp, effS);
                             using (var ms = new MemoryStream())
                             {
                                 bmp.Save(ms, ImageFormat.Png);
@@ -396,7 +398,7 @@ public sealed class AgentServer
                         }
                     });
                 }
-                else if (sGrid)
+                else if (sGrid || sMark)
                 {
                     png = OnUi(() =>
                     {
@@ -407,7 +409,8 @@ public sealed class AgentServer
                         {
                             using (var g = Graphics.FromImage(bmp))
                                 g.CopyFromScreen(bnd.Location, Point.Empty, bnd.Size);
-                            DrawGrid(bmp, bnd, sStep);
+                            if (sGrid) DrawGrid(bmp, bnd, sStep);
+                            if (sMark) DrawClickMark(bmp, bnd);
                             using (var ms = new MemoryStream())
                             {
                                 bmp.Save(ms, ImageFormat.Png);
@@ -420,7 +423,7 @@ public sealed class AgentServer
                 {
                     png = OnUi(CaptureScreenshot);
                 }
-                _log("screenshot layar diambil" + (sw > 0 && sh > 0 ? $" (wilayah {sx},{sy} {sw}x{sh})" : "") + (sGrid ? " +grid" : ""));
+                _log("screenshot layar diambil" + (sw > 0 && sh > 0 ? $" (wilayah {sx},{sy} {sw}x{sh})" : "") + (sGrid ? " +grid" : "") + (sMark ? " +mark" : ""));
                 return new Response { ContentType = "image/png", BodyBytes = png };
             }
 
@@ -520,7 +523,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.1",
+                    ["version"] = "2.6.2",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -616,7 +619,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.6.1",
+                    ["version"] = "2.6.2",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -691,6 +694,7 @@ public sealed class AgentServer
                 // berubah) — Muse membaca koordinat klik persis
                 // dari label, bukan menebak piksel.
                 bool gridOn = GetQueryParam(req.Query, "grid") == "1";
+                bool markOn = GetQueryParam(req.Query, "mark") == "1";
                 int gridStep = ParseClamp(GetQueryParam(req.Query, "step"), 100, 25, 500);
                 byte[] jpeg;
                 if (rw > 0 && rh > 0)
@@ -698,6 +702,7 @@ public sealed class AgentServer
                     using (var bmp = CaptureRegionBitmap(new Rectangle(rx, ry, rw, rh), fw, out var effR))
                     {
                         if (gridOn) DrawGrid(bmp, effR, gridStep);
+                        if (markOn) DrawClickMark(bmp, effR);
                         jpeg = EncodeJpeg(bmp, fq);
                     }
                     _log($"bingkai wilayah diambil ({rx},{ry} {rw}x{rh} -> {fw}px, q{fq})" + (gridOn ? " +grid" : ""));
@@ -712,6 +717,7 @@ public sealed class AgentServer
                         using (var bmp = NativeInput.CaptureScreenScaled(fw))
                         {
                             if (gridOn) DrawGrid(bmp, scrB, gridStep);
+                            if (markOn) DrawClickMark(bmp, scrB);
                             jpeg = EncodeJpeg(bmp, fq);
                         }
                     }
@@ -720,6 +726,7 @@ public sealed class AgentServer
                         using (var bmp = CaptureScaledBitmap(fw))
                         {
                             if (gridOn) DrawGrid(bmp, scrB, gridStep);
+                            if (markOn) DrawClickMark(bmp, scrB);
                             jpeg = EncodeJpeg(bmp, fq);
                         }
                     }
@@ -935,16 +942,38 @@ public sealed class AgentServer
                 if (wilayah.Width <= 0 || wilayah.Height <= 0) wilayah = scr;
                 // Baca DIPERKUAT (v2.6.0): ?enhance=1 memperbesar +
                 // kontras dulu — teks kecil terbaca lebih sering.
-                bool enhanceOn = GetQueryParam(req.Query, "enhance") == "1";
+                // enhance=auto (v2.6.2): jalankan KEDUA mode
+                // dan pakai hasil yang lebih kaya kata — mode
+                // diperkuat terbukti kadang MENANG kadang KALAH
+                // dari mode biasa, jadi jangan dipaksa satu.
+                string enhParam = GetQueryParam(req.Query, "enhance") ?? "";
+                bool enhanceOn = enhParam == "1";
+                bool adaptif = enhParam == "auto";
                 OcrReader.Result hasil;
+                string modeDipakai = "normal";
                 using (var bmp = CaptureRegionBitmap(wilayah, 0, out var eff))
                 {
                     wilayah = eff;
                     try
                     {
-                        hasil = enhanceOn
-                            ? OcrReader.ReadEnhanced(bmp, eff.X, eff.Y)
-                            : OcrReader.Read(bmp, eff.X, eff.Y);
+                        if (adaptif)
+                        {
+                            var biasa = OcrReader.Read(bmp, eff.X, eff.Y);
+                            var kuat = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
+                            int skorBiasa = biasa.Words.Count * 1000 + (biasa.Text != null ? biasa.Text.Length : 0);
+                            int skorKuat = kuat.Words.Count * 1000 + (kuat.Text != null ? kuat.Text.Length : 0);
+                            if (skorKuat > skorBiasa) { hasil = kuat; modeDipakai = "enhanced"; }
+                            else { hasil = biasa; modeDipakai = "normal"; }
+                        }
+                        else if (enhanceOn)
+                        {
+                            hasil = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
+                            modeDipakai = "enhanced";
+                        }
+                        else
+                        {
+                            hasil = OcrReader.Read(bmp, eff.X, eff.Y);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -965,11 +994,13 @@ public sealed class AgentServer
                         ["h"] = wd.Rect.Height,
                     });
                 }
-                _log($"OCR wilayah {wilayah.X},{wilayah.Y} {wilayah.Width}x{wilayah.Height}: {kata.Count} kata" + (enhanceOn ? " (diperkuat)" : ""));
+                _log($"OCR wilayah {wilayah.X},{wilayah.Y} {wilayah.Width}x{wilayah.Height}: {kata.Count} kata" + (adaptif ? $" (adaptif: {modeDipakai})" : enhanceOn ? " (diperkuat)" : ""));
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["enhanced"] = enhanceOn,
+                    ["enhanced"] = modeDipakai == "enhanced",
+                    ["mode"] = modeDipakai,
+                    ["adaptive"] = adaptif,
                     ["text"] = hasil.Text,
                     ["words"] = kata,
                     ["region"] = new Dictionary<string, object>
@@ -1276,6 +1307,7 @@ public sealed class AgentServer
                                 return true;
                             });
                             _onActivity();
+                            _lastClickX = x; _lastClickY = y; _lastClickTick = Environment.TickCount64;
                             _log($"klik {x},{y} ({button}{(n > 1 ? ", " + n + "x" : "")}{(mods.Count > 0 ? ", +penahan" : "")})");
                             return Ok();
                         }
@@ -1349,10 +1381,31 @@ public sealed class AgentServer
                                 if (quMs < 200) quMs = 200;
                                 if (quMs > 60000) quMs = 60000;
                             }
+                            // Mode changePct (v2.6.2): tunggu sampai
+                            // CAKUPAN perubahan wilayah mencapai
+                            // ambang persen — lebih bermakna dari
+                            // screenChange biner untuk kejadian
+                            // bertahap (loading, animasi selesai).
+                            // {x,y,w,h,pct} — pct bawaan 5.
+                            bool hasPct = false;
+                            int pcX = 0, pcY = 0, pcW = 0, pcH = 0;
+                            double pcTarget = 5.0;
+                            if (root.TryGetProperty("changePct", out var cpEl) &&
+                                cpEl.ValueKind == JsonValueKind.Object)
+                            {
+                                hasPct = true;
+                                pcX = GetInt(cpEl, "x", 0); pcY = GetInt(cpEl, "y", 0);
+                                pcW = GetInt(cpEl, "w", 0); pcH = GetInt(cpEl, "h", 0);
+                                if (cpEl.TryGetProperty("pct", out var pctEl) &&
+                                    pctEl.ValueKind == JsonValueKind.Number)
+                                    pcTarget = pctEl.GetDouble();
+                                if (pcTarget < 0.1) pcTarget = 0.1;
+                                if (pcTarget > 100) pcTarget = 100;
+                            }
                             if (string.IsNullOrWhiteSpace(wTitle) && string.IsNullOrWhiteSpace(fPath) &&
-                                !hasChange && !hasQuiet &&
+                                !hasChange && !hasQuiet && !hasPct &&
                                 string.IsNullOrWhiteSpace(pGone) && string.IsNullOrWhiteSpace(pExists))
-                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle, filePath, screenChange, screenQuiet, processGone, atau processExists wajib diisi\"}", 400);
+                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle, filePath, screenChange, screenQuiet, processGone, processExists, atau changePct wajib diisi\"}", 400);
                             int wTimeout = GetInt(root, "timeoutMs", 30000);
                             if (wTimeout < 1000) wTimeout = 1000;
                             if (wTimeout > MaxExecTimeoutMs) wTimeout = MaxExecTimeoutMs;
@@ -1362,6 +1415,7 @@ public sealed class AgentServer
                             if (!string.IsNullOrWhiteSpace(fPath)) condParts.Add("berkas " + fPath);
                             if (hasChange) condParts.Add("layar berubah");
                             if (hasQuiet) condParts.Add("layar diam");
+                            if (hasPct) condParts.Add($"layar berubah >={pcTarget}%");
                             if (!string.IsNullOrWhiteSpace(pGone)) condParts.Add("proses " + pGone + " selesai");
                             if (!string.IsNullOrWhiteSpace(pExists)) condParts.Add("proses " + pExists + " jalan");
                             _log($"tunggu kondisi (maks {wTimeout}ms): " + string.Join(" / ", condParts));
@@ -1369,9 +1423,13 @@ public sealed class AgentServer
                             bool found = false;
                             string via = "";
                             byte[] changeBase = hasChange ? RegionHash(chX, chY, chW, chH) : null;
+                            Bitmap pctBase = null;
+                            Rectangle pctRegion = Rectangle.Empty;
+                            double pctLast = 0;
+                            if (hasPct) pctBase = CaptureRegionBitmap(new Rectangle(pcX, pcY, pcW, pcH), 0, out pctRegion);
                             byte[] quietLast = hasQuiet ? RegionHash(quX, quY, quW, quH) : null;
                             long quietSince = 0;
-                            int pollMs = (hasChange || hasQuiet) ? 250 : 500;
+                            int pollMs = (hasChange || hasQuiet || hasPct) ? 250 : 500;
                             while (wsw.ElapsedMilliseconds < wTimeout)
                             {
                                 if (!string.IsNullOrWhiteSpace(fPath) && File.Exists(fPath))
@@ -1433,9 +1491,22 @@ public sealed class AgentServer
                                         found = true; via = "screen-quiet";
                                     }
                                 }
+                                if (!found && hasPct && pctBase != null)
+                                {
+                                    using (var cur = CaptureRegionBitmap(pctRegion, 0, out var effP))
+                                    {
+                                        var bl = CompareBlocks(pctBase, cur, 32, 16, effP.X, effP.Y, out int tot);
+                                        pctLast = tot > 0 ? bl.Count * 100.0 / tot : 0;
+                                        if (pctLast >= pcTarget)
+                                        {
+                                            found = true; via = "change-pct";
+                                        }
+                                    }
+                                }
                                 if (found) break;
                                 Thread.Sleep(pollMs);
                             }
+                            if (pctBase != null) pctBase.Dispose();
                             long waited = wsw.ElapsedMilliseconds;
                             if (waited > wTimeout) waited = wTimeout;
                             _log(found ? $"kondisi ketemu via {via} setelah {waited}ms" : $"kondisi tidak ketemu ({wTimeout}ms)");
@@ -1446,14 +1517,16 @@ public sealed class AgentServer
                                 ["via"] = via,
                                 ["waitedMs"] = waited,
                             };
+                            if (hasPct) waitResp["coveragePct"] = Math.Round(pctLast, 1);
                             // Wait-and-see: sertakan gambar wilayah
                             // yang dipantau (yang berubah / yang
                             // sudah diam) supaya Muse tidak perlu
                             // satu panggilan gambar lagi.
-                            if (see && found && (via == "screen-change" || via == "screen-quiet"))
+                            if (see && found && (via == "screen-change" || via == "screen-quiet" || via == "change-pct"))
                             {
                                 var wr = via == "screen-change"
                                     ? new Rectangle(chX, chY, chW, chH)
+                                    : via == "change-pct" ? pctRegion
                                     : new Rectangle(quX, quY, quW, quH);
                                 try
                                 {
@@ -1486,6 +1559,7 @@ public sealed class AgentServer
                             int cx = item.CenterX, cy = item.CenterY;
                             OnUi(() => { NativeInput.Click(cx, cy, button); return true; });
                             _onActivity();
+                            _lastClickX = cx; _lastClickY = cy; _lastClickTick = Environment.TickCount64;
                             _log($"klik elemen UIA '{item.Name}' ({item.Type}) di {cx},{cy}");
                             return Response.JsonObject(new Dictionary<string, object>
                             {
@@ -1609,7 +1683,13 @@ public sealed class AgentServer
                                     : new Rectangle(0, 0, 1280, 720);
                                 using (var bmp = CaptureRegionBitmap(scr, 0, out var eff))
                                 {
-                                    var hasil = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
+                                    // OCR adaptif (v2.6.2): kedua mode
+                                    // dijalankan, yang lebih kaya menang.
+                                    var ocrBiasa = OcrReader.Read(bmp, eff.X, eff.Y);
+                                    var ocrKuat = OcrReader.ReadEnhanced(bmp, eff.X, eff.Y);
+                                    var hasil = (ocrKuat.Words.Count * 1000 + (ocrKuat.Text != null ? ocrKuat.Text.Length : 0)) >
+                                                (ocrBiasa.Words.Count * 1000 + (ocrBiasa.Text != null ? ocrBiasa.Text.Length : 0))
+                                        ? ocrKuat : ocrBiasa;
                                     var words = hasil.Words;
                                     string ql = q.Trim();
                                     bool phrase = ql.Contains(" ");
@@ -2515,6 +2595,43 @@ public sealed class AgentServer
     /// rata-ratanya melewati ambang. Hasil: daftar persegi
     /// blok dalam koordinat layar.
     /// </summary>
+    // Penanda klik terakhir (v2.6.2): /click & /uia/click
+    // mencatat titik + waktunya; /frame & /screenshot ?mark=1
+    // menggambar cincin di titik itu (bila < 60 detik) —
+    // Muse bisa MEMERIKSA mata kliknya sendiri sesudah
+    // mengklik, bukan sekadar percaya koordinatnya.
+    private static int _lastClickX = -1;
+    private static int _lastClickY = -1;
+    private static long _lastClickTick = 0;
+
+    /// <summary>
+    /// Gambar penanda klik terakhir: cincin merah-putih +
+    /// titik tengah di koordinat layar klik terakhir,
+    /// dipetakan ke bitmap wilayah eff (diskala sesuai
+    /// ukuran bitmap). Tidak menggambar bila klik sudah
+    /// lewat 60 detik atau titiknya di luar wilayah.
+    /// </summary>
+    private static void DrawClickMark(Bitmap bmp, Rectangle eff)
+    {
+        if (_lastClickX < 0) return;
+        if (Environment.TickCount64 - _lastClickTick > 60000) return;
+        double kx = (_lastClickX - eff.X) * (double)bmp.Width / Math.Max(1, eff.Width);
+        double ky = (_lastClickY - eff.Y) * (double)bmp.Height / Math.Max(1, eff.Height);
+        if (kx < -20 || ky < -20 || kx > bmp.Width + 20 || ky > bmp.Height + 20) return;
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var ringPutih = new Pen(Color.White, 6))
+            using (var ring = new Pen(Color.FromArgb(255, 69, 58), 3))
+            using (var titik = new SolidBrush(Color.FromArgb(255, 69, 58)))
+            {
+                g.DrawEllipse(ringPutih, (float)kx - 13, (float)ky - 13, 26, 26);
+                g.DrawEllipse(ring, (float)kx - 13, (float)ky - 13, 26, 26);
+                g.FillEllipse(titik, (float)kx - 3, (float)ky - 3, 6, 6);
+            }
+        }
+    }
+
     private static List<Rectangle> CompareBlocks(Bitmap a, Bitmap b, int block, int threshold, int offX, int offY, out int total)
     {
         int gw = Math.Max(1, (int)Math.Ceiling(a.Width / (double)block));

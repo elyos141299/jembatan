@@ -1,4 +1,4 @@
-# MuseLink v2.6.1 — catatan pengembang
+# MuseLink v2.6.2 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,25 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.6.2 (dari v2.6.1) — Push Lanjutan Penglihatan
+
+Atas perintah user 24 Nov ("setelah update coba push
+lagi") sesudah v2.6.1 terpasang:
+
+- **OCR adaptif** — /ocr?enhance=auto menjalankan mode
+  biasa + diperkuat dan memakai hasil yang lebih kaya
+  kata (respons memuat mode + adaptive). /find kini juga
+  adaptif. Latar: di v2.6.0 mode diperkuat terbukti
+  kadang kalah jumlah kata dari mode biasa.
+- **Penanda klik terakhir** — /click & /uia/click
+  mencatat titik klik; /frame & /screenshot ?mark=1
+  menggambar cincin merah-putih di titik itu (jendela
+  60 detik). Muse bisa memeriksa mata kliknya sendiri.
+- **/wait changePct** — mode tunggu baru {x,y,w,h,pct}:
+  lapor saat cakupan perubahan wilayah mencapai ambang
+  persen (via "change-pct", respons memuat coveragePct,
+  see didukung).
 
 ## Perubahan v2.6.1 (dari v2.6.0) — Pasangan Fitur Penglihatan
 
