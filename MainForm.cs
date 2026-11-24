@@ -96,6 +96,7 @@ public sealed class MainForm : Form
     private RoundedButton _serverBtn;
     private RoundedButton _settingsBtn;
     private Label _aksesLabel;
+    private Label _logTitleLabel;
     private bool _logSetupDone;
     private bool _autoStartEnabled;
 
@@ -181,14 +182,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.8.0 dimulai ===");
+            Log("=== MuseLink v2.8.1 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v2.8.0 dimulai");
+            EventLog.Add("app-start", "MuseLink v2.8.1 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -513,7 +514,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v2.8.0",
+            Text = "v2.8.1",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -598,7 +599,7 @@ public sealed class MainForm : Form
             BackColor = Panel,
             Tag = "panelbg",
         };
-        var logTitle = new Label
+        var logTitle = _logTitleLabel = new Label
         {
             Text = "LOG AKTIVITAS",
             Font = new Font("Segoe UI", 8f, FontStyle.Bold),
@@ -647,7 +648,7 @@ public sealed class MainForm : Form
         var header = _headerCard = new RoundedPanel
         {
             Dock = DockStyle.Top,
-            Height = 144,
+            Height = 158,
             FillColor = Card,
             BorderColor = Hairline,
             CornerRadius = 8,
@@ -732,7 +733,7 @@ public sealed class MainForm : Form
             BackColor = Card,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             AutoSize = true,
-            Location = new Point(60, 112),
+            Location = new Point(60, 128),
         };
         header.Controls.Add(_modeLabel);
 
@@ -756,7 +757,7 @@ public sealed class MainForm : Form
         MakeTile2(tiles, 0, 0, "RELAY", "…", out _tileRelayValue);
         MakeTile2(tiles, 0, 1, "UPTIME", "0m", out _tileUptimeValue);
         MakeTile2(tiles, 1, 0, "CAPTURE", "…", out _tileCaptureValue);
-        MakeTile2(tiles, 1, 1, "VERSI", "2.8.0", out _tileVersionValue);
+        MakeTile2(tiles, 1, 1, "VERSI", "2.8.1", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -1641,6 +1642,7 @@ public sealed class MainForm : Form
         if (_stripUptime != null) { _stripUptime.ForeColor = InkDim; _stripUptime.BackColor = Panel; }
         if (_stripLogLabel != null) { _stripLogLabel.ForeColor = InkDim; _stripLogLabel.BackColor = Panel; }
         if (_logPanel != null) _logPanel.BackColor = Panel;
+        if (_logTitleLabel != null) { _logTitleLabel.ForeColor = InkDim; _logTitleLabel.BackColor = Panel; }
         if (_logHeader != null) _logHeader.BackColor = Panel;
         if (_logHair != null) _logHair.BackColor = Hairline;
         if (_logCard != null) _logCard.BackColor = LogBg;

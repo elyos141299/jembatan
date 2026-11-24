@@ -1,4 +1,4 @@
-# MuseLink v2.8.0 — catatan pengembang
+# MuseLink v2.8.1 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,11 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.8.1 (dari v2.8.0) — Dua perbaikan visual
+
+- Label "LOG AKTIVITAS" kini field dan dicat ulang di ApplyTheme — sebelumnya warnanya tertinggal dari tema saat aplikasi mulai (cacat hanya muncul bila tema diganti saat jalan).
+- Kartu kepala 144→158px dan label mode turun ke y128: teks alamat kini membungkus 3 baris di panel 332px dan sebelumnya menimpa label "Mode: …".
 
 ## Perubahan v2.8.0 (dari v2.7.6) — ROMBAK TOTAL tampilan: gelap modern
 
