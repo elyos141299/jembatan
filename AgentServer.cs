@@ -338,7 +338,7 @@ public sealed class AgentServer
             {
                 _onActivity();
                 _log("ping — Muse mengecek koneksi");
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.0\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.1\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -450,7 +450,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.4.0",
+                    ["version"] = "2.4.1",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -517,6 +517,109 @@ public sealed class AgentServer
                     var root = doc.RootElement;
                     switch (req.Path)
                     {
+                        case "/batch":
+                        {
+                            // Rangkaian aksi dalam SATU panggilan
+                            // (v2.4.1 — "mode ngebut"): Muse mengirim
+                            // daftar aksi dan semuanya dijalankan
+                            // berurutan di sisi PC, tanpa jeda
+                            // bolak-balik jaringan di antara langkah.
+                            // Tiap aksi {"do":"click","x":..,...} —
+                            // "do" = nama endpoint tanpa garis miring
+                            // (move/click/type/key/keydown/keyup/
+                            // scroll/drag/focus/window/uia_click/
+                            // clipboard/paste/open/exec/shell/wait)
+                            // atau {"do":"sleep","ms":300} untuk jeda.
+                            // Hasil tiap aksi dikembalikan sebagai
+                            // daftar; berhenti pada galat pertama
+                            // kecuali "stopOnError":false.
+                            if (!root.TryGetProperty("actions", out var actions) ||
+                                actions.ValueKind != JsonValueKind.Array)
+                                return Response.Json("{\"ok\":false,\"error\":\"actions wajib berupa array\"}", 400);
+                            bool stopOnError = !root.TryGetProperty("stopOnError", out var soe) ||
+                                               soe.ValueKind != JsonValueKind.False;
+                            var results = new List<object>();
+                            int doneCount = 0;
+                            foreach (var action in actions.EnumerateArray())
+                            {
+                                if (doneCount >= 100)
+                                {
+                                    results.Add(new Dictionary<string, object>
+                                    {
+                                        ["do"] = "(dipotong)",
+                                        ["ok"] = false,
+                                        ["error"] = "maksimum 100 aksi per batch",
+                                    });
+                                    break;
+                                }
+                                string doName = action.ValueKind == JsonValueKind.Object
+                                    ? GetString(action, "do", "") : "";
+                                if (doName == "sleep")
+                                {
+                                    int ms = GetInt(action, "ms", 0);
+                                    if (ms < 0) ms = 0;
+                                    if (ms > 10000) ms = 10000;
+                                    Thread.Sleep(ms);
+                                    results.Add(new Dictionary<string, object>
+                                    {
+                                        ["do"] = "sleep", ["ok"] = true, ["ms"] = ms,
+                                    });
+                                    doneCount++;
+                                    continue;
+                                }
+                                if (doName == "" || doName == "batch")
+                                {
+                                    results.Add(new Dictionary<string, object>
+                                    {
+                                        ["do"] = doName, ["ok"] = false,
+                                        ["error"] = "aksi tidak dikenal / batch bersarang dilarang",
+                                    });
+                                    if (stopOnError) break;
+                                    continue;
+                                }
+                                // "uia_click" diterima sebagai alias /uia/click.
+                                string subPath = "/" + doName.Replace('_', '/');
+                                var subReq = new Request
+                                {
+                                    Method = "POST",
+                                    Path = subPath,
+                                    Query = "",
+                                    Body = action.GetRawText(),
+                                };
+                                Response subResp;
+                                try { subResp = Route(subReq); }
+                                catch (Exception ex)
+                                {
+                                    string msg = ex.Message.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                                    subResp = Response.Json(
+                                        "{\"ok\":false,\"error\":\"" + msg + "\"}", 500);
+                                }
+                                object parsed;
+                                string rawText = Encoding.UTF8.GetString(subResp.BodyBytes);
+                                try
+                                {
+                                    using (var rd = JsonDocument.Parse(rawText))
+                                        parsed = rd.RootElement.Clone();
+                                }
+                                catch { parsed = rawText; }
+                                results.Add(new Dictionary<string, object>
+                                {
+                                    ["do"] = doName,
+                                    ["status"] = subResp.Status,
+                                    ["result"] = parsed,
+                                });
+                                doneCount++;
+                                if (subResp.Status >= 400 && stopOnError) break;
+                            }
+                            _onActivity();
+                            _log($"batch: {doneCount} aksi dijalankan");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["count"] = doneCount,
+                                ["results"] = results,
+                            });
+                        }
                         case "/move":
                         {
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);

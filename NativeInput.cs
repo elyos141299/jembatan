@@ -465,29 +465,22 @@ public static class NativeInput
     public static void TypeUnicode(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
-        var batch = new List<InputEvent>(256);
-        void Flush()
-        {
-            if (batch.Count == 0) return;
-            SendInput((uint)batch.Count, batch.ToArray(), Marshal.SizeOf<InputEvent>());
-            batch.Clear();
-        }
+        // v2.4.1: SATU karakter per SendInput + jeda 15ms. Semburan
+        // ratusan event sekaligus dirusak mesin teks TSF aplikasi
+        // modern (terbukti di Notepad Windows 11: sesudah beberapa
+        // karakter, sisanya berubah jadi huruf 'i' beruntun — OS
+        // menerima semua event, aplikasinya yang kewalahan).
+        // Ritme per karakter membuat teks tersulit pun masuk persis
+        // (teruji di tempat: —, é, ✓, %, kutip tunggal+ganda).
         foreach (char c in text)
         {
             if (c == '\r') continue; // pasangan \r\n cukup satu Enter dari \n
-            if (c == '\n')
-            {
-                batch.Add(VkEvent(VkReturn, false));
-                batch.Add(VkEvent(VkReturn, true));
-            }
-            else
-            {
-                batch.Add(UnicodeEvent(c, false));
-                batch.Add(UnicodeEvent(c, true));
-            }
-            if (batch.Count >= 200) Flush();
+            InputEvent[] pair = c == '\n'
+                ? new[] { VkEvent(VkReturn, false), VkEvent(VkReturn, true) }
+                : new[] { UnicodeEvent(c, false), UnicodeEvent(c, true) };
+            SendInput(2, pair, Marshal.SizeOf<InputEvent>());
+            Thread.Sleep(15);
         }
-        Flush();
     }
 
     /// <summary>

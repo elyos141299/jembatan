@@ -52,17 +52,16 @@ public sealed class MainForm : Form
     private Label _modeLabel;
     private bool _claudeSeen;
 
-    // Panel chat Muse (v2.2): SplitContainer membagi jendela —
-    // Panel1 (kiri) = tampilan lama, Panel2 (kanan) = chat WebView2.
+    // Panel chat Muse: SplitContainer membagi jendela — Panel1
+    // (kiri) = panel kendali, Panel2 (kanan) = chat WebView2.
+    // Sejak v2.4.1 chat MENYATU permanen (permintaan pengguna):
+    // tidak ada tombol buka/tutup — jendela selalu tampil lebar
+    // dengan chat langsung di sebelah panel kendali.
     private SplitContainer _split;
-    private RoundedButton _chatButton;
     private RoundedPanel _chatBody;
     private Label _chatErrorLabel;
     private WebView2 _webView;
-    private bool _chatOpen;
     private bool _chatInitializing;
-    private Size _compactSize;
-    private Size _compactMinimumSize;
 
     // System tray: tombol X hanya menyembunyikan jendela ke tray —
     // layanan tetap berjalan. Keluar sungguhan hanya lewat menu tray.
@@ -73,9 +72,11 @@ public sealed class MainForm : Form
     public MainForm()
     {
         Text = "MuseLink";
-        Width = 660;
-        Height = 540;
-        MinimumSize = new Size(520, 420);
+        // v2.4.1: jendela SELALU lebar — panel kendali + chat
+        // menyatu dalam satu jendela sejak mulai.
+        Width = 1280;
+        Height = 800;
+        MinimumSize = new Size(980, 640);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Bg;
         ForeColor = Ink;
@@ -90,8 +91,17 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.4.0 dimulai ===");
+            Log("=== MuseLink v2.4.1 dimulai ===");
             InitStartOptions();
+            // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
+            // panel kanan selalu tampil di sebelah panel kendali
+            // sejak aplikasi mulai, tanpa tombol buka/tutup.
+            // Lebar panel kiri dikunci ±380px, lalu WebView2 chat
+            // langsung dibuat & dibuka ke muse.ai. InitChatAsync
+            // menelan semua galatnya sendiri (panel menampilkan
+            // pesan galat; jembatan utama tidak terganggu).
+            if (_split.Width > 480) _split.SplitterDistance = 380;
+            _ = InitChatAsync();
             try
             {
                 _server.Start();
@@ -203,19 +213,19 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        // Tata letak v2.2: SplitContainer — Panel1 (kiri, ±380px) berisi
-        // semua yang sudah ada (kepala, log, tombol PUTUSKAN); Panel2
-        // (kanan) berisi panel chat Muse dan AWALNYA disembunyikan
-        // (Panel2Collapsed) sehingga jendela tampil ringkas seperti dulu.
-        // SplitterDistance sengaja TIDAK diatur di sini (lebar kontrol
-        // belum final saat konstruksi) — diatur saat chat pertama dibuka.
+        // Tata letak: SplitContainer — Panel1 (kiri, ±380px) berisi
+        // panel kendali (kepala, log, tombol PUTUSKAN); Panel2
+        // (kanan) berisi panel chat Muse yang MENYATU permanen
+        // sejak v2.4.1 (tidak lagi disembunyikan/dibuka via tombol).
+        // SplitterDistance diatur di Load (lebar final diketahui
+        // setelah jendela terbentuk).
         _split = new SplitContainer
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
             FixedPanel = FixedPanel.Panel1,
             IsSplitterFixed = true,
-            Panel2Collapsed = true,
+            Panel2Collapsed = false,
             BackColor = Bg,
         };
         Controls.Add(_split);
@@ -358,7 +368,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.4.0",
+            Text = "v2.4.1",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -369,20 +379,9 @@ public sealed class MainForm : Form
         };
         headerRight.Controls.Add(version);
 
-        // Tombol buka/tutup panel chat Muse (v2.2) — pil biru di
-        // pojok kanan atas, sejajar garis judul di kiri.
-        _chatButton = new RoundedButton
-        {
-            Text = "💬 Chat Muse",
-            Font = new Font("Segoe UI", 9.5f),
-            BackColor = Accent,
-            ForeColor = Color.White,
-            CornerRadius = 15,
-            Size = new Size(108, 30),
-            Location = new Point(4, 0),
-        };
-        _chatButton.Click += ChatToggleClicked;
-        headerRight.Controls.Add(_chatButton);
+        // (Tombol "💬 Chat Muse" DIHAPUS di v2.4.1: chat kini
+        // menyatu permanen di sebelah panel — tidak ada lagi yang
+        // perlu dibuka lewat tombol.)
 
         // Jalan otomatis saat Windows menyala (v2.1) — sejak v2.3.3
         // berupa saklar ala iOS + label di kanannya. Status awalnya
@@ -449,13 +448,13 @@ public sealed class MainForm : Form
         BuildChatPane();
     }
 
-    // ---------- Panel chat Muse (v2.2) ----------
+    // ---------- Panel chat Muse ----------
     // Panel kanan berisi situs muse.ai yang ditanam lewat WebView2 —
     // isinya website Muse yang sama persis seperti di browser; user
     // login dengan akunnya SENDIRI di panel ini, aplikasi tidak pernah
-    // menyentuh kredensial. WebView2 dibuat MALAS (saat chat pertama
-    // dibuka) supaya start aplikasi tetap cepat dan jembatan tetap
-    // jalan penuh walau WebView2 gagal/runtimenya tidak ada.
+    // menyentuh kredensial. Sejak v2.4.1 panel ini MENYATU permanen
+    // (dibuat saat Load) — jembatan tetap jalan penuh walau WebView2
+    // gagal/runtimenya tidak ada (panel hanya menampilkan galat).
 
     // UA Chrome desktop terkini — tanpa ini sebagian penyedia login
     // menolak browser tertanam.
@@ -551,50 +550,6 @@ public sealed class MainForm : Form
         root.Controls.Add(head);
 
         _split.Panel2.Controls.Add(root);
-    }
-
-    private async void ChatToggleClicked(object sender, EventArgs e)
-    {
-        try
-        {
-            if (_chatOpen) CloseChatPane();
-            else await OpenChatPaneAsync();
-        }
-        catch (Exception ex)
-        {
-            if (!IsDisposed) Log("Panel chat gagal dibuka: " + ex.Message);
-        }
-    }
-
-    private async Task OpenChatPaneAsync()
-    {
-        _chatOpen = true;
-
-        // Ingat ukuran ringkas, lalu lebarkan jendela untuk panel chat.
-        _compactSize = Size;
-        _compactMinimumSize = MinimumSize;
-        MinimumSize = new Size(980, 640);
-        Size = new Size(Math.Max(Width, 1280), Math.Max(Height, 800));
-        var area = Screen.FromControl(this).WorkingArea;
-        Location = new Point(
-            area.X + Math.Max(0, (area.Width - Width) / 2),
-            area.Y + Math.Max(0, (area.Height - Height) / 2));
-
-        if (_split.Width > 480) _split.SplitterDistance = 380;
-        _split.Panel2Collapsed = false;
-
-        if (_webView == null && !_chatInitializing)
-            await InitChatAsync();
-    }
-
-    private void CloseChatPane()
-    {
-        _chatOpen = false;
-        _split.Panel2Collapsed = true;
-        // WebView TIDAK dibuang — cukup disembunyikan bersama panelnya,
-        // supaya membuka lagi cepat dan sesi login tetap awet.
-        MinimumSize = _compactMinimumSize;
-        if (_compactSize.Width > 0) Size = _compactSize;
     }
 
     private async Task InitChatAsync()

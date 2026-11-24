@@ -1,4 +1,4 @@
-# MuseLink v2.4.0 — catatan pengembang
+# MuseLink v2.4.1 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -57,12 +57,32 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `GET /frame?w=&q=` | — | JPEG bingkai layar terkompresi (binary `image/jpeg`) — lebar maks `w` (bawaan 1280, 320–1920), kualitas `q` (bawaan 70, 30–95); jalur lihat instan, lebih ringan dari `/screenshot` |
 | `POST /keydown` / `POST /keyup` | `{key}` | `{ok:true}` — tahan/lepas satu tombol (`CTRL`, `SHIFT`, `ALT`, `WIN`, huruf/angka, `F1`–`F12`, arah, dst.) untuk kombinasi lintas perintah |
 | `POST /wait` | `{windowTitle?, filePath?, timeoutMs?}` | `{ok, found, via, waitedMs}` — tunggu di sisi server (cek tiap 500ms) sampai jendela berjudul itu muncul atau berkas itu ada; timeout bawaan 30 dtk, maks 300 dtk |
+| `POST /batch` | `{actions:[{do, ...}], stopOnError?}` | `{ok, count, results}` — rangkaian aksi dijalankan berurutan di sisi PC dalam SATU panggilan (v2.4.1, "mode ngebut"); `do` = nama endpoint POST tanpa garis miring (`uia_click` = `/uia/click`) atau `sleep` {ms}; maks 100 aksi; berhenti pada galat pertama kecuali `stopOnError:false` |
 | `POST /open` | `{path}` | `{ok:true}` — `Process.Start` dengan shell |
 | `POST /upload?path=<urlencoded>` | badan mentah (bukan JSON) | `{ok:true, bytes}` — badan ditulis jadi berkas di `path`; folder induk dibuat bila belum ada |
 
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.4.1 (dari v2.4.0) — "Ketik Andal + Mode Ngebut"
+
+- **Fix /type**: ketikan kini dikirim SATU karakter per SendInput
+  dengan jeda 15ms. Semburan ratusan event sekaligus terbukti
+  dirusak mesin teks TSF aplikasi modern (di Notepad Windows 11
+  sisa karakter berubah jadi 'i' beruntun — ditemukan saat uji
+  menyeluruh v2.4.0; OS menerima semua event, aplikasi yang
+  kewalahan). Ritme per karakter: teks tersulit (—, é, ✓, %,
+  kutip campur) masuk 100% persis.
+- **Endpoint `POST /batch`**: rangkaian aksi (fokus→klik→ketik→
+  tombol→…) berjalan berurutan di sisi PC dalam satu panggilan —
+  menghilangkan jeda bolak-balik jaringan antar langkah, sumber
+  utama kesan "gerakan Muse lambat".
+- **Chat Muse MENYATU permanen** (permintaan pengguna): tombol
+  "💬 Chat Muse" DIHAPUS — tidak ada lagi buka/tutup panel.
+  Jendela selalu tampil lebar (1280×800, min 980×640): panel
+  kendali di kiri (±380px), chat muse.ai langsung termuat di
+  kanan sejak aplikasi mulai, dalam satu jendela utuh.
 
 ## Perubahan v2.4.0 (dari v2.3.5) — "Operasi PC Maksimal"
 
