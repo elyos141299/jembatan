@@ -28,8 +28,12 @@ jobs:
           $dest = "$env:RUNNER_TEMP\tess-inst"
           Start-Process -FilePath $setup -ArgumentList '/S', "/D=$dest" -Wait
           New-Item -ItemType Directory -Force -Path "publish\tesseract\tessdata" | Out-Null
-          Copy-Item "$dest\tesseract.exe" "publish\tesseract\"
-          Copy-Item "$dest\*.dll" "publish\tesseract\" -ErrorAction SilentlyContinue
+          $exe = Get-ChildItem $dest -Recurse -Filter tesseract.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { $exe = Get-ChildItem "C:\Program Files\Tesseract-OCR" -Recurse -Filter tesseract.exe -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          if (-not $exe) { throw "tesseract.exe tidak ditemukan sesudah install senyap" }
+          $srcDir = $exe.Directory.FullName
+          Copy-Item $exe.FullName "publish\tesseract\"
+          Copy-Item "$srcDir\*.dll" "publish\tesseract\" -ErrorAction SilentlyContinue
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata" -OutFile "publish\tesseract\tessdata\eng.traineddata"
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/ind.traineddata" -OutFile "publish\tesseract\tessdata\ind.traineddata"
           $he = (Get-FileHash "publish\tesseract\tessdata\eng.traineddata" -Algorithm SHA256).Hash.ToLower()
