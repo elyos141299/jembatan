@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
+using System.Globalization;
 using System.Security.Principal;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -100,6 +102,81 @@ internal static class Settings
                               ?? Registry.CurrentUser.CreateSubKey(KeyPath))
             {
                 key?.SetValue(UserStoppedValueName, value ? 1 : 0, RegistryValueKind.DWord);
+            }
+        }
+    }
+
+    private const string WindowBoundsValueName = "WindowBounds";
+    private const string WindowMaximizedValueName = "WindowMaximized";
+
+    /// <summary>
+    /// Ukuran & posisi jendela MuseLink terakhir (v2.4.2), disimpan
+    /// sebagai teks "X,Y,Lebar,Tinggi" (DWORD terpisah untuk keadaan
+    /// dimaksimalkan). Null bila belum pernah disimpan / rusak —
+    /// pemanggil memakai ukuran bawaan.
+    /// </summary>
+    public static Rectangle? WindowBounds
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, false))
+                {
+                    if (key?.GetValue(WindowBoundsValueName) is string v)
+                    {
+                        var parts = v.Split(',');
+                        if (parts.Length == 4
+                            && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int x)
+                            && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int y)
+                            && int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out int w)
+                            && int.TryParse(parts[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out int h)
+                            && w >= 400 && h >= 300)
+                            return new Rectangle(x, y, w, h);
+                    }
+                }
+            }
+            catch { /* abaikan — pakai bawaan */ }
+            return null;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, true)
+                              ?? Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                if (value.HasValue)
+                {
+                    var r = value.Value;
+                    key?.SetValue(WindowBoundsValueName,
+                        string.Format(CultureInfo.InvariantCulture, "{0},{1},{2},{3}", r.X, r.Y, r.Width, r.Height),
+                        RegistryValueKind.String);
+                }
+            }
+        }
+    }
+
+    /// <summary>True bila jendela terakhir ditinggalkan dalam keadaan dimaksimalkan.</summary>
+    public static bool WindowMaximized
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, false))
+                {
+                    if (key?.GetValue(WindowMaximizedValueName) is int v)
+                        return v != 0;
+                }
+            }
+            catch { /* abaikan */ }
+            return false;
+        }
+        set
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, true)
+                              ?? Registry.CurrentUser.CreateSubKey(KeyPath))
+            {
+                key?.SetValue(WindowMaximizedValueName, value ? 1 : 0, RegistryValueKind.DWord);
             }
         }
     }

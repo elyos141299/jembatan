@@ -1,4 +1,4 @@
-# MuseLink v2.4.1 — catatan pengembang
+# MuseLink v2.4.2 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -64,6 +64,16 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.4.2 (dari v2.4.1) — "Panel Rapi + Log Bersih"
+
+- **Kepala panel chat DIHAPUS** (permintaan user): tulisan "Chat Muse — login…" dan bilah alat Muat Ulang / Buka di Chrome hilang — chat muse.ai mengisi kartu sampai ke atas. Muat ulang tetap bisa lewat klik kanan di dalam chat (menu bawaan WebView2).
+- **Indikator "Memuat chat Muse…"**: tampil selama halaman chat pertama dimuat, hilang sendiri saat selesai — tidak ada lagi layar putih kosong.
+- **Log dibersihkan**: `/ping` dan `/frame` tidak lagi dicatat di log jendela maupun `/lastops` (cek latar yang sering — dulu membanjiri keduanya); baris log dipotong rapi pada 140 huruf.
+- **Batang gulir log disembunyikan** (permintaan user): log tetap bisa digulir roda mouse dan selalu menggulir ke entri terbaru.
+- **`/batch` + `shotAfter`** (performa A): respons batch bisa ditutup bingkai JPEG layar terkini (base64, `shotWidth`/`shotQuality`) — Muse melihat hasil rangkaiannya tanpa panggilan motret terpisah.
+- **`/wait` mode layar** (performa B): `screenChange {x,y,w,h}` menunggu piksel wilayah berubah; `screenQuiet {x,y,w,h,quietMs}` menunggu wilayah diam selama quietMs. Pemeriksaan di sisi PC tiap 250ms memakai hash wilayah yang dikecilkan.
+- **Ingat ukuran & posisi jendela**: MuseLink dibuka lagi persis seperti ditinggalkan (registry `WindowBounds`/`WindowMaximized`; batas yang tidak lagi terlihat di layar diabaikan).
 
 ## Perubahan v2.4.1 (dari v2.4.0) — "Ketik Andal + Mode Ngebut"
 

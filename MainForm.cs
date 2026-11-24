@@ -60,6 +60,7 @@ public sealed class MainForm : Form
     private SplitContainer _split;
     private RoundedPanel _chatBody;
     private Label _chatErrorLabel;
+    private Label _chatLoadingLabel;
     private WebView2 _webView;
     private bool _chatInitializing;
 
@@ -74,10 +75,23 @@ public sealed class MainForm : Form
         Text = "MuseLink";
         // v2.4.1: jendela SELALU lebar — panel kendali + chat
         // menyatu dalam satu jendela sejak mulai.
+        // v2.4.2: ukuran & posisi terakhir DIPULIHKAN dari registry
+        // (keputusan user "gas semua") — jendela dibuka lagi persis
+        // seperti ditinggalkan. Batas yang tersimpan hanya dipakai
+        // bila masih cukup terlihat di salah satu layar; selain itu
+        // jatuh ke bawaan 1280x800 di tengah layar.
         Width = 1280;
         Height = 800;
         MinimumSize = new Size(980, 640);
         StartPosition = FormStartPosition.CenterScreen;
+        var savedBounds = Settings.WindowBounds;
+        if (savedBounds.HasValue && IsMostlyOnScreen(savedBounds.Value))
+        {
+            StartPosition = FormStartPosition.Manual;
+            Bounds = savedBounds.Value;
+            if (Settings.WindowMaximized)
+                WindowState = FormWindowState.Maximized;
+        }
         BackColor = Bg;
         ForeColor = Ink;
         Font = new Font("Segoe UI", 10f);
@@ -91,7 +105,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.4.1 dimulai ===");
+            Log("=== MuseLink v2.4.2 dimulai ===");
             InitStartOptions();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
@@ -195,6 +209,7 @@ public sealed class MainForm : Form
     // Manager) serta jalan Keluar dari tray dibiarkan lewat.
     private void OnMainFormClosing(object sender, FormClosingEventArgs e)
     {
+        SaveWindowBounds();
         if (_exitRequested) return;
         if (e.CloseReason != CloseReason.UserClosing) return;
 
@@ -209,6 +224,40 @@ public sealed class MainForm : Form
                 "MuseLink tetap aktif di system tray. Klik ganda ikon tray untuk membuka lagi, atau klik kanan lalu pilih Keluar untuk berhenti total.",
                 ToolTipIcon.Info);
         }
+    }
+
+    // v2.4.2: simpan ukuran & posisi jendela agar jalan berikutnya
+    // membukanya persis seperti ditinggalkan. Keadaan dimaksimalkan
+    // disimpan sebagai bendera; batas yang disimpan selalu batas
+    // NORMAL (RestoreBounds) supaya membuka-ulang tidak aneh.
+    private void SaveWindowBounds()
+    {
+        try
+        {
+            if (WindowState == FormWindowState.Maximized)
+            {
+                Settings.WindowBounds = RestoreBounds;
+                Settings.WindowMaximized = true;
+            }
+            else if (WindowState == FormWindowState.Normal)
+            {
+                Settings.WindowBounds = Bounds;
+                Settings.WindowMaximized = false;
+            }
+        }
+        catch { /* abaikan — gagal menyimpan tidak boleh mengganggu penutupan */ }
+    }
+
+    private static bool IsMostlyOnScreen(Rectangle r)
+    {
+        foreach (var screen in Screen.AllScreens)
+        {
+            var wa = screen.WorkingArea;
+            int ix = Math.Max(0, Math.Min(r.Right, wa.Right) - Math.Max(r.Left, wa.Left));
+            int iy = Math.Max(0, Math.Min(r.Bottom, wa.Bottom) - Math.Max(r.Top, wa.Top));
+            if (ix >= 120 && iy >= 80) return true;
+        }
+        return false;
     }
 
     private void BuildLayout()
@@ -253,6 +302,10 @@ public sealed class MainForm : Form
             ForeColor = Ink,
             Font = new Font("Consolas", 9.5f),
             DetectUrls = false,
+            // v2.4.2 (permintaan user): batang gulir disembunyikan —
+            // log tetap bisa digulir roda mouse dan Log() selalu
+            // menggulir ke entri terbaru, jadi tidak ada yang hilang.
+            ScrollBars = RichTextBoxScrollBars.None,
         };
         var logCard = new RoundedPanel
         {
@@ -368,7 +421,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.4.1",
+            Text = "v2.4.2",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -461,19 +514,6 @@ public sealed class MainForm : Form
     private const string DesktopChromeUa =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-    private RoundedButton PillButton(string text)
-    {
-        return new RoundedButton
-        {
-            Text = text,
-            Font = new Font("Segoe UI", 9.5f),
-            BackColor = LightFill,
-            ForeColor = Ink,
-            CornerRadius = 15,
-            Height = 30,
-        };
-    }
-
     private void BuildChatPane()
     {
         var root = new Panel
@@ -511,43 +551,26 @@ public sealed class MainForm : Form
         };
         _chatBody.Controls.Add(_chatErrorLabel);
 
-        // Bilah alat kecil di atas kartu: tombol pil abu muda.
-        var toolbar = new Panel
+        // v2.4.2 (permintaan user): kepala panel ("Chat Muse —
+        // login…") dan bilah alat (Muat Ulang / Buka di Chrome)
+        // DIHAPUS — keduanya makan dua baris sendiri. Chat kini
+        // mengisi kartu sampai ke atas. Muat ulang tetap tersedia
+        // lewat klik kanan di dalam chat (menu bawaan WebView2).
+        // Sebagai gantinya ada label "Memuat chat Muse…" yang
+        // tampil selama halaman pertama dimuat lalu hilang sendiri
+        // (NavigationCompleted di InitChatAsync) — tidak ada lagi
+        // layar putih kosong yang terlihat seperti macet.
+        _chatLoadingLabel = new Label
         {
-            Dock = DockStyle.Top,
-            Height = 42,
-            BackColor = Bg,
-        };
-        var reload = PillButton("↻ Muat Ulang");
-        reload.Location = new Point(0, 6);
-        reload.Width = 110;
-        reload.Click += ChatReloadClicked;
-        toolbar.Controls.Add(reload);
-        var chrome = PillButton("🌐 Buka di Chrome");
-        chrome.Location = new Point(118, 6);
-        chrome.Width = 150;
-        chrome.Click += ChatOpenChromeClicked;
-        toolbar.Controls.Add(chrome);
-        root.Controls.Add(toolbar);
-
-        // Kepala panel chat.
-        var head = new Panel
-        {
-            Dock = DockStyle.Top,
-            Height = 30,
-            BackColor = Bg,
-        };
-        var headLabel = new Label
-        {
-            Text = "Chat Muse — login dengan akunmu sendiri di panel ini",
-            Font = new Font("Segoe UI", 10f),
+            Dock = DockStyle.Fill,
+            Text = "Memuat chat Muse…",
+            TextAlign = ContentAlignment.MiddleCenter,
             ForeColor = InkDim,
-            BackColor = Bg,
-            AutoSize = true,
-            Location = new Point(0, 6),
+            BackColor = Card,
+            Font = new Font("Segoe UI", 10.5f),
+            Visible = true,
         };
-        head.Controls.Add(headLabel);
-        root.Controls.Add(head);
+        _chatBody.Controls.Add(_chatLoadingLabel);
 
         _split.Panel2.Controls.Add(root);
     }
@@ -583,6 +606,12 @@ public sealed class MainForm : Form
                 e.Handled = true;
                 if (!string.IsNullOrEmpty(e.Uri)) core.Navigate(e.Uri);
             };
+            // Halaman pertama selesai dimuat → label memuat hilang.
+            core.NavigationCompleted += (s, e) =>
+            {
+                if (!IsDisposed && _chatLoadingLabel != null)
+                    _chatLoadingLabel.Visible = false;
+            };
             core.Navigate("https://muse.ai");
             Log("Panel chat Muse dibuka (muse.ai).");
         }
@@ -610,37 +639,11 @@ public sealed class MainForm : Form
 
     private void ShowChatError(string message)
     {
+        if (_chatLoadingLabel != null) _chatLoadingLabel.Visible = false;
         _chatErrorLabel.Text =
             "Panel chat gagal dibuka.\n\n" + message +
-            "\n\nChat tetap bisa dipakai lewat tombol \"🌐 Buka di Chrome\" di atas.";
+            "\n\nJembatan utama tetap berjalan normal. Coba buka ulang MuseLink; bila tetap gagal, chat bisa dibuka lewat muse.ai di browser.";
         _chatErrorLabel.Visible = true;
-    }
-
-    private async void ChatReloadClicked(object sender, EventArgs e)
-    {
-        try
-        {
-            if (_webView != null && _webView.CoreWebView2 != null)
-                _webView.CoreWebView2.Reload();
-            else if (!_chatInitializing)
-                await InitChatAsync();
-        }
-        catch (Exception ex)
-        {
-            if (!IsDisposed) Log("Gagal memuat ulang panel chat: " + ex.Message);
-        }
-    }
-
-    private void ChatOpenChromeClicked(object sender, EventArgs e)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo("https://muse.ai") { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            Log("Gagal membuka muse.ai di browser: " + ex.Message);
-        }
     }
 
     private void ToggleClicked(object sender, EventArgs e)
@@ -1024,6 +1027,11 @@ public sealed class MainForm : Form
             BeginInvoke(new Action(() => Log(message)));
             return;
         }
+        // v2.4.2: baris log dipotong rapi — perintah yang sangat
+        // panjang (mis. naskah PowerShell) tidak lagi membanjiri
+        // panel; intinya tetap terbaca.
+        if (message != null && message.Length > 140)
+            message = message.Substring(0, 140) + "…";
         string line = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message;
         _logBox.AppendText(line + Environment.NewLine);
         AppendLogToFile(line);

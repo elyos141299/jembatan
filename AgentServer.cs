@@ -313,6 +313,10 @@ public sealed class AgentServer
 
     private void RecordOp(string method, string path, int status, int ms)
     {
+        // v2.4.2: cek kesehatan (/ping) dan cek gambar cepat (/frame)
+        // tidak dicatat — keduanya panggilan latar yang sering dan
+        // hanya menggeser operasi penting keluar dari cincin 50.
+        if (path == "/ping" || path == "/frame") return;
         lock (_opsLock)
         {
             _ops.Add(new OpRecord
@@ -337,8 +341,11 @@ public sealed class AgentServer
             if (req.Method == "GET" && req.Path == "/ping")
             {
                 _onActivity();
-                _log("ping — Muse mengecek koneksi");
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.1\",\"admin\":"
+                // v2.4.2: ping TIDAK dicatat di log jendela — cek
+                // kesehatan Muse sering datang dan membanjiri log;
+                // label status "aktivitas terakhir" tetap diperbarui
+                // lewat _onActivity di atas.
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.2\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -450,7 +457,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.4.1",
+                    ["version"] = "2.4.2",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -613,12 +620,43 @@ public sealed class AgentServer
                             }
                             _onActivity();
                             _log($"batch: {doneCount} aksi dijalankan");
-                            return Response.JsonObject(new Dictionary<string, object>
+                            var batchResp = new Dictionary<string, object>
                             {
                                 ["ok"] = true,
                                 ["count"] = doneCount,
                                 ["results"] = results,
-                            });
+                            };
+                            // shotAfter (v2.4.2, usulan performa A):
+                            // respons ditutup dengan bingkai JPEG
+                            // keadaan layar TERKINI — Muse langsung
+                            // melihat hasil rangkaiannya dalam respons
+                            // yang sama, tanpa panggilan motret
+                            // terpisah. Bingkai dikirim base64.
+                            if (root.TryGetProperty("shotAfter", out var saf) &&
+                                saf.ValueKind == JsonValueKind.True)
+                            {
+                                int shotW = GetInt(root, "shotWidth", 1280);
+                                if (shotW < 320) shotW = 320;
+                                if (shotW > 1920) shotW = 1920;
+                                int shotQ = GetInt(root, "shotQuality", 70);
+                                if (shotQ < 30) shotQ = 30;
+                                if (shotQ > 95) shotQ = 95;
+                                byte[] jpeg;
+                                int iw, ih;
+                                using (var bmp = CaptureScaledBitmap(shotW))
+                                {
+                                    iw = bmp.Width; ih = bmp.Height;
+                                    jpeg = EncodeJpeg(bmp, shotQ);
+                                }
+                                batchResp["frame"] = new Dictionary<string, object>
+                                {
+                                    ["mime"] = "image/jpeg",
+                                    ["width"] = iw,
+                                    ["height"] = ih,
+                                    ["b64"] = Convert.ToBase64String(jpeg),
+                                };
+                            }
+                            return Response.JsonObject(batchResp);
                         }
                         case "/move":
                         {
@@ -680,17 +718,54 @@ public sealed class AgentServer
                             // Muse tidak perlu bolak-balik bertanya.
                             string wTitle = GetString(root, "windowTitle", "");
                             string fPath = GetString(root, "filePath", "");
-                            if (string.IsNullOrWhiteSpace(wTitle) && string.IsNullOrWhiteSpace(fPath))
-                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle atau filePath wajib diisi\"}", 400);
+                            // Mode layar (v2.4.2, usulan performa B):
+                            // screenChange {x,y,w,h} — tunggu sampai
+                            // piksel wilayah itu BERUBAH dari keadaan
+                            // awal; screenQuiet {x,y,w,h,quietMs} —
+                            // tunggu sampai wilayah itu DIAM selama
+                            // quietMs (bawaan 1500). PC yang memantau
+                            // sendiri tiap 250ms; Muse cukup menunggu
+                            // satu laporan.
+                            bool hasChange = false, hasQuiet = false;
+                            int chX = 0, chY = 0, chW = 0, chH = 0;
+                            int quX = 0, quY = 0, quW = 0, quH = 0, quMs = 1500;
+                            if (root.TryGetProperty("screenChange", out var scEl) &&
+                                scEl.ValueKind == JsonValueKind.Object)
+                            {
+                                hasChange = true;
+                                chX = GetInt(scEl, "x", 0); chY = GetInt(scEl, "y", 0);
+                                chW = GetInt(scEl, "w", 0); chH = GetInt(scEl, "h", 0);
+                            }
+                            if (root.TryGetProperty("screenQuiet", out var sqEl) &&
+                                sqEl.ValueKind == JsonValueKind.Object)
+                            {
+                                hasQuiet = true;
+                                quX = GetInt(sqEl, "x", 0); quY = GetInt(sqEl, "y", 0);
+                                quW = GetInt(sqEl, "w", 0); quH = GetInt(sqEl, "h", 0);
+                                quMs = GetInt(sqEl, "quietMs", 1500);
+                                if (quMs < 200) quMs = 200;
+                                if (quMs > 60000) quMs = 60000;
+                            }
+                            if (string.IsNullOrWhiteSpace(wTitle) && string.IsNullOrWhiteSpace(fPath) &&
+                                !hasChange && !hasQuiet)
+                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle, filePath, screenChange, atau screenQuiet wajib diisi\"}", 400);
                             int wTimeout = GetInt(root, "timeoutMs", 30000);
                             if (wTimeout < 1000) wTimeout = 1000;
                             if (wTimeout > MaxExecTimeoutMs) wTimeout = MaxExecTimeoutMs;
                             _onActivity();
-                            _log($"tunggu kondisi (maks {wTimeout}ms): " +
-                                 (!string.IsNullOrWhiteSpace(wTitle) ? "jendela '" + wTitle + "'" : "berkas " + fPath));
+                            var condParts = new List<string>();
+                            if (!string.IsNullOrWhiteSpace(wTitle)) condParts.Add("jendela '" + wTitle + "'");
+                            if (!string.IsNullOrWhiteSpace(fPath)) condParts.Add("berkas " + fPath);
+                            if (hasChange) condParts.Add("layar berubah");
+                            if (hasQuiet) condParts.Add("layar diam");
+                            _log($"tunggu kondisi (maks {wTimeout}ms): " + string.Join(" / ", condParts));
                             var wsw = Stopwatch.StartNew();
                             bool found = false;
                             string via = "";
+                            byte[] changeBase = hasChange ? RegionHash(chX, chY, chW, chH) : null;
+                            byte[] quietLast = hasQuiet ? RegionHash(quX, quY, quW, quH) : null;
+                            long quietSince = 0;
+                            int pollMs = (hasChange || hasQuiet) ? 250 : 500;
                             while (wsw.ElapsedMilliseconds < wTimeout)
                             {
                                 if (!string.IsNullOrWhiteSpace(fPath) && File.Exists(fPath))
@@ -709,7 +784,29 @@ public sealed class AgentServer
                                     }
                                     if (found) break;
                                 }
-                                Thread.Sleep(500);
+                                if (!found && hasChange)
+                                {
+                                    var h = RegionHash(chX, chY, chW, chH);
+                                    if (!HashesEqual(h, changeBase))
+                                    {
+                                        found = true; via = "screen-change";
+                                    }
+                                }
+                                if (!found && hasQuiet)
+                                {
+                                    var h = RegionHash(quX, quY, quW, quH);
+                                    if (!HashesEqual(h, quietLast))
+                                    {
+                                        quietLast = h;
+                                        quietSince = wsw.ElapsedMilliseconds;
+                                    }
+                                    else if (wsw.ElapsedMilliseconds - quietSince >= quMs)
+                                    {
+                                        found = true; via = "screen-quiet";
+                                    }
+                                }
+                                if (found) break;
+                                Thread.Sleep(pollMs);
                             }
                             long waited = wsw.ElapsedMilliseconds;
                             if (waited > wTimeout) waited = wTimeout;
@@ -1466,6 +1563,42 @@ public sealed class AgentServer
                 return ms.ToArray();
             }
         }
+    }
+
+    /// <summary>
+    /// Hash murah piksel satu wilayah layar (v2.4.2) untuk mode
+    /// tunggu layar /wait: wilayah ditangkap lalu dikecilkan ke
+    /// lebar maks 96px sebelum di-hash — cukup peka untuk mendeteksi
+    /// perubahan tampilan, cukup ringan untuk diperiksa tiap 250ms.
+    /// Wilayah kosong/tidak valid = layar penuh.
+    /// </summary>
+    private static byte[] RegionHash(int x, int y, int w, int h)
+    {
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        var region = (w > 0 && h > 0)
+            ? Rectangle.Intersect(bounds, new Rectangle(x, y, w, h))
+            : bounds;
+        if (region.Width <= 0 || region.Height <= 0) region = bounds;
+        using (var bmp = new Bitmap(region.Width, region.Height))
+        {
+            using (var g = Graphics.FromImage(bmp))
+                g.CopyFromScreen(region.Location, Point.Empty, region.Size);
+            if (bmp.Width <= 96)
+                return HashBitmap(bmp);
+            int ph = Math.Max(1, (int)(bmp.Height * (96.0 / bmp.Width)));
+            using (var probe = new Bitmap(bmp, new Size(96, ph)))
+                return HashBitmap(probe);
+        }
+    }
+
+    private static bool HashesEqual(byte[] a, byte[] b)
+    {
+        if (a == null || b == null || a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+            if (a[i] != b[i]) return false;
+        return true;
     }
 
     // ---------- Pembantu ----------
