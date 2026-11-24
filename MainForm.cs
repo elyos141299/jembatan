@@ -90,7 +90,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.3.5 dimulai ===");
+            Log("=== MuseLink v2.4.0 dimulai ===");
             InitStartOptions();
             try
             {
@@ -358,7 +358,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.3.5",
+            Text = "v2.4.0",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,

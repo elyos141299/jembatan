@@ -1,4 +1,4 @@
-# MuseLink v2.3.5 — catatan pengembang
+# MuseLink v2.4.0 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -32,30 +32,69 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | Metode & path | Body | Hasil |
 |---|---|---|
 | `GET /ping` | — | `{ok:true, app:"jembatan", version:"2.3.5", admin}` — `admin` = hak proses saat ini |
-| `GET /screenshot` | — | PNG layar utama (binary `image/png`) |
+| `GET /screenshot` | — | PNG layar utama (binary `image/png`); wilayah potong opsional `?x=&y=&w=&h=` (v2.4.0) |
 | `GET /sysinfo` | — | `{ok, version:"2.3.5", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{title, process}]}` — jendela tingkat atas yang terlihat & berjudul |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
 | `GET /stream?w=&q=&fps=` | — | MJPEG `multipart/x-mixed-replace; boundary=frame` — lebar maks `w` (bawaan 1280, 320–1920), kualitas JPEG `q` (bawaan 60, 30–90), target `fps` (bawaan 10, 1–15); frame yang tidak berubah tidak dikirim (keepalive ±1 detik) |
 | `POST /move` | `{x, y}` | `{ok:true}` |
-| `POST /click` | `{x, y, button}` (`left`/`right`/`middle`) | `{ok:true}` |
+| `POST /click` | `{x, y, button, count?, modifiers?}` (`left`/`right`/`middle`; `count` 1–3, 2 = klik ganda; `modifiers` mis. `"ctrl,shift"` ditahan selama klik) | `{ok:true}` |
 | `POST /scroll` | `{x, y, delta}` | `{ok:true}` — delta positif = scroll ke atas (120 per "klik" roda) |
-| `POST /drag` | `{x1, y1, x2, y2, button?}` | `{ok:true}` — seret bertahap dari titik awal ke titik akhir |
-| `POST /type` | `{text}` | `{ok:true}` — teks diketik; karakter khusus SendKeys di-escape |
+| `POST /drag` | `{x1, y1, x2, y2, button?, modifiers?}` | `{ok:true}` — seret bertahap dari titik awal ke titik akhir; `modifiers` ditahan selama seret |
+| `POST /type` | `{text}` | `{ok:true}` — teks diketik lewat SendInput Unicode (v2.4.0): karakter apa pun terkirim apa adanya, baris baru = Enter |
 | `POST /key` | `{keys}` | `{ok:true}` — nama tombol (`ENTER`, `F5`, …) atau sintaks SendKeys (`^c`, `%{F4}`) |
 | `POST /clipboard` | `{text}` | `{ok:true}` — isi clipboard diganti teks ini (log hanya mencatat panjangnya) |
 | `POST /paste` | `{text}` | `{ok:true}` — clipboard diisi teks lalu Ctrl+V ditekan: cara tercepat memasukkan teks panjang |
 | `POST /focus` | `{title}` | `{ok:true, focused}` — bawa jendela yang judulnya mengandung `title` (tidak peka huruf besar/kecil) ke depan; 404 bila tidak ada |
-| `POST /shell` | `{command, timeoutMs?}` | `{ok, exitCode, stdout}` — terminal PERSISTEN (satu `powershell.exe` berumur panjang): folder kerja & variabel bertahan antar panggilan; timeout (bawaan 60 dtk, maks 300 dtk) → `{ok:false, timeout:true, restarted:true, stdout}` dan shell dibuat ulang |
+| `POST /shell` | `{command, timeoutMs?}` atau `{scriptB64, timeoutMs?}` (script PowerShell utuh ter-Base64 UTF-8, v2.4.0) | `{ok, exitCode, stdout}` — terminal PERSISTEN (satu `powershell.exe` berumur panjang): folder kerja & variabel bertahan antar panggilan; timeout (bawaan 60 dtk, maks 300 dtk) → `{ok:false, timeout:true, restarted:true, stdout}` dan shell dibuat ulang |
 | `POST /shell/restart` | — | `{ok:true}` — bunuh + buat ulang shell persisten |
-| `POST /exec` | `{command, args, timeoutMs?}` | `{ok, exitCode, timeout, stdout, stderr}` — timeout default 60 dtk (maks 300 dtk via `timeoutMs`), keluaran dipotong 100.000 karakter |
+| `POST /exec` | `{command, args, timeoutMs?}` atau `{scriptB64, timeoutMs?}` | `{ok, exitCode, timeout, stdout, stderr}` — timeout default 60 dtk (maks 300 dtk via `timeoutMs`), keluaran dipotong 100.000 karakter; `scriptB64` = script PowerShell utuh ter-Base64 (UTF-8) dijalankan lewat `-EncodedCommand`, kebal kerusakan tanda kutip (v2.4.0) |
+| `GET /uia?max=` | — | `{ok, window, count, elements:[{i, name, type, x, y, w, h, enabled}]}` — peta elemen interaktif jendela aktif lewat UI Automation (v2.4.0); `max` bawaan 120 (10–400) |
+| `POST /uia/click` | `{index}` atau `{name}` (+ `button?`) | `{ok, clicked, type, x, y}` — klik titik tengah elemen hasil pindai `/uia` terakhir; 404 bila tidak ketemu |
+| `POST /window` | `{title, action}` (`close`/`minimize`/`maximize`/`restore`) | `{ok, window, action}` — kendali jendela yang judulnya mengandung `title`; 404 bila tidak ada |
+| `GET /lastops` | — | `{ok, ops:[{seq, time, method, path, status, ms}]}` — 50 operasi Route terakhir, terbaru dulu (gelombang 2): cek anti-ambiguitas setelah koneksi putus |
+| `GET /frame?w=&q=` | — | JPEG bingkai layar terkompresi (binary `image/jpeg`) — lebar maks `w` (bawaan 1280, 320–1920), kualitas `q` (bawaan 70, 30–95); jalur lihat instan, lebih ringan dari `/screenshot` |
+| `POST /keydown` / `POST /keyup` | `{key}` | `{ok:true}` — tahan/lepas satu tombol (`CTRL`, `SHIFT`, `ALT`, `WIN`, huruf/angka, `F1`–`F12`, arah, dst.) untuk kombinasi lintas perintah |
+| `POST /wait` | `{windowTitle?, filePath?, timeoutMs?}` | `{ok, found, via, waitedMs}` — tunggu di sisi server (cek tiap 500ms) sampai jendela berjudul itu muncul atau berkas itu ada; timeout bawaan 30 dtk, maks 300 dtk |
 | `POST /open` | `{path}` | `{ok:true}` — `Process.Start` dengan shell |
 | `POST /upload?path=<urlencoded>` | badan mentah (bukan JSON) | `{ok:true, bytes}` — badan ditulis jadi berkas di `path`; folder induk dibuat bila belum ada |
 
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.4.0 (dari v2.3.5) — "Operasi PC Maksimal"
+
+Murni memperkuat jalur kendali Muse; tampilan aplikasi tidak
+berubah sama sekali.
+
+- **Peta elemen UI Automation**: `GET /uia` memindai jendela aktif
+  dan mengembalikan elemen interaktifnya (nama, tipe, kotak batas);
+  `POST /uia/click` mengklik elemen berdasarkan indeks/nama —
+  menggantikan tebak koordinat dari screenshot.
+- **Klik ganda/tiga**: `POST /click` menerima `count` 1–3.
+- **Ketik Unicode**: `POST /type` kini memakai SendInput
+  KEYEVENTF_UNICODE — stabil di semua aplikasi & karakter.
+- **Script terenkode**: `POST /exec` & `POST /shell` menerima
+  `scriptB64` (script PowerShell utuh ter-Base64 UTF-8) — perintah
+  kompleks tidak lagi rusak di rantai tanda kutip.
+- **Screenshot wilayah**: `GET /screenshot?x=&y=&w=&h=` memotong
+  wilayah langsung dari sumbernya.
+- **Kendali jendela**: `POST /window` — close/minimize/maximize/
+  restore jendela berdasarkan judul.
+- **Gelombang 2 — catatan anti-ambiguitas**: `GET /lastops`
+  mencatat 50 operasi terakhir (dicatat sebelum respons ditulis,
+  jadi tetap ada walau koneksi putus saat pengiriman).
+- **Gelombang 2 — klik penahan & tahan tombol**: `modifiers` di
+  `/click` & `/drag`, plus `POST /keydown` / `POST /keyup`.
+- **Gelombang 2 — info sistem diperluas**: `/sysinfo` kini memuat
+  cpuPercent, ramPercent, ramTotalMb, diskFreeGb, diskTotalGb,
+  idleSec (detik sejak input terakhir user).
+- **Gelombang 2 — bingkai instan**: `GET /frame` = JPEG
+  terkompresi untuk lingkaran lihat-klik yang rapat.
+- **Gelombang 2 — tunggu kondisi**: `POST /wait` menunggu jendela/
+  berkas di sisi server.
 
 ## Perubahan v2.3.5 (dari v2.3.4)
 

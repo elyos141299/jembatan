@@ -116,6 +116,7 @@ public sealed class AgentServer
     {
         public string Method;
         public string Path;
+        public string Query; // query string mentah ("" bila tidak ada) — sejak v2.4.0
         public string Body;
     }
 
@@ -175,7 +176,13 @@ public sealed class AgentServer
                 }
 
                 string body = ReadBody(stream, head.ContentLength);
-                var resp = Route(new Request { Method = head.Method, Path = head.Path, Body = body });
+                var sw = Stopwatch.StartNew();
+                var resp = Route(new Request { Method = head.Method, Path = head.Path, Query = head.Query ?? "", Body = body });
+                sw.Stop();
+                // Catat operasi SETELAH Route selesai tetapi SEBELUM
+                // respons ditulis — bila koneksi putus saat menulis,
+                // catatannya sudah ada untuk dicek lewat /lastops.
+                RecordOp(head.Method, head.Path, resp.Status, (int)sw.ElapsedMilliseconds);
                 WriteResponse(stream, resp);
             }
             catch
@@ -282,6 +289,45 @@ public sealed class AgentServer
         stream.Flush();
     }
 
+    // ---------- Catatan operasi terakhir (v2.4.0 gelombang 2) ----------
+    // Cincin 50 operasi terakhir yang lewat Route: nomor urut, jam,
+    // metode, path, status HTTP, durasi. Gunanya anti-ambiguitas —
+    // setelah koneksi putus di tengah perintah, Muse bisa mengecek
+    // lewat GET /lastops apakah perintahnya sempat dijalankan,
+    // tanpa menebak. (/file, /stream, /upload tidak lewat Route dan
+    // tidak tercatat di sini; ketiganya tercatat di log berkas.)
+
+    private sealed class OpRecord
+    {
+        public long Seq;
+        public string Time;
+        public string Method;
+        public string Path;
+        public int Status;
+        public int Ms;
+    }
+
+    private readonly List<OpRecord> _ops = new List<OpRecord>();
+    private readonly object _opsLock = new object();
+    private long _opSeq;
+
+    private void RecordOp(string method, string path, int status, int ms)
+    {
+        lock (_opsLock)
+        {
+            _ops.Add(new OpRecord
+            {
+                Seq = ++_opSeq,
+                Time = DateTime.Now.ToString("HH:mm:ss"),
+                Method = method,
+                Path = path,
+                Status = status,
+                Ms = ms,
+            });
+            if (_ops.Count > 50) _ops.RemoveRange(0, _ops.Count - 50);
+        }
+    }
+
     // ---------- Routing ----------
 
     private Response Route(Request req)
@@ -292,16 +338,65 @@ public sealed class AgentServer
             {
                 _onActivity();
                 _log("ping — Muse mengecek koneksi");
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.3.5\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.4.0\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
             if (req.Method == "GET" && req.Path == "/screenshot")
             {
                 _onActivity();
-                var png = OnUi(CaptureScreenshot);
-                _log("screenshot layar diambil");
+                // Wilayah potong opsional (v2.4.0): ?x=&y=&w=&h= —
+                // tanpa w/h hasilnya layar penuh seperti biasa.
+                int sx = ParseClamp(GetQueryParam(req.Query, "x"), 0, 0, 7680);
+                int sy = ParseClamp(GetQueryParam(req.Query, "y"), 0, 0, 4320);
+                int sw = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
+                int sh = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
+                var png = (sw > 0 && sh > 0)
+                    ? OnUi(() => CaptureScreenshotRegion(sx, sy, sw, sh))
+                    : OnUi(CaptureScreenshot);
+                _log("screenshot layar diambil" + (sw > 0 && sh > 0 ? $" (wilayah {sx},{sy} {sw}x{sh})" : ""));
                 return new Response { ContentType = "image/png", BodyBytes = png };
+            }
+
+            if (req.Method == "GET" && req.Path == "/uia")
+            {
+                _onActivity();
+                // Peta elemen interaktif jendela aktif (v2.4.0) —
+                // klik presisinya lewat POST /uia/click.
+                int max = ParseClamp(GetQueryParam(req.Query, "max"), 120, 10, 400);
+                var items = OnUi(() => UiaScan.ScanForeground(max));
+                var list = new List<Dictionary<string, object>>();
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var it = items[i];
+                    list.Add(new Dictionary<string, object>
+                    {
+                        ["i"] = i,
+                        ["name"] = it.Name,
+                        ["type"] = it.Type,
+                        ["x"] = it.Rect.X,
+                        ["y"] = it.Rect.Y,
+                        ["w"] = it.Rect.Width,
+                        ["h"] = it.Rect.Height,
+                        ["enabled"] = it.Enabled,
+                    });
+                }
+                var fgTitle = "";
+                try
+                {
+                    var fg = OnUi(NativeInput.ForegroundHandle);
+                    foreach (var w in OnUi(NativeInput.ListWindows))
+                        if (w.Handle == fg) { fgTitle = w.Title; break; }
+                }
+                catch { /* judul jendela depan hanya keterangan */ }
+                _log($"peta UIA diminta ({list.Count} elemen)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["window"] = fgTitle,
+                    ["count"] = list.Count,
+                    ["elements"] = list,
+                });
             }
 
             if (req.Method == "GET" && req.Path == "/clipboard")
@@ -348,18 +443,71 @@ public sealed class AgentServer
                 var bounds = Screen.PrimaryScreen != null
                     ? Screen.PrimaryScreen.Bounds
                     : new Rectangle(0, 0, 0, 0);
+                // Metrik kesehatan PC (v2.4.0 gelombang 2) — diukur
+                // di thread koneksi ini (±250ms untuk cuplikan CPU).
+                var met = NativeInput.SystemMetrics();
                 _log("info sistem diminta");
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.3.5",
+                    ["version"] = "2.4.0",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
                     ["screen"] = bounds.Width + "x" + bounds.Height,
                     ["uptimeSec"] = (int)(Environment.TickCount64 / 1000),
                     ["jembatanPort"] = Port,
+                    ["cpuPercent"] = met.CpuPercent,
+                    ["ramPercent"] = met.RamPercent,
+                    ["ramTotalMb"] = met.RamTotalMb,
+                    ["diskFreeGb"] = met.DiskFreeGb,
+                    ["diskTotalGb"] = met.DiskTotalGb,
+                    ["idleSec"] = met.IdleSec,
                 });
+            }
+
+            if (req.Method == "GET" && req.Path == "/lastops")
+            {
+                // Tanpa _onActivity/_log berlebihan: ini jalur cek
+                // pasca-putus, isinya catatan operasi Route terakhir.
+                List<OpRecord> snap;
+                lock (_opsLock) { snap = new List<OpRecord>(_ops); }
+                snap.Reverse();
+                var list = new List<Dictionary<string, object>>();
+                foreach (var op in snap)
+                {
+                    list.Add(new Dictionary<string, object>
+                    {
+                        ["seq"] = op.Seq,
+                        ["time"] = op.Time,
+                        ["method"] = op.Method,
+                        ["path"] = op.Path,
+                        ["status"] = op.Status,
+                        ["ms"] = op.Ms,
+                    });
+                }
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["ops"] = list,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/frame")
+            {
+                _onActivity();
+                // Bingkai instan (v2.4.0 gelombang 2): tangkapan JPEG
+                // terkompresi & diperkecil — jauh lebih ringan dari
+                // PNG layar penuh /screenshot untuk lingkaran
+                // lihat-klik yang rapat. BitBlt tidak butuh thread UI
+                // (pelajaran dari /stream v2.1).
+                int fw = ParseClamp(GetQueryParam(req.Query, "w"), 1280, 320, 1920);
+                int fq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
+                byte[] jpeg;
+                using (var bmp = CaptureScaledBitmap(fw))
+                    jpeg = EncodeJpeg(bmp, fq);
+                _log($"bingkai instan diambil ({fw}px, q{fq})");
+                return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
             }
 
             if (req.Method == "POST")
@@ -381,10 +529,151 @@ public sealed class AgentServer
                         {
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             string button = GetString(root, "button", "left");
-                            OnUi(() => { NativeInput.Click(x, y, button); return true; });
+                            // count (v2.4.0): 2 = klik ganda, 3 = klik tiga.
+                            int count = GetInt(root, "count", 1);
+                            if (count < 1) count = 1;
+                            if (count > 3) count = 3;
+                            int n = count;
+                            // modifiers (gelombang 2): "ctrl,shift,alt,win"
+                            // ditahan selama klik berlangsung.
+                            var mods = ParseModifiers(GetString(root, "modifiers", ""));
+                            OnUi(() =>
+                            {
+                                foreach (var vk in mods) NativeInput.KeyDown(vk);
+                                try { NativeInput.ClickTimes(x, y, button, n); }
+                                finally { for (int i = mods.Count - 1; i >= 0; i--) NativeInput.KeyUp(mods[i]); }
+                                return true;
+                            });
                             _onActivity();
-                            _log($"klik {x},{y} ({button})");
+                            _log($"klik {x},{y} ({button}{(n > 1 ? ", " + n + "x" : "")}{(mods.Count > 0 ? ", +penahan" : "")})");
                             return Ok();
+                        }
+                        case "/keydown":
+                        case "/keyup":
+                        {
+                            // Tahan / lepas satu tombol (gelombang 2) —
+                            // untuk kombinasi lintas perintah, mis.
+                            // tahan CTRL lalu /click di tempat lain.
+                            string keyName = GetString(root, "key", "");
+                            ushort vk = NativeInput.VkFromName(keyName);
+                            if (vk == 0)
+                                return Response.Json("{\"ok\":false,\"error\":\"nama tombol tidak dikenal\"}", 400);
+                            bool down = req.Path == "/keydown";
+                            OnUi(() =>
+                            {
+                                if (down) NativeInput.KeyDown(vk);
+                                else NativeInput.KeyUp(vk);
+                                return true;
+                            });
+                            _onActivity();
+                            _log((down ? "tahan tombol: " : "lepas tombol: ") + keyName);
+                            return Ok();
+                        }
+                        case "/wait":
+                        {
+                            // Tunggu kondisi (gelombang 2): jendela
+                            // berjudul tertentu muncul ATAU berkas ada.
+                            // Pemeriksaan di sisi server tiap 500ms —
+                            // Muse tidak perlu bolak-balik bertanya.
+                            string wTitle = GetString(root, "windowTitle", "");
+                            string fPath = GetString(root, "filePath", "");
+                            if (string.IsNullOrWhiteSpace(wTitle) && string.IsNullOrWhiteSpace(fPath))
+                                return Response.Json("{\"ok\":false,\"error\":\"windowTitle atau filePath wajib diisi\"}", 400);
+                            int wTimeout = GetInt(root, "timeoutMs", 30000);
+                            if (wTimeout < 1000) wTimeout = 1000;
+                            if (wTimeout > MaxExecTimeoutMs) wTimeout = MaxExecTimeoutMs;
+                            _onActivity();
+                            _log($"tunggu kondisi (maks {wTimeout}ms): " +
+                                 (!string.IsNullOrWhiteSpace(wTitle) ? "jendela '" + wTitle + "'" : "berkas " + fPath));
+                            var wsw = Stopwatch.StartNew();
+                            bool found = false;
+                            string via = "";
+                            while (wsw.ElapsedMilliseconds < wTimeout)
+                            {
+                                if (!string.IsNullOrWhiteSpace(fPath) && File.Exists(fPath))
+                                {
+                                    found = true; via = "file"; break;
+                                }
+                                if (!string.IsNullOrWhiteSpace(wTitle))
+                                {
+                                    var wins = OnUi(NativeInput.ListWindows);
+                                    foreach (var w in wins)
+                                    {
+                                        if (w.Title.IndexOf(wTitle, StringComparison.OrdinalIgnoreCase) >= 0)
+                                        {
+                                            found = true; via = "window"; break;
+                                        }
+                                    }
+                                    if (found) break;
+                                }
+                                Thread.Sleep(500);
+                            }
+                            long waited = wsw.ElapsedMilliseconds;
+                            if (waited > wTimeout) waited = wTimeout;
+                            _log(found ? $"kondisi ketemu via {via} setelah {waited}ms" : $"kondisi tidak ketemu ({wTimeout}ms)");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["found"] = found,
+                                ["via"] = via,
+                                ["waitedMs"] = waited,
+                            });
+                        }
+                        case "/uia/click":
+                        {
+                            // Klik elemen dari pindai /uia terakhir —
+                            // berdasarkan indeks atau nama (v2.4.0).
+                            int index = GetInt(root, "index", -1);
+                            string name = GetString(root, "name", "");
+                            var item = OnUi(() => UiaScan.Find(index, name));
+                            if (item == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"elemen tidak ditemukan — pindai dulu lewat GET /uia\"}", 404);
+                            string button = GetString(root, "button", "left");
+                            int cx = item.CenterX, cy = item.CenterY;
+                            OnUi(() => { NativeInput.Click(cx, cy, button); return true; });
+                            _onActivity();
+                            _log($"klik elemen UIA '{item.Name}' ({item.Type}) di {cx},{cy}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["clicked"] = item.Name,
+                                ["type"] = item.Type,
+                                ["x"] = cx,
+                                ["y"] = cy,
+                            });
+                        }
+                        case "/window":
+                        {
+                            // Kendali jendela berdasarkan judul (v2.4.0):
+                            // action = close/minimize/maximize/restore.
+                            string query = GetString(root, "title", "");
+                            string action = GetString(root, "action", "");
+                            if (string.IsNullOrWhiteSpace(query))
+                                return Response.Json("{\"ok\":false,\"error\":\"title kosong\"}", 400);
+                            if (action != "close" && action != "minimize" && action != "maximize" && action != "restore")
+                                return Response.Json("{\"ok\":false,\"error\":\"action harus close/minimize/maximize/restore\"}", 400);
+                            var wins = OnUi(NativeInput.ListWindows);
+                            NativeInput.WindowInfo match = null;
+                            foreach (var w in wins)
+                            {
+                                if (w.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    match = w;
+                                    break;
+                                }
+                            }
+                            if (match == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan\"}", 404);
+                            var m = match;
+                            bool sent = OnUi(() => NativeInput.WindowAction(m.Handle, action));
+                            _onActivity();
+                            _log($"jendela '{m.Title}': {action}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = sent,
+                                ["window"] = m.Title,
+                                ["action"] = action,
+                            });
                         }
                         case "/scroll":
                         {
@@ -400,15 +689,25 @@ public sealed class AgentServer
                             int x1 = GetInt(root, "x1", 0), y1 = GetInt(root, "y1", 0);
                             int x2 = GetInt(root, "x2", 0), y2 = GetInt(root, "y2", 0);
                             string button = GetString(root, "button", "left");
-                            OnUi(() => { NativeInput.Drag(x1, y1, x2, y2, button); return true; });
+                            var mods = ParseModifiers(GetString(root, "modifiers", ""));
+                            OnUi(() =>
+                            {
+                                foreach (var vk in mods) NativeInput.KeyDown(vk);
+                                try { NativeInput.Drag(x1, y1, x2, y2, button); }
+                                finally { for (int i = mods.Count - 1; i >= 0; i--) NativeInput.KeyUp(mods[i]); }
+                                return true;
+                            });
                             _onActivity();
-                            _log($"drag {x1},{y1} -> {x2},{y2} ({button})");
+                            _log($"drag {x1},{y1} -> {x2},{y2} ({button}{(mods.Count > 0 ? ", +penahan" : "")})");
                             return Ok();
                         }
                         case "/type":
                         {
                             string text = GetString(root, "text", "");
-                            OnUi(() => { NativeInput.TypeText(text); return true; });
+                            // Mesin Unicode SendInput sejak v2.4.0 —
+                            // SendKeys lama tidak stabil untuk karakter
+                            // di luar tata letak keyboard aktif.
+                            OnUi(() => { NativeInput.TypeUnicode(text); return true; });
                             _onActivity();
                             string preview = text.Length > 30 ? text.Substring(0, 30) + "…" : text;
                             _log($"ketik: {preview} ({text.Length} karakter)");
@@ -518,6 +817,24 @@ public sealed class AgentServer
     {
         string command = GetString(root, "command", "");
         string args = GetString(root, "args", "");
+
+        // Jalur script terenkode (v2.4.0): "scriptB64" = script
+        // PowerShell utuh ter-Base64 (UTF-8). Dijalankan lewat
+        // -EncodedCommand sehingga TIDAK ada lagi rantai tanda kutip
+        // yang bisa merusak perintah kompleks. command/args diabaikan
+        // bila scriptB64 ada.
+        string scriptB64 = GetString(root, "scriptB64", "");
+        if (!string.IsNullOrWhiteSpace(scriptB64))
+        {
+            string script;
+            try { script = Encoding.UTF8.GetString(Convert.FromBase64String(scriptB64)); }
+            catch { return Response.Json("{\"ok\":false,\"error\":\"scriptB64 bukan Base64 yang valid\"}", 400); }
+            command = "powershell";
+            args = "-NoProfile -EncodedCommand " +
+                   Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            _log($"jalanin: script terenkode ({script.Length} karakter)");
+        }
+
         if (string.IsNullOrWhiteSpace(command))
             return Response.Json("{\"ok\":false,\"error\":\"command kosong\"}", 400);
 
@@ -652,6 +969,15 @@ public sealed class AgentServer
     private Response Shell(JsonElement root)
     {
         string command = GetString(root, "command", "");
+        // scriptB64 (v2.4.0): script PowerShell utuh ter-Base64
+        // (UTF-8) — didekode jadi teks perintah apa adanya, tanpa
+        // risiko rusak di tanda kutip. Menggantikan "command".
+        string scriptB64 = GetString(root, "scriptB64", "");
+        if (!string.IsNullOrWhiteSpace(scriptB64))
+        {
+            try { command = Encoding.UTF8.GetString(Convert.FromBase64String(scriptB64)); }
+            catch { return Response.Json("{\"ok\":false,\"error\":\"scriptB64 bukan Base64 yang valid\"}", 400); }
+        }
         if (string.IsNullOrWhiteSpace(command))
             return Response.Json("{\"ok\":false,\"error\":\"command kosong\"}", 400);
 
@@ -1015,6 +1341,30 @@ public sealed class AgentServer
         }
     }
 
+    /// <summary>
+    /// Screenshot satu wilayah saja (v2.4.0): wilayah dijepit ke
+    /// batas layar; lebih ringan dikirim dan teks kecil lebih tajam
+    /// dibaca daripada memotong hasil layar penuh di sisi Muse.
+    /// </summary>
+    private static byte[] CaptureScreenshotRegion(int x, int y, int w, int h)
+    {
+        var bounds = Screen.PrimaryScreen != null
+            ? Screen.PrimaryScreen.Bounds
+            : new Rectangle(0, 0, 1280, 720);
+        var region = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
+        if (region.Width <= 0 || region.Height <= 0) region = bounds;
+        using (var bmp = new Bitmap(region.Width, region.Height))
+        {
+            using (var g = Graphics.FromImage(bmp))
+                g.CopyFromScreen(region.Location, Point.Empty, region.Size);
+            using (var ms = new MemoryStream())
+            {
+                bmp.Save(ms, ImageFormat.Png);
+                return ms.ToArray();
+            }
+        }
+    }
+
     // ---------- Pembantu ----------
 
     /// <summary>Isi clipboard (thread UI). Teks kosong = clipboard dibersihkan.</summary>
@@ -1051,6 +1401,22 @@ public sealed class AgentServer
     {
         if (string.IsNullOrEmpty(s)) return "";
         return s.Length > MaxOutputChars ? s.Substring(0, MaxOutputChars) + "…[dipotong]" : s;
+    }
+
+    /// <summary>
+    /// Urai daftar tombol penahan "ctrl,shift" menjadi kode VK
+    /// (gelombang 2). Nama yang tidak dikenal dilewati diam-diam.
+    /// </summary>
+    private static List<ushort> ParseModifiers(string raw)
+    {
+        var result = new List<ushort>();
+        if (string.IsNullOrWhiteSpace(raw)) return result;
+        foreach (var part in raw.Split(','))
+        {
+            ushort vk = NativeInput.VkFromName(part);
+            if (vk != 0 && !result.Contains(vk)) result.Add(vk);
+        }
+        return result;
     }
 
     private static string GetString(JsonElement root, string name, string fallback)
