@@ -1,4 +1,4 @@
-# MuseLink v2.5.2 — catatan pengembang
+# MuseLink v2.5.3 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,16 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.3 (dari v2.5.2) — Ukuran Roda Gigi Caption
+
+- **Fix ukuran jendela roda gigi bar judul**: di v2.5.2 jendela
+  CaptionGearForm mengembang dari 46x32 menjadi 136x39
+  (AutoScaleMode Font bawaan WinForms menskalakan saat handle
+  dibuat) sehingga menutupi tombol minimize/maximize. Kini
+  `AutoScaleMode = None` — ukuran persis 46x32, roda gigi duduk
+  tepat di kotak sebelah kiri minimize. Terverifikasi lewat
+  enumerasi jendela (rect) + strip bar judul.
 
 ## Perubahan v2.5.2 (dari v2.5.1) — Penjaga Tanpa Konsol
 

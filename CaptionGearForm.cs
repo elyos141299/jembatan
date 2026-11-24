@@ -28,6 +28,11 @@ public sealed class CaptionGearForm : Form
 
     public CaptionGearForm(MainForm owner)
     {
+        // WAJIB None (fix v2.5.3): AutoScaleMode bawaan (Font)
+        // mengembangkan jendela mungil ini dari 46x32 menjadi
+        // 136x39 saat handle dibuat — menutupi tombol minimize
+        // dan maximize. Ukuran harus persis seperti yang ditulis.
+        AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
