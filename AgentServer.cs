@@ -362,7 +362,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.5\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.5.6\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -478,7 +478,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.5.5",
+                    ["version"] = "2.5.6",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -818,6 +818,42 @@ public sealed class AgentServer
                                     ["height"] = ih,
                                     ["b64"] = Convert.ToBase64String(jpeg),
                                 };
+                            }
+                            // ocrAfter (v2.5.6, pasangan shotAfter):
+                            // respons juga ditutup dengan TEKS hasil
+                            // OCR wilayah layar — pola "lakukan lalu
+                            // baca hasilnya" cukup satu panggilan.
+                            // Wilayah dari ocrX/ocrY/ocrW/ocrH
+                            // (bawaan 0 = layar penuh); dijalankan
+                            // lewat handler GET /ocr yang sama via
+                            // sub-permintaan internal.
+                            if (root.TryGetProperty("ocrAfter", out var oaf) &&
+                                oaf.ValueKind == JsonValueKind.True)
+                            {
+                                var ocrReq = new Request
+                                {
+                                    Method = "GET",
+                                    Path = "/ocr",
+                                    Query = "x=" + GetInt(root, "ocrX", 0) +
+                                            "&y=" + GetInt(root, "ocrY", 0) +
+                                            "&w=" + GetInt(root, "ocrW", 0) +
+                                            "&h=" + GetInt(root, "ocrH", 0),
+                                    Body = "",
+                                };
+                                try
+                                {
+                                    var ocrResp = Route(ocrReq);
+                                    string ocrRaw = Encoding.UTF8.GetString(ocrResp.BodyBytes);
+                                    using (var rd = JsonDocument.Parse(ocrRaw))
+                                        batchResp["ocr"] = rd.RootElement.Clone();
+                                }
+                                catch (Exception ex)
+                                {
+                                    batchResp["ocr"] = new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false, ["error"] = ex.Message,
+                                    };
+                                }
                             }
                             return Response.JsonObject(batchResp);
                         }

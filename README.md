@@ -1,4 +1,4 @@
-# MuseLink v2.5.5 — catatan pengembang
+# MuseLink v2.5.6 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,23 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.5.6 (dari v2.5.5) — ocrAfter + Push CLI
+
+- **ocrAfter di /batch** (permintaan user 24 Nov — lanjut
+  optimasi kecepatan): batch kini menerima `"ocrAfter":true`
+  (+ wilayah `ocrX/ocrY/ocrW/ocrH`, bawaan layar penuh) dan
+  menutup respons dengan teks OCR keadaan layar TERKINI di
+  field `ocr` — pasangan teks dari `shotAfter`. Pola "lakukan
+  rangkaian lalu baca hasilnya" kini benar-benar satu panggilan.
+- **Push CLI diperbaiki dari akarnya** (bukan bagian aplikasi —
+  dicatat di sini sebagai konteks rilis): push git CLI yang
+  gagal sejak restart PC 24 Nov ternyata disebabkan layanan
+  Windows **VaultSvc (Credential Manager) berhenti** — Git
+  Credential Manager tidak bisa membaca/menyimpan kredensial
+  GitHub. Layanan dinyalakan lagi; push CLI kembali senyap
+  tanpa jendela GitHub Desktop. Rilis ini adalah push CLI
+  pertama yang membuktikannya.
 
 ## Perubahan v2.5.5 (dari v2.5.4) — Paket Perbaikan Full Test
 
