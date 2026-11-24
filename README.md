@@ -1,4 +1,4 @@
-# MuseLink v2.4.2 — catatan pengembang
+# MuseLink v2.4.3 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -64,6 +64,11 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.4.3 (dari v2.4.2) — Fix Tutup Jendela
+
+- **Bug fix tutup jendela:** perintah tutup dari luar (mis. /window close) sebelumnya bisa membuat aplikasi KELUAR betulan karena lolos dari pemeriksaan CloseReason. Sekarang menutup jendela utama SELALU berarti sembunyi ke system tray — apa pun sumber perintahnya. Satu-satunya jalan keluar tetap menu tray "Keluar"; pengecualian hanya saat Windows sendiri dimatikan.
+- **Bersih-bersih:** dua field lama yang sudah tidak dibaca lagi (_claudeSeen, _chatInitializing) dihapus — peringatan build berkurang.
 
 ## Perubahan v2.4.2 (dari v2.4.1) — "Panel Rapi + Log Bersih"
 

@@ -50,7 +50,6 @@ public sealed class MainForm : Form
     private ToggleSwitch _autoStartCheck;
     private ToggleSwitch _adminCheck;
     private Label _modeLabel;
-    private bool _claudeSeen;
 
     // Panel chat Muse: SplitContainer membagi jendela — Panel1
     // (kiri) = panel kendali, Panel2 (kanan) = chat WebView2.
@@ -62,7 +61,6 @@ public sealed class MainForm : Form
     private Label _chatErrorLabel;
     private Label _chatLoadingLabel;
     private WebView2 _webView;
-    private bool _chatInitializing;
 
     // System tray: tombol X hanya menyembunyikan jendela ke tray —
     // layanan tetap berjalan. Keluar sungguhan hanya lewat menu tray.
@@ -105,7 +103,7 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v2.4.2 dimulai ===");
+            Log("=== MuseLink v2.4.3 dimulai ===");
             InitStartOptions();
             // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
             // panel kanan selalu tampil di sebelah panel kendali
@@ -211,7 +209,13 @@ public sealed class MainForm : Form
     {
         SaveWindowBounds();
         if (_exitRequested) return;
-        if (e.CloseReason != CloseReason.UserClosing) return;
+        // v2.4.3: tutup jendela SELALU berarti sembunyi ke tray, apa pun
+        // sumber perintah tutupnya. Dulu penutupan yang datang bukan dari
+        // klik user (mis. WM_CLOSE terprogram dari perintah /window)
+        // lolos dari pemeriksaan CloseReason dan aplikasi KELUAR betulan.
+        // Satu-satunya jalan keluar tetap menu tray "Keluar"
+        // (_exitRequested) — pengecualian: Windows sendiri yang mati.
+        if (e.CloseReason == CloseReason.WindowsShutDown) return;
 
         e.Cancel = true;
         Hide();
@@ -421,7 +425,7 @@ public sealed class MainForm : Form
         // 2×16 padding = 218), jadi posisi bawahnya tetap.
         var version = new Label
         {
-            Text = "v2.4.2",
+            Text = "v2.4.3",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Card,
@@ -577,7 +581,6 @@ public sealed class MainForm : Form
 
     private async Task InitChatAsync()
     {
-        _chatInitializing = true;
         try
         {
             // Folder data persisten: cookie & login awet antar jalan.
@@ -633,7 +636,6 @@ public sealed class MainForm : Form
         }
         finally
         {
-            _chatInitializing = false;
         }
     }
 
@@ -651,7 +653,6 @@ public sealed class MainForm : Form
         if (_server.IsRunning)
         {
             _server.Stop();
-            _claudeSeen = false;
             SetStopped("Terputus — Muse tidak bisa mengakses PC ini");
             Log("Listener DIMATIKAN oleh kamu — akses Muse berhenti total.");
         }
@@ -1014,7 +1015,6 @@ public sealed class MainForm : Form
             BeginInvoke(new Action(OnActivity));
             return;
         }
-        _claudeSeen = true;
         _statusDot.DotColor = Green;
         _statusLabel.Text = "Muse terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
     }
