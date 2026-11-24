@@ -141,6 +141,15 @@ public static class NativeInput
     private const int SwMaximize = 3;
     private const uint WmClose = 0x0010;
 
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    /// <summary>True bila jendela sedang terminimize (v2.7.3).</summary>
+    public static bool IsWindowMinimized(IntPtr hWnd)
+    {
+        return hWnd != IntPtr.Zero && IsIconic(hWnd);
+    }
+
     /// <summary>Handle jendela yang sedang di depan (IntPtr.Zero bila tidak ada).</summary>
     public static IntPtr ForegroundHandle()
     {
@@ -503,6 +512,11 @@ public static class NativeInput
         // Tidak tersedia/gagal → jalur StretchBlt lama di bawah.
         try
         {
+            // v2.7.3: skala terintegrasi — bitmap langsung terbit
+            // pada ukuran tujuan dari tekstur staging, melewati
+            // bitmap resolusi penuh + gambar-ulang GDI+ di bawah.
+            var langsung = DxgiCapture.TryCaptureScaled(maxWidth);
+            if (langsung != null) return langsung;
             var full = DxgiCapture.TryCapture();
             if (full != null)
             {

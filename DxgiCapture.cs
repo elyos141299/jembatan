@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -50,6 +51,7 @@ public static class DxgiCapture
     private static bool _haveFrame;
     private static long _retryAfterTick;
     private static byte[] _rowBuf;
+    private static bool _scaledOk;
 
     // HRESULT DXGI yang perlu dibedakan dari kegagalan umum.
     private const int WaitTimeout = unchecked((int)0x887A0027);
@@ -61,6 +63,16 @@ public static class DxgiCapture
     }
 
     /// <summary>
+    /// "integrated" bila jalur skala-terintegrasi v2.7.3 sudah
+    /// berhasil dipakai, "legacy" bila belum (bitmap resolusi
+    /// penuh + gambar-ulang GDI+ seperti v2.7.0–v2.7.2).
+    /// </summary>
+    public static string ScaleMode
+    {
+        get { lock (_lock) { return _scaledOk ? "integrated" : "legacy"; } }
+    }
+
+    /// <summary>
     /// Ambil bingkai layar penuh terbaru (resolusi asli).
     /// null = DXGI tidak tersedia saat ini → pemanggil memakai GDI.
     /// Pemanggil membuang bitmap hasil.
@@ -69,26 +81,9 @@ public static class DxgiCapture
     {
         lock (_lock)
         {
-            if (_dup == null)
-            {
-                if (Environment.TickCount64 < _retryAfterTick) return null;
-                if (!Init())
-                {
-                    _retryAfterTick = Environment.TickCount64 + 30000;
-                    return null;
-                }
-            }
             try
             {
-                // Kuras bingkai yang mengantre; simpan yang terbaru.
-                while (DrainOnce(0)) { }
-                if (!_haveFrame)
-                {
-                    // Bingkai pertama sesudah init kadang butuh
-                    // waktu — beri satu kesempatan menunggu.
-                    DrainOnce(300);
-                }
-                if (!_haveFrame) return null;
+                if (!EnsureFrameLocked()) return null;
                 return ReadStaging();
             }
             catch
@@ -98,6 +93,126 @@ public static class DxgiCapture
                 return null;
             }
         }
+    }
+
+    /// <summary>
+    /// Seperti TryCapture, tapi bitmap terbit LANGSUNG pada lebar
+    /// tujuan (v2.7.3): pengecilan dikerjakan saat piksel disalin
+    /// keluar dari tekstur staging (rata-rata kotak, paralel per
+    /// baris) — melewati bitmap resolusi penuh + gambar-ulang
+    /// GDI+ yang memakan beberapa ms per bingkai di jalur /frame
+    /// & /stream. targetWidth >= lebar layar → sama dengan
+    /// TryCapture. Kegagalan apa pun → null (pemanggil jatuh ke
+    /// jalur lama), persis kontrak TryCapture.
+    /// </summary>
+    public static Bitmap TryCaptureScaled(int targetWidth)
+    {
+        lock (_lock)
+        {
+            try
+            {
+                if (!EnsureFrameLocked()) return null;
+                if (targetWidth <= 0 || targetWidth >= _width) return ReadStaging();
+                int th = Math.Max(1, (int)(_height * (targetWidth / (double)_width)));
+                var bmp = ReadStagingScaled(targetWidth, th);
+                if (bmp != null) _scaledOk = true;
+                return bmp;
+            }
+            catch
+            {
+                DisposeLocked();
+                _retryAfterTick = Environment.TickCount64 + 30000;
+                return null;
+            }
+        }
+    }
+
+    // Inisialisasi (bila perlu) + kuras antrean bingkai; true =
+    // ada bingkai di staging siap dibaca. Pemanggil memegang _lock.
+    private static bool EnsureFrameLocked()
+    {
+        if (_dup == null)
+        {
+            if (Environment.TickCount64 < _retryAfterTick) return false;
+            if (!Init())
+            {
+                _retryAfterTick = Environment.TickCount64 + 30000;
+                return false;
+            }
+        }
+        // Kuras bingkai yang mengantre; simpan yang terbaru.
+        while (DrainOnce(0)) { }
+        if (!_haveFrame)
+        {
+            // Bingkai pertama sesudah init kadang butuh
+            // waktu — beri satu kesempatan menunggu.
+            DrainOnce(300);
+        }
+        return _haveFrame;
+    }
+
+    // Salin staging ke bitmap yang SUDAH dikecilkan: tiap piksel
+    // tujuan = rata-rata kotak wilayah sumbernya.
+    private static Bitmap ReadStagingScaled(int tw, int th)
+    {
+        var map = _context.Map(_staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+        try
+        {
+            var bmp = new Bitmap(tw, th, PixelFormat.Format32bppArgb);
+            var bd = bmp.LockBits(
+                new Rectangle(0, 0, tw, th),
+                ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int sw = _width, sh = _height;
+                int pitch = (int)map.RowPitch;
+                IntPtr basePtr = map.DataPointer;
+                IntPtr dstBase = bd.Scan0;
+                int dstStride = bd.Stride;
+                Parallel.For(0, th, oy =>
+                {
+                    int sy0 = oy * sh / th;
+                    int sy1 = Math.Max(sy0 + 1, (oy + 1) * sh / th);
+                    var accB = new int[tw];
+                    var accG = new int[tw];
+                    var accR = new int[tw];
+                    var rowBuf = new byte[sw * 4];
+                    for (int sy = sy0; sy < sy1; sy++)
+                    {
+                        Marshal.Copy(basePtr + sy * pitch, rowBuf, 0, sw * 4);
+                        for (int ox = 0; ox < tw; ox++)
+                        {
+                            int sx0 = ox * sw / tw;
+                            int sx1 = Math.Max(sx0 + 1, (ox + 1) * sw / tw);
+                            for (int sx = sx0; sx < sx1; sx++)
+                            {
+                                int o = sx * 4;
+                                accB[ox] += rowBuf[o];
+                                accG[ox] += rowBuf[o + 1];
+                                accR[ox] += rowBuf[o + 2];
+                            }
+                        }
+                    }
+                    var outRow = new byte[tw * 4];
+                    int rows = sy1 - sy0;
+                    for (int ox = 0; ox < tw; ox++)
+                    {
+                        int sx0 = ox * sw / tw;
+                        int sx1 = Math.Max(sx0 + 1, (ox + 1) * sw / tw);
+                        int cnt = rows * (sx1 - sx0);
+                        int o = ox * 4;
+                        outRow[o] = (byte)(accB[ox] / cnt);
+                        outRow[o + 1] = (byte)(accG[ox] / cnt);
+                        outRow[o + 2] = (byte)(accR[ox] / cnt);
+                        outRow[o + 3] = 255;
+                    }
+                    Marshal.Copy(outRow, 0, dstBase + oy * dstStride, tw * 4);
+                });
+            }
+            finally { bmp.UnlockBits(bd); }
+            return bmp;
+        }
+        finally { _context.Unmap(_staging, 0); }
     }
 
     private static bool Init()
@@ -214,6 +329,6 @@ public static class DxgiCapture
         try { _device?.Dispose(); } catch { }
         _staging = null; _dup = null; _output1 = null; _output = null;
         _adapter = null; _dxgiDevice = null; _context = null; _device = null;
-        _width = 0; _height = 0; _haveFrame = false; _rowBuf = null;
+        _width = 0; _height = 0; _haveFrame = false; _rowBuf = null; _scaledOk = false;
     }
 }

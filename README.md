@@ -1,4 +1,4 @@
-# MuseLink v2.7.2 — catatan pengembang
+# MuseLink v2.7.3 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,11 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.3 (dari v2.7.2) — Skala terintegrasi + inspect terminimize
+
+- **TryCaptureScaled**: /frame & /stream kini menerima bitmap yang sudah dikecilkan langsung dari tekstur staging DXGI (rata-rata kotak, paralel per baris) — bitmap resolusi penuh + gambar-ulang GDI+ dilewati. Fallback berlapis tetap: scaled → TryCapture+GDI → StretchBlt. /sysinfo melaporkan `captureScale`: "integrated"/"legacy". (Jalur VideoProcessor GPU murni ditunda: detail API-nya tidak bisa diverifikasi aman-kompilasi dari source yang tersedia; pendekatan terintegrasi ini mengambil sebagian besar hematnya tanpa API baru.)
+- **/inspect win= pada jendela terminimize** kini menjawab terus terang `{minimized: true, note: …}` alih-alih UIA/OCR kosong tanpa penjelasan (Windows melipat pohon UIA jendela terminimize).
 
 ## Perubahan v2.7.2 (dari v2.7.1) — Stream: matikan jeda Nagle
 

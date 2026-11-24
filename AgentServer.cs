@@ -395,7 +395,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.2\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"2.7.3\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -554,7 +554,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.2",
+                    ["version"] = "2.7.3",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -576,6 +576,7 @@ public sealed class AgentServer
                     ["eventsLastSeq"] = EventLog.LastSeq,
                     // v2.7.0: mesin tangkap layar yang sedang aktif.
                     ["capture"] = DxgiCapture.Mode,
+                    ["captureScale"] = DxgiCapture.ScaleMode,
                 });
             }
 
@@ -652,7 +653,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "2.7.2",
+                    ["version"] = "2.7.3",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -797,6 +798,13 @@ public sealed class AgentServer
                     if (fWinI == null)
                         return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan: " + winQ.Replace("\\", " ").Replace("\"", " ") + "\"}", 404);
                     mintaI = fWinI.Rect;
+                    // v2.7.3: jendela terminimize — Windows melipat
+                    // pohon UIA-nya dan rect-nya jatuh di luar
+                    // layar, jadi pindaian biasa menghasilkan
+                    // kekosongan yang menyesatkan. Laporkan terus
+                    // terang supaya pemanggil tahu sebabnya.
+                    if (NativeInput.IsWindowMinimized(fWinI.Handle))
+                        return Response.Json("{\"ok\":true,\"minimized\":true,\"note\":\"jendela terminimize - UIA/OCR kosong; pulihkan jendelanya untuk inspeksi penuh\",\"window\":{\"title\":\"" + fWinI.Title.Replace("\\", " ").Replace("\"", " ") + "\"}}");
                 }
                 int relOxI = (relI && fWinI != null) ? fWinI.Rect.X : 0;
                 int relOyI = (relI && fWinI != null) ? fWinI.Rect.Y : 0;
