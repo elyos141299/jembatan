@@ -1,4 +1,4 @@
-# MuseLink v2.7.3 — catatan pengembang
+# MuseLink v2.7.4 — catatan pengembang
 
 Aplikasi Windows (.NET 8, WinForms) yang memberi Muse akses kerja ke PC
 user lewat jaringan privat Tailscale user. Satu jendela = satu-satunya
@@ -71,6 +71,10 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Perubahan v2.7.4 (dari v2.7.3) — Skala GPU murni (VideoProcessor)
+
+- **TryGpuScaledLocked**: bingkai mentah duplikasi kini dikecilkan oleh **VideoProcessor D3D11 di GPU** (Blt ke tekstur keluaran kecil, baru disalin ke staging kecil) — readback CPU menyusut dari ±8MB menjadi sebesar ukuran tujuan. Urutan jalur di TryCaptureScaled: GPU → terintegrasi (v2.7.3) → penuh+GDI → StretchBlt. Kegagalan VP apa pun membongkar pipa VP + jeda dingin 30 detik, tanpa menyentuh jalur lain. /sysinfo `captureScale` kini bisa "gpu"/"integrated"/"legacy". Tanda tangan API diverifikasi dari metadata DLL Vortice 3.6.x asli (bukan tebakan): struct VideoProcessor*, Texture2DVideoProcessor{Input,Output}View, Rational di Vortice.DXGI (rakitan Vortice.DirectX).
 
 ## Perubahan v2.7.3 (dari v2.7.2) — Skala terintegrasi + inspect terminimize
 

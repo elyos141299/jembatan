@@ -52,6 +52,18 @@ public static class DxgiCapture
     private static long _retryAfterTick;
     private static byte[] _rowBuf;
     private static bool _scaledOk;
+    // Jalur GPU murni (v2.7.4): VideoProcessor mengecilkan
+    // bingkai di GPU sebelum piksel menyentuh CPU.
+    private static ID3D11VideoDevice _vpDevice;
+    private static ID3D11VideoContext _vpContext;
+    private static ID3D11VideoProcessorEnumerator _vpEnum;
+    private static ID3D11VideoProcessor _vpProc;
+    private static ID3D11Texture2D _vpOutTex;
+    private static ID3D11VideoProcessorOutputView _vpOutView;
+    private static ID3D11Texture2D _vpStaging;
+    private static int _vpInW, _vpInH, _vpOutW, _vpOutH;
+    private static bool _gpuOk;
+    private static long _vpRetryAfterTick;
 
     // HRESULT DXGI yang perlu dibedakan dari kegagalan umum.
     private const int WaitTimeout = unchecked((int)0x887A0027);
@@ -63,13 +75,14 @@ public static class DxgiCapture
     }
 
     /// <summary>
-    /// "integrated" bila jalur skala-terintegrasi v2.7.3 sudah
-    /// berhasil dipakai, "legacy" bila belum (bitmap resolusi
-    /// penuh + gambar-ulang GDI+ seperti v2.7.0–v2.7.2).
+    /// Jalur skala yang terakhir terbukti hidup: "gpu"
+    /// (VideoProcessor v2.7.4), "integrated" (skala saat salin
+    /// staging, v2.7.3), atau "legacy" (bitmap resolusi penuh +
+    /// gambar-ulang GDI+ seperti v2.7.0–v2.7.2).
     /// </summary>
     public static string ScaleMode
     {
-        get { lock (_lock) { return _scaledOk ? "integrated" : "legacy"; } }
+        get { lock (_lock) { return _gpuOk ? "gpu" : _scaledOk ? "integrated" : "legacy"; } }
     }
 
     /// <summary>
@@ -111,6 +124,10 @@ public static class DxgiCapture
         {
             try
             {
+                // v2.7.4: jalur GPU (VideoProcessor) lebih dulu —
+                // kegagalannya tertangani di dalam (jatuh ke bawah).
+                var gpu = TryGpuScaledLocked(targetWidth);
+                if (gpu != null) return gpu;
                 if (!EnsureFrameLocked()) return null;
                 if (targetWidth <= 0 || targetWidth >= _width) return ReadStaging();
                 int th = Math.Max(1, (int)(_height * (targetWidth / (double)_width)));
@@ -317,8 +334,183 @@ public static class DxgiCapture
         finally { _context.Unmap(_staging, 0); }
     }
 
+    // Bangun (atau bangun ulang bila ukuran berubah) pipa
+    // VideoProcessor untuk pasangan ukuran masuk/keluar ini.
+    // False = tidak bisa sekarang (jeda dingin 30 detik berlaku).
+    private static bool EnsureVpLocked(int inW, int inH, int outW, int outH)
+    {
+        if (_vpProc != null && _vpInW == inW && _vpInH == inH && _vpOutW == outW && _vpOutH == outH)
+            return true;
+        DisposeVpLocked();
+        if (Environment.TickCount64 < _vpRetryAfterTick) return false;
+        try
+        {
+            if (_vpDevice == null) _vpDevice = _device.QueryInterface<ID3D11VideoDevice>();
+            if (_vpContext == null) _vpContext = _context.QueryInterface<ID3D11VideoContext>();
+            var desc = new VideoProcessorContentDescription
+            {
+                InputFrameFormat = VideoFrameFormat.Progressive,
+                InputFrameRate = new Rational { Numerator = 60, Denominator = 1 },
+                InputWidth = (uint)inW,
+                InputHeight = (uint)inH,
+                OutputFrameRate = new Rational { Numerator = 60, Denominator = 1 },
+                OutputWidth = (uint)outW,
+                OutputHeight = (uint)outH,
+                Usage = VideoUsage.PlaybackNormal,
+            };
+            if (_vpDevice.CreateVideoProcessorEnumerator(ref desc, out _vpEnum).Failure)
+                throw new InvalidOperationException("CreateVideoProcessorEnumerator gagal");
+            if (_vpDevice.CreateVideoProcessor(_vpEnum, 0, out _vpProc).Failure)
+                throw new InvalidOperationException("CreateVideoProcessor gagal");
+            _vpOutTex = _device.CreateTexture2D(new Texture2DDescription
+            {
+                Width = (uint)outW,
+                Height = (uint)outH,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.B8G8R8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.RenderTarget,
+                CPUAccessFlags = CpuAccessFlags.None,
+                MiscFlags = ResourceOptionFlags.None,
+            });
+            var ovd = new VideoProcessorOutputViewDescription
+            {
+                ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+            };
+            if (_vpDevice.CreateVideoProcessorOutputView(_vpOutTex, _vpEnum, ovd, out _vpOutView).Failure)
+                throw new InvalidOperationException("CreateVideoProcessorOutputView gagal");
+            _vpStaging = _device.CreateTexture2D(new Texture2DDescription
+            {
+                Width = (uint)outW,
+                Height = (uint)outH,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.B8G8R8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Staging,
+                BindFlags = BindFlags.None,
+                CPUAccessFlags = CpuAccessFlags.Read,
+                MiscFlags = ResourceOptionFlags.None,
+            });
+            _vpInW = inW; _vpInH = inH; _vpOutW = outW; _vpOutH = outH;
+            return true;
+        }
+        catch
+        {
+            DisposeVpLocked();
+            _vpRetryAfterTick = Environment.TickCount64 + 30000;
+            return false;
+        }
+    }
+
+    // Coba hasilkan bitmap berskala lewat GPU. Null = tidak ada
+    // bingkai baru / tidak perlu diskala / VP tidak tersedia —
+    // pemanggil melanjutkan ke jalur staging seperti biasa.
+    // Semua kegagalan VP tertangani di sini (bongkar VP + jeda
+    // dingin), tidak pernah melempar ke pemanggil.
+    private static Bitmap TryGpuScaledLocked(int targetWidth)
+    {
+        if (_dup == null) return null;
+        if (Environment.TickCount64 < _vpRetryAfterTick) return null;
+        ID3D11Texture2D tex = null;
+        bool acquired = false;
+        try
+        {
+            var hr = _dup.AcquireNextFrame(0, out _, out var res);
+            if (hr.Code == WaitTimeout) { res?.Dispose(); return null; }
+            if (hr.Failure || res == null) { res?.Dispose(); return null; }
+            acquired = true;
+            tex = res.QueryInterface<ID3D11Texture2D>();
+            res.Dispose();
+            var td = tex.Description;
+            int inW = (int)td.Width, inH = (int)td.Height;
+            if (targetWidth <= 0 || targetWidth >= inW) return null;
+            int outH = Math.Max(1, (int)(inH * (targetWidth / (double)inW)));
+            if (!EnsureVpLocked(inW, inH, targetWidth, outH)) return null;
+            ID3D11VideoProcessorInputView inView = null;
+            try
+            {
+                var ivd = new VideoProcessorInputViewDescription
+                {
+                    FourCC = 0,
+                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0, ArraySlice = 0 },
+                };
+                if (_vpDevice.CreateVideoProcessorInputView(tex, _vpEnum, ivd, out inView).Failure)
+                    return null;
+                var stream = new VideoProcessorStream { Enable = true, InputSurface = inView };
+                if (_vpContext.VideoProcessorBlt(_vpProc, _vpOutView, 0, 1, new[] { stream }).Failure)
+                    return null;
+            }
+            finally { inView?.Dispose(); }
+            _context.CopyResource(_vpStaging, _vpOutTex);
+            var bmp = ReadStagingFrom(_vpStaging, targetWidth, outH);
+            if (bmp != null) _gpuOk = true;
+            return bmp;
+        }
+        catch
+        {
+            DisposeVpLocked();
+            _vpRetryAfterTick = Environment.TickCount64 + 30000;
+            return null;
+        }
+        finally
+        {
+            tex?.Dispose();
+            if (acquired) { try { _dup.ReleaseFrame(); } catch { } }
+        }
+    }
+
+    // Baca tekstur staging mana pun ke bitmap (pasangan umum
+    // dari ReadStaging yang khusus staging duplikasi).
+    private static Bitmap ReadStagingFrom(ID3D11Texture2D tex, int w, int h)
+    {
+        var map = _context.Map(tex, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+        try
+        {
+            var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            var bd = bmp.LockBits(
+                new Rectangle(0, 0, w, h),
+                ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int rowBytes = w * 4;
+                var buf = new byte[rowBytes];
+                for (int y = 0; y < h; y++)
+                {
+                    IntPtr src = map.DataPointer + y * (int)map.RowPitch;
+                    IntPtr dst = bd.Scan0 + y * bd.Stride;
+                    Marshal.Copy(src, buf, 0, rowBytes);
+                    Marshal.Copy(buf, 0, dst, rowBytes);
+                }
+            }
+            finally { bmp.UnlockBits(bd); }
+            return bmp;
+        }
+        finally { _context.Unmap(tex, 0); }
+    }
+
+    private static void DisposeVpLocked()
+    {
+        try { _vpOutView?.Dispose(); } catch { }
+        try { _vpProc?.Dispose(); } catch { }
+        try { _vpEnum?.Dispose(); } catch { }
+        try { _vpStaging?.Dispose(); } catch { }
+        try { _vpOutTex?.Dispose(); } catch { }
+        try { _vpContext?.Dispose(); } catch { }
+        try { _vpDevice?.Dispose(); } catch { }
+        _vpOutView = null; _vpProc = null; _vpEnum = null;
+        _vpStaging = null; _vpOutTex = null; _vpContext = null; _vpDevice = null;
+        _vpInW = 0; _vpInH = 0; _vpOutW = 0; _vpOutH = 0;
+        _gpuOk = false;
+    }
+
     private static void DisposeLocked()
     {
+        DisposeVpLocked();
         try { _staging?.Dispose(); } catch { }
         try { _dup?.Dispose(); } catch { }
         try { _output1?.Dispose(); } catch { }
