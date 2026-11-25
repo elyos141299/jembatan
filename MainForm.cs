@@ -73,6 +73,9 @@ public sealed class MainForm : Form
     private Label _tileUptimeValue;
     private Label _tileCaptureValue;
     private Label _tileVersionValue;
+    private Label _tileRamValue;
+    private Label _tileCpuValue;
+    private Label _tileGpuValue;
     private readonly System.Collections.Generic.List<Label> _tileCaptions = new System.Collections.Generic.List<Label>();
     private readonly System.Collections.Generic.List<Panel> _tileDividers = new System.Collections.Generic.List<Panel>();
     private System.Windows.Forms.Timer _uiTimer;
@@ -82,7 +85,22 @@ public sealed class MainForm : Form
     private SettingsForm _settingsForm;
     // v2.8.0 — permukaan rombak total: bar judul, strip status,
     // panel log bawah, tombol akses & pengaturan di panel kiri.
-    private SplitContainer _outerSplit;
+    // v3.0.1 — log melayang (LogFlyoutForm) menggantikan dock
+    // bawah; sensor sistem untuk baris RAM/CPU/GPU; animasi
+    // lipat panel & penunda lipat-otomatis.
+    private LogFlyoutForm _logFlyout;
+    private long _lastLogToggleTick;
+    private volatile string _cpuText = "…";
+    private volatile string _gpuText = "…";
+    private CpuTempSensor _cpuSensor;
+    private volatile bool _sensorPollBusy;
+    private bool _captureSettled;
+    private System.Windows.Forms.Timer _panelAnimTimer;
+    private int _panelAnimFrom;
+    private int _panelAnimTo;
+    private bool _panelAnimHideAtEnd;
+    private long _panelAnimStartTick;
+    private System.Windows.Forms.Timer _collapseDebounce;
     private Panel _titleBar;
     private Label _barTitle;
     private PictureBox _titleLogo;
@@ -96,7 +114,6 @@ public sealed class MainForm : Form
     private Label _stripUptime;
     private Label _stripLogLabel;
     private ChevronButton _stripChevron;
-    private Panel _logPanel;
     private Panel _logHeader;
     private Panel _logHair;
     private RoundedPanel _errBadge;
@@ -109,9 +126,8 @@ public sealed class MainForm : Form
     private Panel _rail;
     private PictureBox _railLogo;
     private RoundDot _railStatusDot;
-    private Panel _railLogBtn;
+    private RailGlyphButton _railLogBtn;
     private Panel _railLogBar;
-    private Label _railLogGlyph;
     private RoundDot _railLogDot;
     private Panel _railSettingsBtn;
     private Label _railSettingsGlyph;
@@ -186,15 +202,50 @@ public sealed class MainForm : Form
             // -> panel kendali melipat sendiri ke rel (sekali per
             // penyempitan; membuka lagi urusan klik logo di rel dan
             // TIDAK menimpa pilihan tersimpan user).
-            if (_split != null && _logSetupDone && !_split.Panel1Collapsed
-                && WindowState != FormWindowState.Minimized && ClientSize.Width < 1080)
+            if (WindowState == FormWindowState.Minimized)
             {
-                _split.Panel1Collapsed = true;
-                _panelAutoCollapsed = true;
+                _logFlyout?.HideImmediate();
+            }
+            // v3.0.1: lipat-otomatis kini DITUNDA ±450ms — lebar
+            // sesaat di bawah 1080px saat jendela dipulihkan dari
+            // termaksimalkan tidak lagi melipat panel secara
+            // permanen; hanya penyempitan yang menetap yang melipat.
+            if (_split != null && _logSetupDone && !_split.Panel1Collapsed
+                && WindowState != FormWindowState.Minimized)
+            {
+                if (ClientSize.Width < 1080)
+                {
+                    if (_collapseDebounce == null)
+                    {
+                        _collapseDebounce = new System.Windows.Forms.Timer { Interval = 450 };
+                        _collapseDebounce.Tick += (s3, e3) =>
+                        {
+                            _collapseDebounce.Stop();
+                            if (_split != null && !_split.Panel1Collapsed
+                                && WindowState != FormWindowState.Minimized
+                                && ClientSize.Width < 1080)
+                            {
+                                _split.Panel1Collapsed = true;
+                                _panelAutoCollapsed = true;
+                            }
+                        };
+                    }
+                    _collapseDebounce.Stop();
+                    _collapseDebounce.Start();
+                }
+                else if (_collapseDebounce != null)
+                {
+                    _collapseDebounce.Stop();
+                }
             }
         };
         InitTrayIcon();
         FormClosing += OnMainFormClosing;
+        FormClosed += (s, e) =>
+        {
+            try { _logFlyout?.Dispose(); } catch { /* abaikan */ }
+            try { _cpuSensor?.Dispose(); } catch { /* abaikan */ }
+        };
 
         _server = new AgentServer(this, Log, OnActivity);
 
@@ -213,14 +264,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.0.0 dimulai ===");
+            Log("=== MuseLink v3.0.1 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.0.0 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.0.1 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -239,12 +290,16 @@ public sealed class MainForm : Form
             if (!Settings.PanelOpen) _split.Panel1Collapsed = true;
             else if (_split.Width > 480) _split.SplitterDistance = 264;
             RefreshRail();
-            if (_outerSplit != null && !_outerSplit.Panel2Collapsed)
-            {
-                try { _outerSplit.SplitterDistance = Math.Max(240, _outerSplit.Height - Settings.LogPanelHeight); }
-                catch { /* abaikan */ }
-            }
             _logSetupDone = true;
+            // v3.0.1: panaskan mesin tangkap DXGI sejak awal (di
+            // utas latar) agar baris CAPTURE langsung membaca mode
+            // aslinya, bukan "gdi" bawaan sebelum bingkai pertama.
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try { using (var b = DxgiCapture.TryCapture()) { } }
+                catch { /* abaikan */ }
+            });
+            StartSensorPoller();
             _ = InitChatAsync();
             try
             {
@@ -529,7 +584,7 @@ public sealed class MainForm : Form
             BackColor = Panel,
         };
         strip.Controls.Add(stripRight);
-        _stripChevron = new ChevronButton { Dock = DockStyle.Right, Width = 24, Down = Settings.LogPanelOpen };
+        _stripChevron = new ChevronButton { Dock = DockStyle.Right, Width = 24, Down = false };
         stripRight.Controls.Add(_stripChevron);
         _stripLogLabel = new Label
         {
@@ -546,7 +601,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v3.0.0",
+            Text = "v3.0.1",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -559,27 +614,9 @@ public sealed class MainForm : Form
         _stripLogLabel.Click += (s, e) => ToggleLogPanel();
         _stripChevron.Click += (s, e) => ToggleLogPanel();
 
-        // ---------- Pemisah luar: atas (panel+chat) / bawah (log) ----------
-        _outerSplit = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            Panel1MinSize = 300,
-            Panel2MinSize = 110,
-            SplitterWidth = 6,
-            BackColor = Bg,
-            Panel2Collapsed = !Settings.LogPanelOpen,
-        };
-        _outerSplit.SplitterMoved += (s, e) =>
-        {
-            if (_logSetupDone && !_outerSplit.Panel2Collapsed)
-            {
-                try { Settings.LogPanelHeight = Math.Max(110, _outerSplit.Height - _outerSplit.SplitterDistance); }
-                catch { /* abaikan */ }
-            }
-        };
-
-        // ---------- Pemisah dalam: panel kiri + chat ----------
+        // ---------- Pemisah: panel kiri + chat ----------
+        // v3.0.1: pemisah luar (dock log bawah) PENSIUN — log
+        // kini jendela melayang; _split langsung mengisi tengah.
         _split = new SplitContainer
         {
             Dock = DockStyle.Fill,
@@ -589,16 +626,18 @@ public sealed class MainForm : Form
             Panel2Collapsed = false,
             BackColor = Bg,
         };
-        _outerSplit.Panel1.Controls.Add(_split);
 
-        // ---------- Panel log bawah ----------
-        var logPanel = _logPanel = new Panel
+        // ---------- Log melayang (v3.0.1) ----------
+        // Dock bawah pensiun: log kini jendela melayang berwarna
+        // tinta di kiri (LogFlyoutForm — konsep user "sama seperti
+        // Pengaturan, di kiri dan menyatu dengan tombol"). Kepala
+        // + badan log yang sama seperti dulu dipindah ke dalamnya.
+        var flyout = _logFlyout = new LogFlyoutForm();
+        flyout.VisibleChanged += (s, e) =>
         {
-            Dock = DockStyle.Fill,
-            BackColor = LogBg,
-            Tag = "inkbg",
+            RefreshRail();
+            if (_stripChevron != null) _stripChevron.Down = flyout.Visible;
         };
-        _outerSplit.Panel2.Controls.Add(logPanel);
 
         _logBox = new RichTextBox
         {
@@ -609,7 +648,7 @@ public sealed class MainForm : Form
             ForeColor = Ink,
             Font = new Font("Consolas", 9.5f),
             DetectUrls = false,
-            ScrollBars = RichTextBoxScrollBars.None,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
         };
         var logBody = _logCard = new Panel
         {
@@ -626,8 +665,7 @@ public sealed class MainForm : Form
         };
         var logHeader = _logHeader = new Panel
         {
-            Dock = DockStyle.Top,
-            Height = 30,
+            Dock = DockStyle.Fill,
             BackColor = LogBg,
             Tag = "inkbg",
         };
@@ -638,12 +676,12 @@ public sealed class MainForm : Form
             ForeColor = InkOnDark,
             BackColor = LogBg,
             AutoSize = true,
-            Location = new Point(12, 8),
+            Location = new Point(12, 9),
         };
         logHeader.Controls.Add(logTitle);
         _errBadge = new RoundedPanel
         {
-            Location = new Point(112, 6),
+            Location = new Point(112, 7),
             Size = new Size(60, 18),
             CornerRadius = 9,
             FillColor = LogBg,
@@ -662,9 +700,22 @@ public sealed class MainForm : Form
         };
         _errBadge.Controls.Add(_errBadgeLabel);
         logHeader.Controls.Add(_errBadge);
-        logPanel.Controls.Add(logBody);
-        logPanel.Controls.Add(logHair);
-        logPanel.Controls.Add(logHeader);
+        var logClose = new Label
+        {
+            Text = "\uE711",
+            Font = new Font("Segoe MDL2 Assets", 11f),
+            ForeColor = InkOnDark,
+            BackColor = LogBg,
+            Dock = DockStyle.Right,
+            Width = 38,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand,
+        };
+        logClose.Click += (s, e) => ToggleLogPanel();
+        logHeader.Controls.Add(logClose);
+        flyout.HeaderHost.Controls.Add(logHeader);
+        flyout.BodyHost.Controls.Add(logBody);
+        flyout.BodyHost.Controls.Add(logHair);
 
         // ---------- Panel kiri ----------
         var leftRoot = _leftRoot = new Panel
@@ -773,7 +824,7 @@ public sealed class MainForm : Form
         var tilesWrap = new Panel
         {
             Dock = DockStyle.Top,
-            Height = 158,
+            Height = 260,
             BackColor = Panel,
             Tag = "panelbg",
             Padding = new Padding(0, 12, 0, 0),
@@ -789,7 +840,10 @@ public sealed class MainForm : Form
         MakeRow(tiles, 0, "RELAY", "…", out _tileRelayValue);
         MakeRow(tiles, 1, "UPTIME", "0m", out _tileUptimeValue);
         MakeRow(tiles, 2, "CAPTURE", "…", out _tileCaptureValue);
-        MakeRow(tiles, 3, "VERSI", "3.0.0", out _tileVersionValue);
+        MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
+        MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
+        MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
+        MakeRow(tiles, 6, "VERSI", "3.0.1", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -839,7 +893,7 @@ public sealed class MainForm : Form
         // atas. Rel menempel di tuan rumah yang sama dengan pemisah
         // luar agar tingginya penuh sebadan jendela.
         var mid = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
-        mid.Controls.Add(_outerSplit);
+        mid.Controls.Add(_split);
         mid.Controls.Add(_rail);
         Controls.Add(mid);
         Controls.Add(strip);
@@ -896,13 +950,22 @@ public sealed class MainForm : Form
         _railStatusDot.Click += (s, e) => TogglePanel();
         rail.Controls.Add(statusZone);
 
-        var logBtn = _railLogBtn = new Panel
+        // v3.0.1: tombol log kini RailGlyphButton — glif digambar
+        // panelnya sendiri (bukan Label anak) karena versi Label
+        // Dock=Fill terbukti tidak menanggapi klik di v3.0.0;
+        // klik kini jatuh langsung ke panel. MouseDown dipasang
+        // sebagai jalur kedua selain Click (penjaga waktu di
+        // ToggleLogPanel mencegah pemicu ganda).
+        var logBtn = _railLogBtn = new RailGlyphButton
         {
             Location = new Point(0, 104),
             Size = new Size(56, 48),
             BackColor = Rail,
             Tag = "inkbg",
             Cursor = Cursors.Hand,
+            Glyph = "\uE8FD",
+            GlyphColor = InkOnDark,
+            GlyphSize = 15f,
         };
         _railLogBar = new Panel
         {
@@ -912,16 +975,6 @@ public sealed class MainForm : Form
             Visible = false,
         };
         logBtn.Controls.Add(_railLogBar);
-        _railLogGlyph = new Label
-        {
-            Text = "\uE8FD",
-            Font = new Font("Segoe MDL2 Assets", 15f),
-            ForeColor = InkOnDark,
-            BackColor = Rail,
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleCenter,
-        };
-        logBtn.Controls.Add(_railLogGlyph);
         _railLogDot = new RoundDot
         {
             Size = new Size(8, 8),
@@ -931,12 +984,10 @@ public sealed class MainForm : Form
             Visible = false,
         };
         logBtn.Controls.Add(_railLogDot);
-        _railLogGlyph.Click += (s, e) => ToggleLogPanel();
         logBtn.Click += (s, e) => ToggleLogPanel();
+        logBtn.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) ToggleLogPanel(); };
         logBtn.MouseEnter += (s, e) => PaintRailButton(true);
         logBtn.MouseLeave += (s, e) => RefreshRail();
-        _railLogGlyph.MouseEnter += (s, e) => PaintRailButton(true);
-        _railLogGlyph.MouseLeave += (s, e) => RefreshRail();
         rail.Controls.Add(logBtn);
 
         var setBtn = _railSettingsBtn = new Panel
@@ -969,10 +1020,9 @@ public sealed class MainForm : Form
     private void PaintRailButton(bool hover)
     {
         if (_railLogBtn == null) return;
-        bool open = _outerSplit != null && !_outerSplit.Panel2Collapsed;
+        bool open = _logFlyout != null && _logFlyout.Visible;
         Color bg = open || hover ? RailHover : Rail;
         _railLogBtn.BackColor = bg;
-        if (_railLogGlyph != null) _railLogGlyph.BackColor = bg;
         if (_railLogDot != null) _railLogDot.BackColor = bg;
         if (_railLogBar != null) _railLogBar.Visible = open;
     }
@@ -984,17 +1034,57 @@ public sealed class MainForm : Form
         if (_railLogDot != null) _railLogDot.Visible = _errorCount > 0;
     }
 
-    /// <summary>Lipat / buka panel kendali dari rel; pilihan user disimpan.</summary>
+    /// <summary>
+    /// Lipat / buka panel kendali dari rel; pilihan user disimpan.
+    /// v3.0.1: BERANIMASI — jarak pemisah bergeser halus ±170ms
+    /// (ease-out kubik), bukan muncul/hilang tiba-tiba.
+    /// </summary>
     private void TogglePanel()
     {
         if (_split == null) return;
-        bool open = _split.Panel1Collapsed;
-        _split.Panel1Collapsed = !open;
+        bool opening = _split.Panel1Collapsed;
         _panelAutoCollapsed = false;
-        try { Settings.PanelOpen = open; } catch { /* abaikan */ }
-        if (open && _split.Width > 480)
+        try { Settings.PanelOpen = opening; } catch { /* abaikan */ }
+        if (opening) AnimatePanelTo(264, false);
+        else AnimatePanelTo(25, true);
+    }
+
+    private void AnimatePanelTo(int target, bool hideAtEnd)
+    {
+        if (_panelAnimTimer == null)
         {
-            try { _split.SplitterDistance = 264; } catch { /* abaikan */ }
+            _panelAnimTimer = new System.Windows.Forms.Timer { Interval = 15 };
+            _panelAnimTimer.Tick += PanelAnimTick;
+        }
+        _panelAnimTimer.Stop();
+        if (_split.Panel1Collapsed)
+        {
+            _split.Panel1Collapsed = false;
+            try { _split.SplitterDistance = 25; } catch { /* abaikan */ }
+        }
+        _panelAnimFrom = _split.SplitterDistance;
+        _panelAnimTo = target;
+        _panelAnimHideAtEnd = hideAtEnd;
+        _panelAnimStartTick = Environment.TickCount64;
+        _panelAnimTimer.Start();
+    }
+
+    private void PanelAnimTick(object sender, EventArgs e)
+    {
+        if (_split == null) { _panelAnimTimer.Stop(); return; }
+        double t = Math.Min(1.0, (Environment.TickCount64 - _panelAnimStartTick) / 170.0);
+        double ease = 1 - Math.Pow(1 - t, 3);
+        int v = _panelAnimFrom + (int)((_panelAnimTo - _panelAnimFrom) * ease);
+        try
+        {
+            if (_split.Width > 480) _split.SplitterDistance = Math.Max(25, v);
+        }
+        catch { /* abaikan */ }
+        if (t >= 1)
+        {
+            _panelAnimTimer.Stop();
+            if (_panelAnimHideAtEnd) _split.Panel1Collapsed = true;
+            else { try { _split.SplitterDistance = 264; } catch { /* abaikan */ } }
         }
     }
 
@@ -1707,12 +1797,72 @@ public sealed class MainForm : Form
                     : Math.Max(0, up.Minutes) + "m";
             }
             if (_tileCaptureValue != null)
-                _tileCaptureValue.Text = DxgiCapture.ScaleMode == "gpu" ? "gpu" : DxgiCapture.Mode;
+            {
+                // v3.0.1: jangan tampilkan "gdi" sesaat di awal —
+                // tampilkan "…" sampai mode tangkap menetap (DXGI
+                // hidup, atau 6 detik berlalu = memang jalur GDI).
+                if (!_captureSettled)
+                {
+                    if (DxgiCapture.Mode == "dxgi"
+                        || (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalSeconds > 6)
+                        _captureSettled = true;
+                    else
+                        _tileCaptureValue.Text = "…";
+                }
+                if (_captureSettled)
+                    _tileCaptureValue.Text = DxgiCapture.ScaleMode == "gpu" ? "gpu" : DxgiCapture.Mode;
+            }
+            if (_tileRamValue != null) _tileRamValue.Text = SysSensors.RamText();
+            if (_tileCpuValue != null) _tileCpuValue.Text = _cpuText;
+            if (_tileGpuValue != null) _tileGpuValue.Text = _gpuText;
             if (_stripUptime != null && _tileUptimeValue != null)
                 _stripUptime.Text = "· Relay: " + (_tileRelayValue != null ? _tileRelayValue.Text : "…")
                     + " · Uptime " + _tileUptimeValue.Text;
         }
         catch { /* tile hanya keterangan — jangan ganggu aplikasi */ }
+    }
+
+    // ---------- Sensor sistem (v3.0.1) ----------
+    // Suhu GPU (nvidia-smi) & CPU (LibreHardwareMonitor) dibaca
+    // di utas latar tiap ±10 detik; RefreshTiles hanya menyalin
+    // teks terakhir. RAM dibaca langsung di RefreshTiles
+    // (P/Invoke ringan). Semua jalur boleh gagal dengan aman —
+    // baris menampilkan nilai terakhir yang bagus / "—".
+
+    private void StartSensorPoller()
+    {
+        _cpuSensor = new CpuTempSensor();
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            try { _cpuSensor.TryInit(); } catch { /* abaikan */ }
+            PollSensorsOnce();
+        });
+        var t = new System.Windows.Forms.Timer { Interval = 10000 };
+        t.Tick += (s, e) =>
+        {
+            if (!_sensorPollBusy)
+                System.Threading.Tasks.Task.Run(PollSensorsOnce);
+        };
+        t.Start();
+    }
+
+    private void PollSensorsOnce()
+    {
+        if (_sensorPollBusy) return;
+        _sensorPollBusy = true;
+        try
+        {
+            var g = SysSensors.GpuText();
+            if (g != null) _gpuText = g;
+            if (_cpuSensor != null)
+            {
+                var c = _cpuSensor.Read();
+                if (c.HasValue) _cpuText = c.Value + "°C";
+                else if (_cpuSensor.Failed) _cpuText = "—";
+            }
+        }
+        catch { /* sensor hanya keterangan — jangan ganggu aplikasi */ }
+        finally { _sensorPollBusy = false; }
     }
 
     // ---------- Bar judul, panel log & strip status (v2.8.0) ----------
@@ -1740,19 +1890,28 @@ public sealed class MainForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr SendMessageDrag(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-    /// <summary>Lipat / buka panel log bawah; keadaannya disimpan.</summary>
+    /// <summary>
+    /// Buka / tutup log MELAYANG (v3.0.1): jendela tinta yang
+    /// muncul menempel di kanan tombol log rel dengan animasi
+    /// geser + pudar. Penjaga 350ms mencegah pemicu ganda dari
+    /// pasangan MouseDown+Click pada tombol yang sama. Keadaan
+    /// strip & rel diselaraskan lewat VisibleChanged flyout.
+    /// </summary>
     private void ToggleLogPanel()
     {
-        if (_outerSplit == null) return;
-        bool open = _outerSplit.Panel2Collapsed;
-        _outerSplit.Panel2Collapsed = !open;
-        if (open)
+        if (_logFlyout == null || _railLogBtn == null) return;
+        long now = Environment.TickCount64;
+        if (now - _lastLogToggleTick < 350) return;
+        _lastLogToggleTick = now;
+        if (_logFlyout.Visible)
         {
-            try { _outerSplit.SplitterDistance = Math.Max(240, _outerSplit.Height - Settings.LogPanelHeight); }
-            catch { /* abaikan */ }
+            _logFlyout.HideAnimated();
         }
-        try { Settings.LogPanelOpen = open; } catch { /* abaikan */ }
-        if (_stripChevron != null) { _stripChevron.Down = open; _stripChevron.Invalidate(); }
+        else
+        {
+            var anchor = _railLogBtn.RectangleToScreen(_railLogBtn.ClientRectangle);
+            _logFlyout.ShowAnchored(anchor, this);
+        }
         RefreshRail();
     }
 
@@ -1924,6 +2083,9 @@ public sealed class MainForm : Form
         if (_tileUptimeValue != null) { _tileUptimeValue.ForeColor = Ink; _tileUptimeValue.BackColor = Card; }
         if (_tileCaptureValue != null) { _tileCaptureValue.ForeColor = Ink; _tileCaptureValue.BackColor = Card; }
         if (_tileVersionValue != null) { _tileVersionValue.ForeColor = Ink; _tileVersionValue.BackColor = Card; }
+        if (_tileRamValue != null) { _tileRamValue.ForeColor = Ink; _tileRamValue.BackColor = Card; }
+        if (_tileCpuValue != null) { _tileCpuValue.ForeColor = Ink; _tileCpuValue.BackColor = Card; }
+        if (_tileGpuValue != null) { _tileGpuValue.ForeColor = Ink; _tileGpuValue.BackColor = Card; }
         if (_logoBox != null) _logoBox.BackColor = Card;
         RefreshStatusPill();
         if (_logBox != null)
@@ -1943,7 +2105,6 @@ public sealed class MainForm : Form
         // agar tidak ditimpa aturan panel polosnya.
         if (_titleBar != null) _titleBar.BackColor = Bg;
         if (_statusStrip != null) _statusStrip.BackColor = Bg;
-        if (_outerSplit != null) _outerSplit.BackColor = Bg;
         if (_barTitle != null) { _barTitle.ForeColor = Ink; _barTitle.BackColor = Bg; }
         if (_titleLogo != null) _titleLogo.BackColor = Bg;
         if (_titleDot != null) _titleDot.BackColor = Bg;
@@ -1957,7 +2118,12 @@ public sealed class MainForm : Form
         if (_railSettingsBtn != null) _railSettingsBtn.BackColor = Rail;
         if (_railSettingsGlyph != null) { _railSettingsGlyph.ForeColor = InkOnDark; _railSettingsGlyph.BackColor = Rail; }
         RefreshRail();
-        if (_logPanel != null) _logPanel.BackColor = LogBg;
+        if (_logFlyout != null)
+        {
+            _logFlyout.BackColor = LogBg;
+            _logFlyout.HeaderHost.BackColor = LogBg;
+            _logFlyout.BodyHost.BackColor = LogBg;
+        }
         if (_logTitleLabel != null) { _logTitleLabel.ForeColor = InkOnDark; _logTitleLabel.BackColor = LogBg; }
         if (_logHeader != null) _logHeader.BackColor = LogBg;
         if (_logHair != null) _logHair.BackColor = RailHover;

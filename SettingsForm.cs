@@ -65,6 +65,20 @@ public sealed class SettingsForm : Form
 
         RefreshServerButton();
         ApplyTheme();
+
+        // v3.0.1: muncul dengan pudar masuk singkat — tidak polos
+        // muncul tiba-tiba (permintaan user, sejalan flyout log).
+        Opacity = 0;
+        Shown += (s, e) =>
+        {
+            var fade = new Timer { Interval = 15 };
+            fade.Tick += (s2, e2) =>
+            {
+                Opacity = Math.Min(1.0, Opacity + 0.16);
+                if (Opacity >= 1.0) fade.Stop();
+            };
+            fade.Start();
+        };
     }
 
     private Label MakeLabel(string text, int x, int y, float size, bool bold, bool dim)
@@ -145,7 +159,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v3.0.0", 20, 372, 8.5f, false, true);
+        MakeLabel("MuseLink v3.0.1", 20, 372, 8.5f, false, true);
     }
 
     /// <summary>Teks &amp; warna tombol server mengikuti keadaan listener.</summary>

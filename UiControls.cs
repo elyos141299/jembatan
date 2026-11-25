@@ -476,3 +476,40 @@ public class GradientBar : Control
             g.FillPath(brush, path);
     }
 }
+
+/// <summary>
+/// Tombol rel yang menggambar glif MDL2-nya SENDIRI lewat OnPaint
+/// (v3.0.1). Lahir dari cacat terbukti v3.0.0: tombol log rel yang
+/// glifnya berupa Label Dock=Fill tidak menanggapi klik sama
+/// sekali (kontrol tetangganya — Panel polos & PictureBox —
+/// normal). Dengan glif digambar panelnya sendiri, tidak ada
+/// kontrol anak yang menelan klik: klik jatuh ke panel ini dan
+/// MouseDown/Click-nya bisa diandalkan. Anak (garis sage, titik
+/// error) tetap kontrol terpisah di atas gambar.
+/// </summary>
+public class RailGlyphButton : Panel
+{
+    public string Glyph { get; set; } = "";
+    public Color GlyphColor { get; set; } = Color.White;
+    public float GlyphSize { get; set; } = 15f;
+
+    public RailGlyphButton()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        if (string.IsNullOrEmpty(Glyph)) return;
+        e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        using (var font = new Font("Segoe MDL2 Assets", GlyphSize))
+        using (var brush = new SolidBrush(GlyphColor))
+        {
+            var sz = e.Graphics.MeasureString(Glyph, font);
+            e.Graphics.DrawString(Glyph, font, brush,
+                (Width - sz.Width) / 2f, (Height - sz.Height) / 2f);
+        }
+    }
+}

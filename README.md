@@ -1,4 +1,30 @@
-# MuseLink v3.0.0 — catatan pengembang
+# MuseLink v3.0.1 — catatan pengembang
+
+## v3.0.1 — Log melayang, animasi & sensor sistem (permintaan user 25 Nov 2026)
+
+- **Tombol log rel DIPERBAIKI + log jadi jendela MELAYANG:** cacat
+  terbukti v3.0.0 (tombol log rel tidak menanggapi klik — glif
+  Label Dock=Fill) diganti `RailGlyphButton` yang menggambar
+  glifnya sendiri + jalur MouseDown kedua. Dock log bawah
+  PENSIUN: log kini `LogFlyoutForm` — jendela tinta tanpa bingkai
+  yang muncul menempel di kanan tombol rel, melayang di atas
+  chat (konsep user: "sama seperti Pengaturan, di kiri dan
+  menyatu dengan tombol"), lengkap dengan tombol ✕ + Esc.
+- **Animasi (permintaan user — "tidak polos muncul tiba-tiba"):**
+  flyout log geser+pudar masuk/keluar, lipat/buka panel kendali
+  bergeser halus ±170ms, jendela Pengaturan pudar masuk.
+- **Baris sensor baru di kartu rincian:** RAM (GlobalMemoryStatusEx
+  native), GPU "suhu · beban" (nvidia-smi), suhu CPU
+  (LibreHardwareMonitorLib 0.9.6 — WMI ACPI terbukti tidak
+  didukung motherboard ini; bila driver sensor diblokir Windows,
+  baris CPU menampilkan "—"). Kartu rincian kini 7 baris:
+  RELAY/UPTIME/CAPTURE/RAM/CPU/GPU/VERSI.
+- **Koreksi audit UI:** baris CAPTURE tidak lagi menampilkan
+  "gdi" sesaat di awal (DXGI dipanaskan sejak Load + label "…"
+  sampai mode menetap); lipat-otomatis panel ditunda ±450ms agar
+  lebar sesaat saat jendela dipulihkan tidak melipat panel
+  permanen; flyout ikut sembunyi saat jendela terminimalkan;
+  kotak log kini punya scrollbar vertikal.
 
 ## v3.0.0 — ROMBAK TOTAL sesuai blueprint final (disetujui user 25 Nov 2026)
 
