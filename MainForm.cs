@@ -122,7 +122,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "4.0.2";
+            return "4.1.0";
         }
     }
     private Label _tileRamValue;
@@ -2864,12 +2864,34 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Menulis satu baris ke log jendela (aman dari thread mana pun).</summary>
+    // Buffer cincin baris log untuk halaman System Logs Control
+    // Room (v4.1.0) — maks 300 baris, dicap waktu saat masuk.
+    private readonly List<string> _logRing = new List<string>();
+
+    /// <summary>Salinan baris log terakhir untuk UI (v4.1.0),
+    /// format "HH:mm:ss\tisi", tertua dulu.</summary>
+    internal List<string> RecentLogLines(int max)
+    {
+        lock (_logRing)
+        {
+            int skip = Math.Max(0, _logRing.Count - max);
+            var hasil = new List<string>();
+            for (int i = skip; i < _logRing.Count; i++) hasil.Add(_logRing[i]);
+            return hasil;
+        }
+    }
+
     public void Log(string message)
     {
         if (InvokeRequired)
         {
             BeginInvoke(new Action(() => Log(message)));
             return;
+        }
+        lock (_logRing)
+        {
+            _logRing.Add(DateTime.Now.ToString("HH:mm:ss") + "\t" + message);
+            while (_logRing.Count > 300) _logRing.RemoveAt(0);
         }
         // v2.4.2: baris log dipotong rapi — perintah yang sangat
         // panjang (mis. naskah PowerShell) tidak lagi membanjiri

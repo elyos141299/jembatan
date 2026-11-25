@@ -31,6 +31,9 @@ public sealed class RoomShell : Panel
     private readonly System.Windows.Forms.Timer _timer;
     private readonly OverviewPage _overview;
     private readonly ActivityPage _activity;
+    private readonly CommandPage _command;
+    private readonly DesktopPage _desktop;
+    private readonly LogsPage _logs;
     private string _currentPage = "";
     private DateTime _lastActivity = DateTime.MinValue;
 
@@ -241,20 +244,20 @@ public sealed class RoomShell : Panel
         // ---------- Halaman ----------
         _overview = new OverviewPage(owner, server);
         _activity = new ActivityPage(server);
+        _command = new CommandPage(server);
+        _desktop = new DesktopPage();
+        _logs = new LogsPage(owner, server);
         RegisterPage("overview", _overview);
         RegisterPage("activity", _activity);
-        RegisterPage("command", new PlaceholderPage("Command Center",
-            "Tahap v4.1.0 — konsol endpoint bridge dibangun di tahap berikutnya."));
-        RegisterPage("desktop", new PlaceholderPage("Desktop Control",
-            "Tahap v4.1.0 — kendali jendela & pratinjau desktop dibangun di tahap berikutnya."));
+        RegisterPage("command", _command);
+        RegisterPage("desktop", _desktop);
         RegisterPage("automation", new PlaceholderPage("Automation",
             "Tahap v4.2.0 — rutinitas & perilaku otomatis dibangun di tahap berikutnya."));
         RegisterPage("security", new PlaceholderPage("Permissions & Security",
             "Tahap v4.2.0 — panel izin & keamanan dibangun di tahap berikutnya."));
         RegisterPage("connections", new PlaceholderPage("Connections",
             "Tahap v4.2.0 — status koneksi bridge/Tailscale dibangun di tahap berikutnya."));
-        RegisterPage("logs", new PlaceholderPage("System Logs",
-            "Tahap v4.1.0 — sementara itu log lengkap tetap tersedia lewat tombol Log di kiri bawah."));
+        RegisterPage("logs", _logs);
         ShowPage("overview");
 
         _timer = new System.Windows.Forms.Timer { Interval = 2000 };
@@ -351,6 +354,8 @@ public sealed class RoomShell : Panel
         };
         if (key == "overview") _overview.RefreshAsync();
         if (key == "activity") _activity.RefreshList();
+        if (key == "desktop") _desktop.RefreshAll();
+        if (key == "logs") _logs.RefreshList();
     }
 
     private void OnStopClicked()
@@ -396,6 +401,8 @@ public sealed class RoomShell : Panel
             _activityLabel.Location = new Point(_stopBtn.Left - _activityLabel.Width - 14, 19);
             if (_currentPage == "overview" && _overview.Visible) _overview.RefreshAsync();
             if (_currentPage == "activity" && _activity.Visible) _activity.RefreshIfAuto();
+            if (_currentPage == "desktop" && _desktop.Visible) _desktop.RefreshIfVisible();
+            if (_currentPage == "logs" && _logs.Visible) _logs.RefreshIfAuto();
         }
         catch { /* penyegaran kerangka tidak boleh menjatuhkan aplikasi */ }
     }
