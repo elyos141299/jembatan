@@ -207,6 +207,25 @@ public static class EventLog
                     foreach (var kv in nowW) _winTitles[kv.Key] = kv.Value;
                 }
 
+                // Rekonsiliasi fokus (v3.9.0): perubahan foreground
+                // yang digerakkan input injeksi MuseLink sendiri
+                // terbukti tidak selalu sampai ke hook-nya sendiri —
+                // pemantau menambal: bila jendela depan berbeda dari
+                // fokus terakhir yang tercatat hook, catat di sini
+                // (latensi ≤2 dtk; perubahan dari user/aplikasi lain
+                // tetap real-time lewat hook).
+                try
+                {
+                    IntPtr fgNow = NativeInput.ForegroundHandle();
+                    if (fgNow != IntPtr.Zero && fgNow != _lastFocusHwnd)
+                    {
+                        _lastFocusHwnd = fgNow;
+                        _lastFocusTick = Environment.TickCount64;
+                        Add("focus", NativeInput.TitleOf(fgNow), fgNow.ToInt64(), NativeInput.PidOf(fgNow));
+                    }
+                }
+                catch { /* rekonsiliasi hanya pelengkap */ }
+
                 // Menganggur: ambang 5 menit tanpa masukan.
                 bool nowIdle = NativeInput.IdleSeconds() >= 300;
                 if (nowIdle && !idle) Add("idle-start", "tidak ada masukan selama 5 menit");
