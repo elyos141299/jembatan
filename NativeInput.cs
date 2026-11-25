@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Windows.Forms;
 
 namespace Jembatan;
 
@@ -342,11 +341,19 @@ public static class NativeInput
         mouse_event(up, 0, 0, 0, UIntPtr.Zero);
     }
 
-    /// <summary>Mengetik teks biasa; karakter khusus SendKeys di-escape otomatis.</summary>
+    /// <summary>Mengetik teks biasa (v5.0.0: SendInput murni,
+    /// dulu SendKeys WinForms). Enter/tab menjadi tombol sungguhan,
+    /// karakter lain lewat jalur Unicode per karakter.</summary>
     public static void TypeText(string text)
     {
         if (string.IsNullOrEmpty(text)) return;
-        SendKeys.SendWait(Escape(text));
+        foreach (char c in text)
+        {
+            if (c == '\r') continue;
+            if (c == '\n') { TapKey(VkReturn); continue; }
+            if (c == '\t') { TapKey(VkTab); continue; }
+            TypeUnicode(c.ToString());
+        }
     }
 
     // ---------- Ketik Unicode lewat SendInput (v2.4.0) ----------
@@ -621,9 +628,7 @@ public static class NativeInput
             var full = DxgiCapture.TryCapture();
             if (full != null)
             {
-                var bnd0 = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 1280, 720);
+                var bnd0 = PrimaryBounds();
                 int tw0 = Math.Min(maxWidth, bnd0.Width);
                 if (tw0 <= 0) tw0 = bnd0.Width;
                 int th0 = Math.Max(1, (int)(bnd0.Height * (tw0 / (double)bnd0.Width)));
@@ -639,9 +644,7 @@ public static class NativeInput
             }
         }
         catch { /* jatuh ke GDI */ }
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
+        var bounds = PrimaryBounds();
         int tw = Math.Min(maxWidth, bounds.Width);
         if (tw <= 0) tw = bounds.Width;
         int th = Math.Max(1, (int)(bounds.Height * (tw / (double)bounds.Width)));
@@ -759,14 +762,15 @@ public static class NativeInput
     /// <summary>
     /// Menekan satu tombol khusus ("ENTER", "TAB", "ESC", "F5", ...)
     /// atau kombinasi dalam sintaks SendKeys ("^c" = Ctrl+C, "%{F4}" = Alt+F4).
+    /// v5.0.0: diuraikan sendiri ke SendInput — SendKeys WinForms hilang.
     /// </summary>
     public static void PressKey(string keys)
     {
         if (string.IsNullOrWhiteSpace(keys)) return;
         string k = keys.Trim();
-        if (SpecialKeys.TryGetValue(k, out string token))
+        if (SpecialKeys.TryGetValue(k, out ushort vkOnly))
         {
-            SendKeys.SendWait(token);
+            TapKey(vkOnly);
             return;
         }
         // v3.6.0 (BUG-05 audit): nama tak dikenal TIDAK lagi diketik
@@ -777,80 +781,140 @@ public static class NativeInput
         if (k.Length == 1 || c0 == '^' || c0 == '%' || c0 == '~' ||
             c0 == '+' || c0 == '{' || c0 == '(')
         {
-            SendKeys.SendWait(k);
+            SendKeysSyntax(k);
             return;
         }
         throw new ArgumentException("nama tombol tidak dikenal: " + keys);
     }
 
-    // Nama tombol -> token SendKeys yang harus dikirim.
-    private static readonly Dictionary<string, string> SpecialKeys =
-        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "ENTER", "{ENTER}" },
-            { "TAB", "{TAB}" },
-            { "ESC", "{ESC}" },
-            { "ESCAPE", "{ESC}" },
-            { "BACKSPACE", "{BACKSPACE}" },
-            { "BKSP", "{BACKSPACE}" },
-            { "DELETE", "{DELETE}" },
-            { "DEL", "{DELETE}" },
-            { "INSERT", "{INSERT}" },
-            { "INS", "{INSERT}" },
-            { "UP", "{UP}" },
-            { "DOWN", "{DOWN}" },
-            { "LEFT", "{LEFT}" },
-            { "RIGHT", "{RIGHT}" },
-            { "HOME", "{HOME}" },
-            { "END", "{END}" },
-            { "PGUP", "{PGUP}" },
-            { "PAGEUP", "{PGUP}" },
-            { "PGDN", "{PGDN}" },
-            { "PAGEDOWN", "{PGDN}" },
-            { "SPACE", " " },
-            { "CAPSLOCK", "{CAPSLOCK}" },
-            { "NUMLOCK", "{NUMLOCK}" },
-            { "SCROLLLOCK", "{SCROLLLOCK}" },
-            { "PRTSC", "{PRTSC}" },
-            { "F1", "{F1}" }, { "F2", "{F2}" }, { "F3", "{F3}" }, { "F4", "{F4}" },
-            { "F5", "{F5}" }, { "F6", "{F6}" }, { "F7", "{F7}" }, { "F8", "{F8}" },
-            { "F9", "{F9}" }, { "F10", "{F10}" }, { "F11", "{F11}" }, { "F12", "{F12}" },
-        };
-
-    // Karakter yang punya arti khusus di SendKeys dibungkus kurung kurawal,
-    // mis. "+" menjadi "{+}". Enter/tab menjadi tombol sungguhan.
-    private static string Escape(string text)
+    // Pengurai sintaks SendKeys -> SendInput (v5.0.0). Modifier
+    // (^ Ctrl, % Alt, + Shift) menempel ke tombol berikutnya, ~
+    // berarti Enter, {NAMA} tombol bernama / karakter literal,
+    // (grup) menerapkan modifier ke semua karakter di dalamnya.
+    private static void SendKeysSyntax(string s)
     {
-        var sb = new StringBuilder(text.Length + 16);
-        foreach (char c in text)
+        var mods = new List<ushort>();
+        int i = 0;
+        try
         {
-            switch (c)
+            while (i < s.Length)
             {
-                case '\r':
-                    break; // pasangan \r\n cukup satu {ENTER} dari \n
-                case '\n':
-                    sb.Append("{ENTER}");
-                    break;
-                case '\t':
-                    sb.Append("{TAB}");
-                    break;
-                case '+':
-                case '^':
-                case '%':
-                case '~':
-                case '(':
-                case ')':
-                case '{':
-                case '}':
-                case '[':
-                case ']':
-                    sb.Append('{').Append(c).Append('}');
-                    break;
-                default:
-                    sb.Append(c);
-                    break;
+                char c = s[i];
+                if (c == '^') { KeyDown(VkControl); mods.Add(VkControl); i++; continue; }
+                if (c == '%') { KeyDown(VkMenu); mods.Add(VkMenu); i++; continue; }
+                if (c == '+') { KeyDown(VkShift); mods.Add(VkShift); i++; continue; }
+                if (c == '~') { TapKey(VkReturn); i++; continue; }
+                if (c == '(')
+                {
+                    int close = s.IndexOf(')', i);
+                    if (close < 0) close = s.Length;
+                    for (int j = i + 1; j < close; j++) TapChar(s[j]);
+                    i = close + 1;
+                    ReleaseMods(mods);
+                    continue;
+                }
+                if (c == '{')
+                {
+                    int close = s.IndexOf('}', i);
+                    if (close < 0) throw new ArgumentException("kurung kurawal tak tertutup: " + s);
+                    string name = s.Substring(i + 1, close - i - 1);
+                    if (name.Length == 1) TypeUnicode(name);
+                    else if (SpecialKeys.TryGetValue(name, out ushort vk)) TapKey(vk);
+                    else throw new ArgumentException("nama tombol tidak dikenal: " + name);
+                    i = close + 1;
+                    ReleaseMods(mods);
+                    continue;
+                }
+                TapChar(c);
+                ReleaseMods(mods);
+                i++;
             }
         }
-        return sb.ToString();
+        finally { ReleaseMods(mods); }
     }
+
+    private static void ReleaseMods(List<ushort> mods)
+    {
+        for (int i = mods.Count - 1; i >= 0; i--) KeyUp(mods[i]);
+        mods.Clear();
+    }
+
+    private static void TapChar(char c)
+    {
+        short r = VkKeyScanW(c);
+        if (r == -1) { TypeUnicode(c.ToString()); return; }
+        ushort vk = (ushort)(r & 0xFF);
+        int state = (r >> 8) & 0xFF;
+        bool shift = (state & 1) != 0, ctrl = (state & 2) != 0, alt = (state & 4) != 0;
+        if (shift) KeyDown(VkShift);
+        if (ctrl) KeyDown(VkControl);
+        if (alt) KeyDown(VkMenu);
+        TapKey(vk);
+        if (alt) KeyUp(VkMenu);
+        if (ctrl) KeyUp(VkControl);
+        if (shift) KeyUp(VkShift);
+    }
+
+    internal static void TapKey(ushort vk)
+    {
+        KeyDown(vk);
+        KeyUp(vk);
+    }
+
+    // Kode tombol virtual untuk pengurai & pengetik.
+    private const ushort VkTab = 0x09;
+    private const ushort VkReturn = 0x0D;
+    private const ushort VkShift = 0x10;
+    private const ushort VkControl = 0x11;
+    private const ushort VkMenu = 0x12;
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern short VkKeyScanW(char ch);
+
+    /// <summary>Batas monitor utama dalam piksel fisik (pengganti
+    /// Screen.PrimaryScreen.Bounds milik WinForms).</summary>
+    public static Rectangle PrimaryBounds()
+    {
+        int w = GetSystemMetrics(0); // SM_CXSCREEN
+        int h = GetSystemMetrics(1); // SM_CYSCREEN
+        if (w <= 0 || h <= 0) return new Rectangle(0, 0, 1280, 720);
+        return new Rectangle(0, 0, w, h);
+    }
+
+    // Nama tombol -> kode virtual (v5.0.0; dulu token SendKeys).
+    private static readonly Dictionary<string, ushort> SpecialKeys =
+        new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "ENTER", 0x0D },
+            { "TAB", 0x09 },
+            { "ESC", 0x1B },
+            { "ESCAPE", 0x1B },
+            { "BACKSPACE", 0x08 },
+            { "BKSP", 0x08 },
+            { "DELETE", 0x2E },
+            { "DEL", 0x2E },
+            { "INSERT", 0x2D },
+            { "INS", 0x2D },
+            { "UP", 0x26 },
+            { "DOWN", 0x28 },
+            { "LEFT", 0x25 },
+            { "RIGHT", 0x27 },
+            { "HOME", 0x24 },
+            { "END", 0x23 },
+            { "PGUP", 0x21 },
+            { "PAGEUP", 0x21 },
+            { "PGDN", 0x22 },
+            { "PAGEDOWN", 0x22 },
+            { "SPACE", 0x20 },
+            { "CAPSLOCK", 0x14 },
+            { "NUMLOCK", 0x90 },
+            { "SCROLLLOCK", 0x91 },
+            { "PRTSC", 0x2C },
+            { "F1", 0x70 }, { "F2", 0x71 }, { "F3", 0x72 }, { "F4", 0x73 },
+            { "F5", 0x74 }, { "F6", 0x75 }, { "F7", 0x76 }, { "F8", 0x77 },
+            { "F9", 0x78 }, { "F10", 0x79 }, { "F11", 0x7A }, { "F12", 0x7B },
+        };
 }

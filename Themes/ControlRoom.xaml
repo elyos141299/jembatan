@@ -1,0 +1,157 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Token Control Room (dari RoomTheme WinForms yang dihapus —
+         palet gelap + aksen Pasangan 4 yang dikunci user). -->
+    <Color x:Key="CrBgColor">#131316</Color>
+    <Color x:Key="CrSidebarColor">#17171B</Color>
+    <Color x:Key="CrPanelColor">#1B1B20</Color>
+    <Color x:Key="CrCardColor">#212129</Color>
+    <Color x:Key="CrBorderColor">#2C2C36</Color>
+    <Color x:Key="CrTextColor">#ECECF1</Color>
+    <Color x:Key="CrMutedColor">#A6A6B0</Color>
+    <Color x:Key="CrFaintColor">#6E6E78</Color>
+    <Color x:Key="CrAccentColor">#8B6CC1</Color>
+    <Color x:Key="CrSageColor">#9CAF88</Color>
+    <Color x:Key="CrGoldColor">#F2D492</Color>
+    <Color x:Key="CrGreenColor">#5BBB63</Color>
+    <Color x:Key="CrRedColor">#C4453C</Color>
+    <Color x:Key="CrStopFillColor">#8C2B23</Color>
+
+    <SolidColorBrush x:Key="CrBg" Color="{StaticResource CrBgColor}"/>
+    <SolidColorBrush x:Key="CrSidebar" Color="{StaticResource CrSidebarColor}"/>
+    <SolidColorBrush x:Key="CrPanel" Color="{StaticResource CrPanelColor}"/>
+    <SolidColorBrush x:Key="CrCard" Color="{StaticResource CrCardColor}"/>
+    <SolidColorBrush x:Key="CrBorder" Color="{StaticResource CrBorderColor}"/>
+    <SolidColorBrush x:Key="CrText" Color="{StaticResource CrTextColor}"/>
+    <SolidColorBrush x:Key="CrMuted" Color="{StaticResource CrMutedColor}"/>
+    <SolidColorBrush x:Key="CrFaint" Color="{StaticResource CrFaintColor}"/>
+    <SolidColorBrush x:Key="CrAccent" Color="{StaticResource CrAccentColor}"/>
+    <SolidColorBrush x:Key="CrSage" Color="{StaticResource CrSageColor}"/>
+    <SolidColorBrush x:Key="CrGold" Color="{StaticResource CrGoldColor}"/>
+    <SolidColorBrush x:Key="CrGreen" Color="{StaticResource CrGreenColor}"/>
+    <SolidColorBrush x:Key="CrRed" Color="{StaticResource CrRedColor}"/>
+    <SolidColorBrush x:Key="CrStopFill" Color="{StaticResource CrStopFillColor}"/>
+
+    <!-- Tipografi -->
+    <Style x:Key="CrTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="20"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+    </Style>
+    <Style x:Key="CrCardTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource CrMuted}"/>
+    </Style>
+    <Style x:Key="CrBody" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+    </Style>
+    <Style x:Key="CrMutedText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{StaticResource CrMuted}"/>
+    </Style>
+    <Style x:Key="CrBigValue" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="17"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+    </Style>
+
+    <!-- Kartu -->
+    <Style x:Key="CrCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource CrCard}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="Padding" Value="14"/>
+    </Style>
+
+    <!-- Tombol dasar -->
+    <Style x:Key="CrButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource CrCard}"/>
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,6"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="8" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="{StaticResource CrPanel}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Tombol Emergency Stop -->
+    <Style x:Key="CrStopButton" TargetType="Button" BasedOn="{StaticResource CrButton}">
+        <Setter Property="Background" Value="{StaticResource CrStopFill}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrRed}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="White"/>
+    </Style>
+
+    <!-- Baris navigasi sidebar -->
+    <Style x:Key="CrNavButton" TargetType="RadioButton">
+        <Setter Property="Foreground" Value="{StaticResource CrMuted}"/>
+        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="Padding" Value="14,9"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Bd" Background="Transparent" CornerRadius="8"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrPanel}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                            <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Kotak teks -->
+    <Style x:Key="CrTextBox" TargetType="TextBox">
+        <Setter Property="Background" Value="{StaticResource CrPanel}"/>
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="CaretBrush" Value="{StaticResource CrText}"/>
+    </Style>
+
+    <!-- Daftar -->
+    <Style x:Key="CrListBox" TargetType="ListBox">
+        <Setter Property="Background" Value="{StaticResource CrPanel}"/>
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="FontSize" Value="12.5"/>
+    </Style>
+
+</ResourceDictionary>

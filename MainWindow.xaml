@@ -1,0 +1,20 @@
+<Window x:Class="Jembatan.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MuseLink — Control Room"
+        Width="1280" Height="800" MinWidth="900" MinHeight="600"
+        Background="{StaticResource CrBg}"
+        Foreground="{StaticResource CrText}"
+        FontFamily="Segoe UI"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock Text="MuseLink Control Room" Style="{StaticResource CrTitle}"
+                       FontSize="28" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="VersionText" Style="{StaticResource CrMutedText}"
+                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
+            <TextBlock Text="Kerangka WPF — halaman Control Room dibangun di tahap berikutnya."
+                       Style="{StaticResource CrMutedText}" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -14,7 +14,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace Jembatan;
 
@@ -72,10 +71,10 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "4.2.0";
+        return "5.0.0";
     }
 
-    private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
+    private readonly IUiHost _ui;               // jendela utama, untuk Invoke ke thread UI
     private readonly Action<string> _log;       // tulis ke log jendela
     private readonly Action _onActivity;        // dipanggil tiap ada permintaan masuk
 
@@ -100,7 +99,7 @@ public sealed class AgentServer
     private readonly HashSet<ushort> _heldKeys = new HashSet<ushort>();
     private readonly object _heldLock = new object();
 
-    public AgentServer(Control ui, Action<string> log, Action onActivity)
+    public AgentServer(IUiHost ui, Action<string> log, Action onActivity)
     {
         _ui = ui;
         _log = log;
@@ -726,9 +725,7 @@ public sealed class AgentServer
                 {
                     png = OnUi(() =>
                     {
-                        var bnd = Screen.PrimaryScreen != null
-                            ? Screen.PrimaryScreen.Bounds
-                            : new Rectangle(0, 0, 1280, 720);
+                        var bnd = NativeInput.PrimaryBounds();
                         using (var bmp = CaptureFullBitmap())
                         {
                             if (sGrid) DrawGrid(bmp, bnd, sStep);
@@ -801,7 +798,7 @@ public sealed class AgentServer
                 string text = OnUi(() =>
                 {
                     // Clipboard bisa sedang dikunci aplikasi lain — gagal = teks kosong.
-                    try { return Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+                    try { return System.Windows.Clipboard.ContainsText() ? System.Windows.Clipboard.GetText() : ""; }
                     catch { return ""; }
                 });
                 _log($"clipboard dibaca ({text.Length} karakter)");
@@ -833,9 +830,7 @@ public sealed class AgentServer
             if (req.Method == "GET" && req.Path == "/sysinfo")
             {
                 _onActivity();
-                var bounds = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 0, 0);
+                var bounds = NativeInput.PrimaryBounds();
                 // Metrik kesehatan PC (v2.4.0 gelombang 2) — diukur
                 // di thread koneksi ini (±250ms untuk cuplikan CPU).
                 var met = NativeInput.SystemMetrics();
@@ -860,7 +855,7 @@ public sealed class AgentServer
                     ["appUptimeSec"] = (int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalSeconds,
                     ["keepAwake"] = NativeInput.KeepAwakeOn,
                     ["theme"] = Settings.Theme,
-                    ["themeDark"] = AppTheme.IsDark,
+                    ["themeDark"] = UiThemeState.IsDark,
                     ["tailscaleRelay"] = TailscaleRelay(),
                     ["eventsLastSeq"] = EventLog.LastSeq,
                     // v2.7.0: mesin tangkap layar yang sedang aktif.
@@ -886,7 +881,7 @@ public sealed class AgentServer
                     foreach (var w in wins)
                         if (w.Handle == fgHandle) { fg = w; break; }
                     int clipLen = -1;
-                    try { clipLen = Clipboard.ContainsText() ? Clipboard.GetText().Length : 0; }
+                    try { clipLen = System.Windows.Clipboard.ContainsText() ? System.Windows.Clipboard.GetText().Length : 0; }
                     catch { /* clipboard terkunci sesaat */ }
                     return (wins, fg, clipLen, fgHandle);
                 });
@@ -922,9 +917,7 @@ public sealed class AgentServer
                     try { return Process.GetProcessesByName(name).Length > 0; }
                     catch { return false; }
                 }
-                var bounds = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 0, 0);
+                var bounds = NativeInput.PrimaryBounds();
                 _log($"konteks instan diminta ({winList.Count} jendela)");
                 return Response.JsonObject(new Dictionary<string, object>
                 {
@@ -3395,7 +3388,7 @@ public sealed class AgentServer
                             if (choice != "device" && choice != "light" && choice != "dark")
                                 return Response.Json("{\"ok\":false,\"error\":\"choice harus device, light, atau dark\"}", 400);
                             _onActivity();
-                            if (_ui is MainForm mf) mf.SetTheme(choice);
+                            _ui.SetTheme(choice);
                             else
                             {
                                 try { Settings.Theme = choice; } catch { }
@@ -3405,7 +3398,7 @@ public sealed class AgentServer
                             {
                                 ["ok"] = true,
                                 ["theme"] = choice,
-                                ["dark"] = AppTheme.IsDark,
+                                ["dark"] = UiThemeState.IsDark,
                             });
                         }
                         case "/keepawake":
@@ -3414,7 +3407,7 @@ public sealed class AgentServer
                             // logika sama dengan saklar di Pengaturan.
                             bool on = GetBool(root, "on", false);
                             _onActivity();
-                            if (_ui is MainForm mf2) mf2.ApplyKeepAwake(on);
+                            _ui.ApplyKeepAwake(on);
                             else
                             {
                                 try { Settings.KeepAwake = on; } catch { }
@@ -3648,7 +3641,7 @@ public sealed class AgentServer
                                     NativeInput.PressKey("^a");
                                     NativeInput.PressKey("^c");
                                     System.Threading.Thread.Sleep(60);
-                                    try { return Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+                                    try { return System.Windows.Clipboard.ContainsText() ? System.Windows.Clipboard.GetText() : ""; }
                                     catch { return ""; }
                                 });
                             }

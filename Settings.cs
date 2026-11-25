@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.Security.Principal;
-using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace Jembatan;
@@ -401,7 +400,7 @@ internal static class Settings
         {
             var psi = new ProcessStartInfo
             {
-                FileName = Environment.ProcessPath ?? Application.ExecutablePath,
+                FileName = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Jembatan.exe"),
                 Arguments = JoinArgs(args),
                 UseShellExecute = true,
                 Verb = "runas",

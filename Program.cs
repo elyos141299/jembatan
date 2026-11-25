@@ -1,6 +1,5 @@
 using System;
 using System.Threading;
-using System.Windows.Forms;
 
 namespace Jembatan;
 
@@ -54,11 +53,11 @@ internal static class Program
         }
 
         // Selaras dengan app.manifest (dpiAwareness PerMonitorV2):
-        // koordinat layar selalu piksel fisik.
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new MainForm());
+        // koordinat layar selalu piksel fisik — WPF membaca
+        // manifest yang sama. UI WPF dimulai dari sini (v5.0.0).
+        var app = new App();
+        app.InitializeComponent();
+        app.Run();
 
         ReleaseSingleInstance();
     }

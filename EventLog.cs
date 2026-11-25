@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
-using System.Windows.Forms;
 
 namespace Jembatan;
 
@@ -265,7 +264,7 @@ public static class EventLog
     private static long _lastFocusTick;
 
     /// <summary>Pasang hook di thread UI (dipanggil AgentServer.Start).</summary>
-    public static void StartHooks(Control ui)
+    public static void StartHooks(IUiHost ui)
     {
         if (ui == null) return;
         try
