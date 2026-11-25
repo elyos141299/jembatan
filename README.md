@@ -283,8 +283,10 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `POST /keys/release` | — | `{ok, released:[...]}` — lepas semua tombol yang sedang ditahan server (v3.6.0); tombol juga lepas otomatis saat server berhenti |
 | `POST /locate` | `{text, mode?: auto\|uia\|ocr, click?, marks?}` | `{ok, found, via, count, candidates:[{via, text, type, x, y, w, h, cx, cy, cid}], clicked, session, sessionTtlSec}` — Visual Grounding satu panggilan (v3.6.0); sesi + cid sejak v3.7.0 |
 | `POST /locate/act` | `{session, cid? \| index?}` | `{ok, clicked, session, cid, via, x, y, verified:{screenChanged}, note}` — klik kandidat sesi grounding sesudah validasi ulang (v3.7.0); 404 sesi/kandidat tidak ada, 409 sesi kedaluwarsa atau target berubah |
-| `GET /op?id=` | — | `{ok, id, name, state, durationMs, error}` — status satu operasi UI (v3.7.0): `running\|done\|error\|timeout\|done-late` |
-| `GET /ops` | — | `{ok, ops:[{id, name, state, durationMs}]}` — 20 operasi UI terakhir, terbaru dulu (v3.7.0) |
+| `GET /op?id=` | — | `{ok, id, name, taskId, state, durationMs, error}` — status satu operasi UI (v3.7.0): `running\|done\|error\|timeout\|done-late\|cancelled` |
+| `GET /ops` | — | `{ok, ops:[{id, name, taskId, state, durationMs}]}` — 20 operasi UI terakhir, terbaru dulu (v3.7.0) |
+| `POST /op/cancel` | `{id}` | `{ok, cancelled, id, note}` — batalkan operasi UI yang masih ANTRI (v3.10.0); 404 tidak ada, 409 `op_finished`/`op_running`; pemanggil operasi yang dibatalkan menerima 409 `op_cancelled` (retryable) |
+| `GET /health` | — | `{ok, version, uptimeSec, listener, ui:{ok, responsiveMs}, uiOpsRunning, lastUiTimeout, shellAlive, eventsLastSeq, foreground}` — diagnosis satu panggilan (v3.10.0); probe UI tidak lewat OnUi |
 
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
@@ -318,7 +320,13 @@ bukan computer vision semantik. Alurnya:
 ## Kode status & galat
 
 Semua galat berbentuk `{ok:false, error:"..."}` (ditambah field
-khusus bila ada). Kode yang dipakai:
+khusus bila ada). Sejak v3.10.0 setiap galat status ≥400 juga
+membawa `code` taksonomi (`bad_request`, `not_found`, `conflict`,
+`busy`, `internal`, `ui_timeout`) dan `retryable` — putuskan
+ulang-tidak dari field itu, bukan dari pesan. Timeout /exec dan
+/shell berbentuk 200 dengan `ok:false, timeout:true,
+code:"exec_timeout"|"shell_timeout", retryable:false` + keluaran
+parsial. Kode HTTP yang dipakai:
 
 | Kode | Arti |
 |---|---|

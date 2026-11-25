@@ -72,7 +72,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.9.0";
+        return "3.10.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
@@ -286,6 +286,7 @@ public sealed class AgentServer
                 // catatannya sudah ada untuk dicek lewat /lastops.
                 RecordOp(head.Method, head.Path, resp.Status, (int)sw.ElapsedMilliseconds,
                     _opTaskTls, fgHwnd, SummarizeResponse(resp));
+                resp = EnrichError(resp);
                 WriteResponse(stream, resp);
             }
             catch
@@ -526,6 +527,49 @@ public sealed class AgentServer
             }
         }
         catch { /* jurnal gagal tulis tidak boleh menjatuhkan operasi */ }
+    }
+
+    /// <summary>Taksonomi error (v3.10.0 — DSA-11/12): respons
+    /// gagal (status ≥400) berbody JSON dengan "error" tetapi
+    /// tanpa "code" dilengkapi code + retryable dari peta status.
+    /// String error lama tidak diubah — pemanggil lama aman,
+    /// pemanggil baru bisa memutuskan ulang-tidak dari data,
+    /// bukan dari menebak pesan.</summary>
+    private static Response EnrichError(Response resp)
+    {
+        try
+        {
+            if (resp == null || resp.Status < 400 || resp.BodyBytes == null ||
+                resp.BodyBytes.Length == 0 || resp.BodyBytes.Length > 65536)
+                return resp;
+            using (var doc = JsonDocument.Parse(resp.BodyBytes))
+            {
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return resp;
+                if (!root.TryGetProperty("error", out _)) return resp;
+                if (root.TryGetProperty("code", out _)) return resp;
+                string code; bool retryable;
+                switch (resp.Status)
+                {
+                    case 400: code = "bad_request"; retryable = false; break;
+                    case 404: code = "not_found"; retryable = false; break;
+                    case 409: code = "conflict"; retryable = false; break;
+                    case 429: code = "busy"; retryable = true; break;
+                    case 504: code = "ui_timeout"; retryable = false; break;
+                    case 500: code = "internal"; retryable = true; break;
+                    default: code = "error"; retryable = false; break;
+                }
+                var dict = new Dictionary<string, object>();
+                foreach (var prop in root.EnumerateObject())
+                    dict[prop.Name] = prop.Value.ValueKind == JsonValueKind.String
+                        ? (object)prop.Value.GetString()
+                        : prop.Value.Clone();
+                dict["code"] = code;
+                dict["retryable"] = retryable;
+                return Response.JsonObject(dict, resp.Status);
+            }
+        }
+        catch { return resp; }
     }
 
     /// <summary>Ringkasan hasil dari badan respons (v3.9.0):
@@ -1277,6 +1321,96 @@ public sealed class AgentServer
                 {
                     ["ok"] = true,
                     ["ops"] = list,
+                });
+            }
+
+            if (req.Method == "POST" && req.Path == "/op/cancel")
+            {
+                // Batalkan operasi UI yang MASIH ANTRI (v3.10.0 —
+                // DSA-14): yang sudah berjalan tidak bisa
+                // dibatalkan dan dijawab jujur begitu.
+                using (var doc = JsonDocument.Parse(req.Body))
+                {
+                    long cancelId = GetLong(doc.RootElement, "id", 0);
+                    if (cancelId <= 0 || !_uiOps.TryGetValue(cancelId, out var cop))
+                        return Response.Json("{\"ok\":false,\"error\":\"operasi tidak ditemukan\"}", 404);
+                    if (cop.FinishedTick > 0)
+                        return Response.JsonObject(new Dictionary<string, object>
+                        {
+                            ["ok"] = false,
+                            ["error"] = "operasi sudah selesai (keadaan: " + cop.State + ")",
+                            ["code"] = "op_finished",
+                            ["retryable"] = false,
+                        }, 409);
+                    if (cop.Started)
+                        return Response.JsonObject(new Dictionary<string, object>
+                        {
+                            ["ok"] = false,
+                            ["error"] = "operasi sudah berjalan di thread UI — tidak bisa dibatalkan",
+                            ["code"] = "op_running",
+                            ["retryable"] = false,
+                        }, 409);
+                    cop.CancelRequested = true;
+                    _log($"operasi UI #{cancelId} ({cop.Name}) ditandai batal selagi antre");
+                    return Response.JsonObject(new Dictionary<string, object>
+                    {
+                        ["ok"] = true,
+                        ["cancelled"] = true,
+                        ["id"] = cancelId,
+                        ["note"] = "operasi akan dilewati saat gilirannya tiba; pemanggilnya menerima 409 op_cancelled",
+                    });
+                }
+            }
+
+            if (req.Method == "GET" && req.Path == "/health")
+            {
+                // Diagnosis satu panggilan (v3.10.0 — DSA-13):
+                // TIDAK lewat OnUi — justru untuk tahu UI macet
+                // atau tidak. Probe UI = BeginInvoke pulang-pergi
+                // bermeterai waktu, batas 1500ms.
+                long probeMs = -1;
+                try
+                {
+                    using (var probeDone = new ManualResetEventSlim(false))
+                    {
+                        var swP = Stopwatch.StartNew();
+                        _ui.BeginInvoke((Action)(() => probeDone.Set()));
+                        if (probeDone.Wait(1500)) probeMs = swP.ElapsedMilliseconds;
+                    }
+                }
+                catch { /* UI tak terjangkau — probeMs tetap -1 */ }
+                int running = 0;
+                foreach (var u in _uiOps.Values) if (u.State == "running") running++;
+                bool shellAlive = false;
+                try { lock (_shellLock) { shellAlive = _shell != null && !_shell.Proc.HasExited; } } catch { }
+                object lastTimeout = null;
+                if (_lastUiTimeoutTick > 0)
+                {
+                    lastTimeout = new Dictionary<string, object>
+                    {
+                        ["time"] = _lastUiTimeoutTime,
+                        ["name"] = _lastUiTimeoutName,
+                        ["agoSec"] = (Environment.TickCount64 - _lastUiTimeoutTick) / 1000,
+                    };
+                }
+                string fgTitle = "";
+                try { fgTitle = NativeInput.TitleOf(NativeInput.ForegroundHandle()); } catch { }
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["version"] = AppVersion,
+                    ["uptimeSec"] = (Environment.TickCount64 - _startTick) / 1000,
+                    ["listener"] = IsRunning,
+                    ["ui"] = new Dictionary<string, object>
+                    {
+                        ["ok"] = probeMs >= 0,
+                        ["responsiveMs"] = probeMs,
+                    },
+                    ["uiOpsRunning"] = running,
+                    ["lastUiTimeout"] = lastTimeout,
+                    ["shellAlive"] = shellAlive,
+                    ["eventsLastSeq"] = EventLog.LastSeq,
+                    ["foreground"] = fgTitle,
                 });
             }
 
@@ -3717,14 +3851,33 @@ public sealed class AgentServer
 
             return Response.Json("{\"ok\":false,\"error\":\"endpoint tidak dikenal\"}", 404);
         }
+        catch (UiCancelledException cex)
+        {
+            // v3.10.0: operasi dibatalkan selagi mengantre — aksi
+            // tidak pernah berjalan, jadi aman diulang pemanggil.
+            return Response.JsonObject(new Dictionary<string, object>
+            {
+                ["ok"] = false,
+                ["error"] = "operasi dibatalkan sebelum mulai (POST /op/cancel)",
+                ["code"] = "op_cancelled",
+                ["retryable"] = true,
+                ["opId"] = cex.OpId,
+            }, 409);
+        }
         catch (UiTimeoutException tex)
         {
             // v3.7.0 (BUG-10): request timeout, operasi TIDAK
             // dibatalkan — hasil akhirnya bisa dicek lewat /op.
+            // v3.10.0: catat untuk /health + kode taksonomi.
+            _lastUiTimeoutTick = Environment.TickCount64;
+            _lastUiTimeoutName = tex.Name;
+            _lastUiTimeoutTime = DateTime.Now.ToString("HH:mm:ss");
             return Response.JsonObject(new Dictionary<string, object>
             {
                 ["ok"] = false,
                 ["error"] = "ui-timeout",
+                ["code"] = "ui_timeout",
+                ["retryable"] = false,
                 ["message"] = tex.Message,
                 ["opId"] = tex.OpId,
                 ["timeoutMs"] = tex.TimeoutMs,
@@ -3832,11 +3985,29 @@ public sealed class AgentServer
             try { exitCode = p.ExitCode; } catch { /* proses dimatikan dsb. */ }
 
             _log($"selesai: {command} (exit {exitCode}{(exited ? "" : ", timeout")})");
+            // Semantik timeout DISAMAKAN dengan /shell (v3.10.0 —
+            // DSA-11): timeout selalu ok:false + code + retryable,
+            // keluaran parsial tetap dikembalikan. Dulu /exec
+            // menjawab ok:true saat timeout, /shell ok:false —
+            // pemanggil tidak bisa membedakan tanpa menebak.
+            if (!exited)
+            {
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = false,
+                    ["exitCode"] = exitCode,
+                    ["timeout"] = true,
+                    ["code"] = "exec_timeout",
+                    ["retryable"] = false,
+                    ["stdout"] = stdout,
+                    ["stderr"] = stderr,
+                });
+            }
             return Response.JsonObject(new Dictionary<string, object>
             {
                 ["ok"] = true,
                 ["exitCode"] = exitCode,
-                ["timeout"] = !exited,
+                ["timeout"] = false,
                 ["stdout"] = stdout,
                 ["stderr"] = stderr,
             });
@@ -4061,6 +4232,9 @@ public sealed class AgentServer
                 {
                     ["ok"] = false,
                     ["timeout"] = true,
+                    ["code"] = "shell_timeout",
+                    ["retryable"] = false,
+                    ["exitCode"] = -1,
                     ["restarted"] = true,
                     ["stdout"] = partial,
                 });
@@ -5044,17 +5218,36 @@ public sealed class AgentServer
         public string Error = "";
         public bool TimedOut;
         public string TaskId; // korelasi tugas (v3.9.0)
+        // Pembatalan selagi antre (v3.10.0): Started dipasang
+        // callback saat benar-benar mulai; CancelRequested oleh
+        // POST /op/cancel — diperiksa callback sebelum mulai.
+        public bool Started;
+        public bool CancelRequested;
     }
 
     private sealed class UiTimeoutException : Exception
     {
         public readonly long OpId;
         public readonly int TimeoutMs;
+        public readonly string Name;
         public UiTimeoutException(long id, string name, int timeoutMs)
             : base("operasi UI '" + name + "' melewati batas " + timeoutMs + "ms")
         {
             OpId = id;
             TimeoutMs = timeoutMs;
+            Name = name;
+        }
+    }
+
+    /// <summary>Operasi UI dibatalkan selagi masih mengantre
+    /// (v3.10.0 — POST /op/cancel): aksinya tidak pernah jalan.</summary>
+    private sealed class UiCancelledException : Exception
+    {
+        public readonly long OpId;
+        public UiCancelledException(long id, string name)
+            : base("operasi UI '" + name + "' dibatalkan sebelum mulai")
+        {
+            OpId = id;
         }
     }
 
@@ -5068,6 +5261,11 @@ public sealed class AgentServer
     // diisi Route dari body "taskId", dibaca RecordOp & OnUi di
     // thread yang sama; dikosongkan HandleClient tiap request.
     [ThreadStatic] private static string _opTaskTls;
+
+    // Timeout UI terakhir (v3.10.0 — dibaca /health).
+    private long _lastUiTimeoutTick;
+    private string _lastUiTimeoutName;
+    private string _lastUiTimeoutTime;
 
     /// <summary>Ambil "taskId" dari body JSON request (POST);
     /// null bila tidak ada/rusak. Dipotong 64 karakter.</summary>
@@ -5130,6 +5328,17 @@ public sealed class AgentServer
         {
             _ui.BeginInvoke((Action)(() =>
             {
+                // Pembatalan selagi antre (v3.10.0): giliran tiba
+                // tetapi operasi sudah diminta batal — lewati
+                // aksinya sama sekali, jangan jalankan fungsi.
+                if (op.CancelRequested)
+                {
+                    op.State = "cancelled";
+                    op.FinishedTick = Environment.TickCount64;
+                    done.Set();
+                    return;
+                }
+                op.Started = true;
                 try { result = func(); }
                 catch (Exception ex) { error = ex; }
                 finally
@@ -5149,6 +5358,7 @@ public sealed class AgentServer
                 throw new UiTimeoutException(id, op.Name, timeout);
             }
         }
+        if (op.State == "cancelled") throw new UiCancelledException(id, op.Name);
         if (error != null) throw error;
         return result;
     }

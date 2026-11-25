@@ -3,6 +3,37 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 3.10.0 — 2026-11-26
+
+"Dokter & Rem" — Desktop State Awareness tahap 3 (audit
+DSA-11/12/13, sebagian DSA-14).
+
+### Ditambahkan
+- **Taksonomi error berkode**: semua respons gagal (status ≥400)
+  kini dilengkapi `code` (bad_request/not_found/conflict/busy/
+  internal/ui_timeout) dan `retryable` — string `error` lama
+  tidak berubah, pemanggil memutuskan ulang-tidak dari data.
+- **GET /health**: diagnosis satu panggilan — versi, uptime,
+  probe responsivitas thread UI (tidak lewat OnUi, justru untuk
+  mendeteksi UI macet), operasi UI berjalan, timeout UI
+  terakhir, shell hidup, seq event terakhir, jendela depan.
+- **POST /op/cancel {id}**: membatalkan operasi UI yang masih
+  mengantre (termasuk "hantu" timeout yang belum giliran);
+  pemanggilnya menerima 409 `op_cancelled` (retryable — aksi
+  tidak pernah jalan). Yang sudah berjalan dijawab jujur 409
+  `op_running`; yang sudah selesai 409 `op_finished`.
+- **Watchdog sadar responsivitas**: naskah penjaga kini
+  memprobe /ping — proses yang ada tapi tidak menjawab 2×
+  berurutan dibunuh dan dinyalakan ulang (dulu proses
+  menggantung lolos karena yang dicek hanya keberadaannya).
+
+### Diubah (perilaku, disengaja)
+- **Timeout /exec kini ok:false** dengan `code:"exec_timeout"`,
+  `retryable:false`, keluaran parsial tetap dikembalikan —
+  semantik disamakan dengan /shell (`shell_timeout`, kini juga
+  membawa exitCode:-1). Dulu /exec menjawab ok:true saat
+  timeout sedangkan /shell ok:false.
+
 ## 3.9.0 — 2026-11-25
 
 "Telinga & Ingatan" — Desktop State Awareness tahap 2 (audit

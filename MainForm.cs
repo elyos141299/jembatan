@@ -122,7 +122,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "3.9.0";
+            return "3.10.0";
         }
     }
     private Label _tileRamValue;
@@ -1779,13 +1779,15 @@ public sealed class MainForm : Form
     }
 
     // Penjaga anti-crash (v2.3.2): tugas "MuseLink Watchdog"
-    // berjalan tiap 5 menit menjalankan PowerShell TERSEMBUNYI yang
+    // berjalan tiap menit menjalankan VBScript TERSEMBUNYI yang
     // menyalakan ulang Jembatan bila prosesnya tidak ada — KECUALI
     // bendera UserStopped terpasang (user berhenti sengaja lewat menu
     // tray → Keluar). Penutupan oleh Windows shutdown / Task Manager
     // tidak memasang bendera itu, jadi penjaga tetap menyalakan
     // ulang. Didaftarkan/dihapus bersama tugas login di SyncAutoStart,
     // dengan syarat yang sama (jalan otomatis + admin + proses admin).
+    // v3.10.0: penjaga juga memprobe /ping — proses yang ada tapi
+    // tidak menjawab 2× berurutan dibunuh & dinyalakan ulang.
     private void EnsureWatchdogTask()
     {
         // v2.5.2: penjaga kini VBScript lewat wscript.exe — TANPA
@@ -1804,17 +1806,52 @@ public sealed class MainForm : Form
                 "Jembatan");
             Directory.CreateDirectory(dir);
             scriptPath = Path.Combine(dir, "watchdog.vbs");
+            // v3.10.0 (DSA-13): penjaga kini juga SADAR
+            // RESPONSIVITAS — proses yang ada tapi tidak menjawab
+            // /ping dua kali berurutan dibunuh & dinyalakan ulang
+            // (dulu: proses menggantung lolos selamanya karena
+            // yang dicek hanya keberadaan proses). Penghitung
+            // gagal disimpan di watchdog-fails.txt, reset saat
+            // ping sehat atau proses dinyalakan dari nol.
             string script =
-                "' Penjaga MuseLink (v2.5.2): VBScript - tanpa konsol sama sekali.\r\n" +
+                "' Penjaga MuseLink (v3.10.0): VBScript - tanpa konsol sama sekali.\r\n" +
                 "On Error Resume Next\r\n" +
-                "Dim shell, stopped, procs\r\n" +
+                "Dim shell, fso, stopped, procs, failFile, fails, http, okPing\r\n" +
                 "Set shell = CreateObject(\"WScript.Shell\")\r\n" +
+                "Set fso = CreateObject(\"Scripting.FileSystemObject\")\r\n" +
+                "failFile = shell.ExpandEnvironmentStrings(\"%LOCALAPPDATA%\") & \"\\Jembatan\\watchdog-fails.txt\"\r\n" +
                 "stopped = 0\r\n" +
                 "stopped = shell.RegRead(\"HKCU\\Software\\Jembatan\\UserStopped\")\r\n" +
                 "If stopped <> 1 Then\r\n" +
                 "  Set procs = GetObject(\"winmgmts:\").ExecQuery(\"SELECT Name FROM Win32_Process WHERE Name = 'Jembatan.exe'\")\r\n" +
                 "  If procs.Count = 0 Then\r\n" +
+                "    If fso.FileExists(failFile) Then fso.DeleteFile failFile\r\n" +
                 "    shell.Run \"\"\"" + Application.ExecutablePath + "\"\" --auto\", 0, False\r\n" +
+                "  Else\r\n" +
+                "    okPing = False\r\n" +
+                "    Set http = CreateObject(\"WinHttp.WinHttpRequest.5.1\")\r\n" +
+                "    http.SetTimeouts 1000, 1000, 1000, 2000\r\n" +
+                "    http.Open \"GET\", \"http://127.0.0.1:8765/ping\", False\r\n" +
+                "    http.Send\r\n" +
+                "    If Err.Number = 0 Then If http.Status = 200 Then okPing = True\r\n" +
+                "    Err.Clear\r\n" +
+                "    If okPing Then\r\n" +
+                "      If fso.FileExists(failFile) Then fso.DeleteFile failFile\r\n" +
+                "    Else\r\n" +
+                "      fails = 0\r\n" +
+                "      If fso.FileExists(failFile) Then fails = CInt(Trim(fso.OpenTextFile(failFile, 1).ReadAll))\r\n" +
+                "      fails = fails + 1\r\n" +
+                "      Dim tf\r\n" +
+                "      Set tf = fso.CreateTextFile(failFile, True)\r\n" +
+                "      tf.Write fails\r\n" +
+                "      tf.Close\r\n" +
+                "      If fails >= 2 Then\r\n" +
+                "        shell.Run \"taskkill /F /IM Jembatan.exe\", 0, True\r\n" +
+                "        WScript.Sleep 2000\r\n" +
+                "        fso.DeleteFile failFile\r\n" +
+                "        shell.Run \"\"\"" + Application.ExecutablePath + "\"\" --auto\", 0, False\r\n" +
+                "      End If\r\n" +
+                "    End If\r\n" +
                 "  End If\r\n" +
                 "End If\r\n";
             File.WriteAllText(scriptPath, script);
