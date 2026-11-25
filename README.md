@@ -1,4 +1,42 @@
-# MuseLink v3.3.2 — catatan pengembang
+# MuseLink v3.7.0 — catatan pengembang
+
+## v3.7.0 — Timeout operasi UI + sesi grounding
+
+Hasil rekonsiliasi misi implementasi atas AUDIT-2026-11-25.md
+(sebagian besar temuan audit sudah dibereskan di v3.6.0; versi
+ini menutup sisanya):
+
+1. **BUG-10 — OnUi berbatas waktu.** Dulu `Control.Invoke`
+   tanpa batas: thread UI macet = request menggantung
+   selamanya. Kini setiap operasi UI punya ID & nama, ditunggu
+   maksimal `OnUiTimeoutMs` (registry
+   `HKCU\Software\Jembatan`, DWORD milidetik, bawaan 10.000,
+   sah 250–120.000). Timeout membalas **504** `{error:
+   "ui-timeout", opId, timeoutMs}` — operasi TIDAK dibatalkan
+   dan TIDAK diulang otomatis; ia jalan terus di thread UI dan
+   hasil akhirnya tercatat sebagai `done-late`, bisa dicek
+   lewat **GET /op?id=** dan **GET /ops**.
+2. **Sesi grounding.** `/locate` kini menyimpan hasilnya
+   sebagai sesi (ID `loc-N`, berlaku 60 detik): tiap kandidat
+   punya `cid` stabil, dan sesi mengingat jendela asal (HWND,
+   PID, judul). Endpoint baru **POST /locate/act**
+   `{session, cid|index}` mengklik kandidat PILIHAN sesudah
+   **validasi ulang**: jendela depan harus sama, proses asal
+   harus hidup, dan target harus masih di tempatnya (UIA:
+   pindai segar; OCR: baca ulang wilayahnya). Target berubah
+   → **409** dan tidak diklik. Sesudah klik, perubahan layar
+   di sekitar titik klik diverifikasi (`verified.screenChanged`).
+3. **/waitfor fuzzy opt-in.** `{fuzzy:true}` (hanya kind=text,
+   hanya query berdigit): sesudah exact gagal, dicoba cocok
+   kabur OCR (0/O/ø, 1/l/I, 5/S, 8/B) — respons memuat
+   `matchedVia: "exact"|"fuzzy"`. Exact tetap perilaku bawaan.
+4. **Versi satu sumber, tuntas.** Label versi di UI (tile
+   panel + Pengaturan + log mulai) kini membaca FileVersion
+   rakitan (`MainForm.DisplayVersion`), mengikuti jejak
+   endpoint server di v3.6.0 — tidak ada lagi string versi
+   tulis-tangan yang bisa tertinggal saat rilis.
+5. **Dokumentasi.** README dilengkapi (endpoint v3.5.0–v3.7.0,
+   bagian Visual Grounding, katalog galat) + CHANGELOG.md baru.
 
 ## v3.3.2 — Empat temuan full test dibereskan
 
@@ -235,10 +273,59 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `POST /batch` | `{actions:[{do, ...}], stopOnError?}` | `{ok, count, results}` — rangkaian aksi dijalankan berurutan di sisi PC dalam SATU panggilan (v2.4.1, "mode ngebut"); `do` = nama endpoint POST tanpa garis miring (`uia_click` = `/uia/click`) atau `sleep` {ms}; maks 100 aksi; berhenti pada galat pertama kecuali `stopOnError:false` |
 | `POST /open` | `{path}` | `{ok:true}` — `Process.Start` dengan shell |
 | `POST /upload?path=<urlencoded>` | badan mentah (bukan JSON) | `{ok:true, bytes}` — badan ditulis jadi berkas di `path`; folder induk dibuat bila belum ada |
+| `GET /state` | — | `{ok, foreground:{title,pid,process,rect,minimized,responding}, mouse, lastClick, idleSec, screen}` — snapshot keadaan desktop (v3.5.0); `responding:false` = jendela depan terdeteksi macet |
+| `GET /diag` | — | `{ok, version, uptimeSec, process:{ramMB, cpuSec, threads}, endpoints:[{endpoint, count, avgMs, maxMs, fails}]}` — telemetri latensi per endpoint (v3.5.0) |
+| `POST /waitfor` | `{kind: text\|uia\|window\|stable\|process, text?, process?, gone?, timeoutMs?, stableMs?, x/y/w/h?, fuzzy?}` | `{ok, met, kind, fuzzy, matchedVia, waitedMs}` — tunggu cerdas sisi server (v3.5.0); `fuzzy:true` = cocok kabur OCR opt-in khusus query berdigit (v3.7.0) |
+| `POST /setvalue` | `{name?, automationId?, value}` | `{ok, name, value}` — isi nilai elemen UIA (ValuePattern/TextPattern/legacy) tanpa mengetik (v3.5.0) |
+| `POST /readvalue` | `{name?, automationId?}` | `{ok, name, hasValue, value}` — baca nilai elemen; `hasValue:false` + `value:""` berarti elemen memang tidak punya nilai (v3.5.0; semantik diperjelas v3.6.0) |
+| `POST /uia/act` | `{name?, automationId?, action: invoke\|toggle\|select\|expand\|collapse}` | `{ok, name, action}` — jalankan pola UIA tanpa klik koordinat (v3.5.0) |
+| `POST /keys/release` | — | `{ok, released:[...]}` — lepas semua tombol yang sedang ditahan server (v3.6.0); tombol juga lepas otomatis saat server berhenti |
+| `POST /locate` | `{text, mode?: auto\|uia\|ocr, click?, marks?}` | `{ok, found, via, count, candidates:[{via, text, type, x, y, w, h, cx, cy, cid}], clicked, session, sessionTtlSec}` — Visual Grounding satu panggilan (v3.6.0); sesi + cid sejak v3.7.0 |
+| `POST /locate/act` | `{session, cid? \| index?}` | `{ok, clicked, session, cid, via, x, y, verified:{screenChanged}, note}` — klik kandidat sesi grounding sesudah validasi ulang (v3.7.0); 404 sesi/kandidat tidak ada, 409 sesi kedaluwarsa atau target berubah |
+| `GET /op?id=` | — | `{ok, id, name, state, durationMs, error}` — status satu operasi UI (v3.7.0): `running\|done\|error\|timeout\|done-late` |
+| `GET /ops` | — | `{ok, ops:[{id, name, state, durationMs}]}` — 20 operasi UI terakhir, terbaru dulu (v3.7.0) |
 
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",
 bukan per frame.
+
+## Visual Grounding
+
+Fondasi grounding MuseLink adalah **UIA + OCR + koordinat** —
+bukan computer vision semantik. Alurnya:
+
+1. `POST /locate {text}` memindai jendela depan lewat UI
+   Automation (pindai selalu segar). Bila UIA tidak menemukan
+   (aplikasi buta-UIA seperti CapCut), ia gugur ke OCR layar
+   penuh (kata tunggal, atau dua kata berurutan untuk query
+   berspasi; query berdigit dapat lolos kabur untuk tukar-glyph
+   OCR yang umum). `marks:true` melampirkan gambar Set-of-Marks:
+   tangkapan berkotak nomor sesuai urutan kandidat, untuk
+   verifikasi visual oleh Muse sebelum bertindak.
+2. Hasil disimpan sebagai **sesi grounding** (60 detik):
+   kandidat bernomor stabil `cid` (c1, c2, …) dan sesi
+   mengingat jendela asal (HWND/PID/judul).
+3. `POST /locate/act {session, cid}` **memvalidasi ulang**
+   sebelum klik: sesi hidup, jendela depan masih sama, proses
+   asal masih hidup, target masih di tempatnya (pindai UIA
+   segar / OCR ulang wilayah). Klik memakai koordinat SEGAR
+   hasil validasi. Sesudah klik, perubahan piksel di sekitar
+   titik klik dilaporkan sebagai `verified.screenChanged`.
+4. `click:true` pada /locate sendiri tetap tersedia untuk
+   klik langsung kandidat pertama tanpa sesi.
+
+## Kode status & galat
+
+Semua galat berbentuk `{ok:false, error:"..."}` (ditambah field
+khusus bila ada). Kode yang dipakai:
+
+| Kode | Arti |
+|---|---|
+| 400 | Parameter tidak sah: body bukan JSON, field wajib hilang, nama tombol asing di `/key` (daftar nama sah ada di pesan galat), kind `/waitfor` tidak dikenal |
+| 404 | Tidak ditemukan: endpoint, jendela/elemen/kandidat, sesi grounding, operasi UI (`/op`), berkas |
+| 409 | Konflik keadaan: klik `/uia/click` dari pindai basi (jendela depan berganti / pindai kedaluwarsa — pindai ulang), sesi grounding kedaluwarsa, target `/locate/act` berubah/tidak valid |
+| 500 | Galat internal tak terduga (`error` memuat pesan pengecualian) |
+| 504 | `ui-timeout`: operasi UI melewati `OnUiTimeoutMs` (bawaan 10 dtk) — respons memuat `opId`; operasi TIDAK dibatalkan/diulan otomatis, hasil akhirnya dicek lewat `/op` |
 
 ## Perubahan v2.10.0 (dari v2.9.1) — Arah Aubergine Two-Zone
 - Midnight Rich diganti lagi atas permintaan user; riset

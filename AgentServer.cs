@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -64,7 +65,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.6.0";
+        return "3.7.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
@@ -358,6 +359,7 @@ public sealed class AgentServer
             case 400: reason = "Bad Request"; break;
             case 404: reason = "Not Found"; break;
             case 409: reason = "Conflict"; break;
+            case 504: reason = "Gateway Timeout"; break;
             default: reason = "Internal Server Error"; break;
         }
         var sb = new StringBuilder();
@@ -478,6 +480,7 @@ public sealed class AgentServer
 
     private Response Route(Request req)
     {
+        _opNameTls = req.Method + " " + req.Path; // nama operasi UI (v3.7.0)
         try
         {
             if (req.Method == "GET" && req.Path == "/ping")
@@ -1143,6 +1146,52 @@ public sealed class AgentServer
                         ["threads"] = proc.Threads.Count,
                     },
                     ["endpoints"] = eps,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/op")
+            {
+                // Status SATU operasi UI (v3.7.0 — BUG-10): pasangan
+                // respons 504. Operasi yang timeout tetap tercatat
+                // sampai selesai di latar (state "done-late").
+                if (!long.TryParse(GetQueryParam(req.Query, "id"), out long opId) ||
+                    !_uiOps.TryGetValue(opId, out var uop))
+                    return Response.Json("{\"ok\":false,\"error\":\"operasi tidak ditemukan\"}", 404);
+                long nowT = Environment.TickCount64;
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["id"] = uop.Id,
+                    ["name"] = uop.Name,
+                    ["state"] = uop.State,
+                    ["durationMs"] = (uop.FinishedTick > 0 ? uop.FinishedTick : nowT) - uop.StartedTick,
+                    ["error"] = uop.Error,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/ops")
+            {
+                // Daftar operasi UI terakhir (v3.7.0): terbaru dulu,
+                // maksimal 20 dari 100 catatan yang disimpan.
+                var all = new List<UiOp>(_uiOps.Values);
+                all.Sort((a, b) => b.Id.CompareTo(a.Id));
+                var list = new List<Dictionary<string, object>>();
+                long nowT = Environment.TickCount64;
+                foreach (var uop in all)
+                {
+                    if (list.Count >= 20) break;
+                    list.Add(new Dictionary<string, object>
+                    {
+                        ["id"] = uop.Id,
+                        ["name"] = uop.Name,
+                        ["state"] = uop.State,
+                        ["durationMs"] = (uop.FinishedTick > 0 ? uop.FinishedTick : nowT) - uop.StartedTick,
+                    });
+                }
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["ops"] = list,
                 });
             }
 
@@ -2482,6 +2531,56 @@ public sealed class AgentServer
                                 ["candidates"] = cand,
                                 ["clicked"] = clicked,
                             };
+                            // Sesi grounding (v3.7.0): simpan hasil
+                            // ini 60 detik agar /locate/act bisa
+                            // mengklik kandidat PILIHAN (cid stabil)
+                            // sesudah validasi ulang.
+                            string sessionId = "";
+                            if (hits.Count > 0)
+                            {
+                                var gs = new GroundSession
+                                {
+                                    Id = "loc-" + Interlocked.Increment(ref _groundSeq),
+                                    Query = q,
+                                    CreatedTick = Environment.TickCount64,
+                                };
+                                try
+                                {
+                                    var fgInfo = OnUi(() =>
+                                    {
+                                        var h = NativeInput.ForegroundHandle();
+                                        int pid = 0; string title = "";
+                                        foreach (var w in NativeInput.ListWindows())
+                                            if (w.Handle == h) { pid = w.Pid; title = w.Title; break; }
+                                        return (h, pid, title);
+                                    });
+                                    gs.Hwnd = fgInfo.h.ToInt64();
+                                    gs.Pid = fgInfo.pid;
+                                    gs.WindowTitle = fgInfo.title ?? "";
+                                }
+                                catch { /* sesi tetap dibuat; act menolak bila jendela asal tak dikenal */ }
+                                bool digitQ = false;
+                                foreach (char ch in q) if (char.IsDigit(ch)) { digitQ = true; break; }
+                                for (int i = 0; i < hits.Count; i++)
+                                {
+                                    var gc = new GroundCandidate
+                                    {
+                                        Cid = "c" + (i + 1),
+                                        Via = hits[i].Via,
+                                        Text = hits[i].Text,
+                                        Type = hits[i].Type,
+                                        Rect = hits[i].Rect,
+                                        DigitFuzzy = digitQ,
+                                    };
+                                    gs.Candidates.Add(gc);
+                                    if (i < cand.Count) cand[i]["cid"] = gc.Cid;
+                                }
+                                PruneGroundSessions(gs.CreatedTick);
+                                lock (_groundLock) { _groundSessions[gs.Id] = gs; }
+                                sessionId = gs.Id;
+                            }
+                            resp["session"] = sessionId;
+                            resp["sessionTtlSec"] = GroundSessionTtlMs / 1000;
                             if (wantMarks && hits.Count > 0)
                             {
                                 var boundsM = Screen.PrimaryScreen != null
@@ -2496,6 +2595,115 @@ public sealed class AgentServer
                                 }
                             }
                             return Response.JsonObject(resp);
+                        }
+                        case "/locate/act":
+                        {
+                            // Klik kandidat DARI sesi grounding
+                            // (v3.7.0): validasi ulang dulu — sesi
+                            // harus hidup, jendela depan harus sama,
+                            // target harus masih di tempatnya.
+                            // Berubah/tidak valid -> 409, tidak diklik.
+                            _onActivity();
+                            string sid = GetString(root, "session", "");
+                            string cidWanted = GetString(root, "cid", "");
+                            int idxWanted = GetInt(root, "index", -1);
+                            GroundSession sess = null;
+                            if (!string.IsNullOrEmpty(sid))
+                                lock (_groundLock) { _groundSessions.TryGetValue(sid, out sess); }
+                            if (sess == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"sesi grounding tidak ditemukan\"}", 404);
+                            if (Environment.TickCount64 - sess.CreatedTick > GroundSessionTtlMs)
+                            {
+                                lock (_groundLock) { _groundSessions.Remove(sess.Id); }
+                                return Response.Json("{\"ok\":false,\"error\":\"sesi grounding kedaluwarsa (60 detik) — panggil /locate lagi\"}", 409);
+                            }
+                            GroundCandidate candSel = null;
+                            if (!string.IsNullOrEmpty(cidWanted))
+                                candSel = sess.Candidates.Find(c => c.Cid == cidWanted);
+                            else if (idxWanted >= 0 && idxWanted < sess.Candidates.Count)
+                                candSel = sess.Candidates[idxWanted];
+                            if (candSel == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"kandidat tidak ada di sesi ini\"}", 404);
+
+                            // 1) Jendela depan harus sama seperti
+                            // saat /locate; proses asal harus hidup.
+                            var fgNow = OnUi(NativeInput.ForegroundHandle);
+                            if (sess.Hwnd != 0 && fgNow.ToInt64() != sess.Hwnd)
+                                return Response.Json("{\"ok\":false,\"error\":\"jendela depan berubah sejak /locate — target tidak valid lagi\"}", 409);
+                            if (sess.Pid > 0)
+                            {
+                                try { Process.GetProcessById(sess.Pid); }
+                                catch { return Response.Json("{\"ok\":false,\"error\":\"proses jendela asal sudah mati\"}", 409); }
+                            }
+
+                            // 2) Validasi ulang isi target di
+                            // tempatnya; pakai koordinat SEGAR hasil
+                            // validasi untuk klik.
+                            int clickX = candSel.CX, clickY = candSel.CY;
+                            if (candSel.Via == "uia")
+                            {
+                                var fresh = OnUi(() => UiaScan.ScanForeground(500));
+                                UiaScan.Item found = null;
+                                foreach (var n in fresh)
+                                {
+                                    if (!string.Equals(n.Name, candSel.Text, StringComparison.Ordinal)) continue;
+                                    if (!string.IsNullOrEmpty(candSel.Type) &&
+                                        !string.Equals(n.Type, candSel.Type, StringComparison.Ordinal)) continue;
+                                    if (Math.Abs(n.CenterX - candSel.CX) <= 24 &&
+                                        Math.Abs(n.CenterY - candSel.CY) <= 24) { found = n; break; }
+                                }
+                                if (found == null)
+                                    return Response.Json("{\"ok\":false,\"error\":\"elemen UIA tidak ditemukan lagi di tempatnya — target berubah\"}", 409);
+                                clickX = found.CenterX; clickY = found.CenterY;
+                            }
+                            else
+                            {
+                                var reg = new Rectangle(
+                                    Math.Max(0, candSel.Rect.X - 8), Math.Max(0, candSel.Rect.Y - 8),
+                                    candSel.Rect.Width + 16, candSel.Rect.Height + 16);
+                                string ocrNow = OnUi(() =>
+                                {
+                                    using (var bmp = CaptureRegionBitmap(reg, 0, out var effR))
+                                        return OcrReader.Read(bmp, effR.X, effR.Y).Text;
+                                });
+                                bool still = (ocrNow ?? "").IndexOf(candSel.Text, StringComparison.OrdinalIgnoreCase) >= 0;
+                                if (!still && candSel.DigitFuzzy)
+                                {
+                                    string hayN = NormalizeOcrFuzzy(ocrNow ?? "");
+                                    string qN = NormalizeOcrFuzzy(candSel.Text);
+                                    still = hayN != null && qN != null &&
+                                            hayN.IndexOf(qN, StringComparison.OrdinalIgnoreCase) >= 0;
+                                }
+                                if (!still)
+                                    return Response.Json("{\"ok\":false,\"error\":\"teks target tidak ditemukan lagi di wilayahnya — target berubah\"}", 409);
+                            }
+
+                            // 3) Potret wilayah klik sebelum & sesudah
+                            // untuk verifikasi perubahan layar.
+                            var clip = new Rectangle(Math.Max(0, clickX - 60), Math.Max(0, clickY - 40), 120, 80);
+                            byte[] hashBefore;
+                            using (var b0 = CaptureRegionBitmap(clip, 0, out _)) hashBefore = HashBitmap(b0);
+                            OnUi(() => { NativeInput.Click(clickX, clickY, "left"); return true; });
+                            _lastClickX = clickX; _lastClickY = clickY; _lastClickTick = Environment.TickCount64;
+                            Thread.Sleep(180);
+                            bool changed;
+                            using (var b1 = CaptureRegionBitmap(clip, 0, out _))
+                                changed = !hashBefore.SequenceEqual(HashBitmap(b1));
+                            _log($"locate/act {sess.Id}/{candSel.Cid} '{candSel.Text}' -> klik ({clickX},{clickY}), layar berubah: {changed}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["clicked"] = true,
+                                ["session"] = sess.Id,
+                                ["cid"] = candSel.Cid,
+                                ["via"] = candSel.Via,
+                                ["x"] = clickX,
+                                ["y"] = clickY,
+                                ["verified"] = new Dictionary<string, object> { ["screenChanged"] = changed },
+                                ["note"] = changed
+                                    ? "layar di sekitar titik klik berubah sesudah klik"
+                                    : "tidak ada perubahan layar terdeteksi di sekitar titik klik",
+                            });
                         }
                         case "/uia/find":
                         {
@@ -3112,6 +3320,7 @@ public sealed class AgentServer
                             string text = GetString(root, "text", "");
                             string pname = GetString(root, "process", "");
                             bool gone = GetBool(root, "gone", false);
+                            bool fuzzy = GetBool(root, "fuzzy", false);
                             int timeoutMs = GetInt(root, "timeoutMs", 10000);
                             if (timeoutMs < 250) timeoutMs = 250;
                             if (timeoutMs > 120000) timeoutMs = 120000;
@@ -3123,6 +3332,7 @@ public sealed class AgentServer
                                 : (Screen.PrimaryScreen != null ? Screen.PrimaryScreen.Bounds : new Rectangle(0, 0, 1280, 720));
                             var swW = System.Diagnostics.Stopwatch.StartNew();
                             bool met = false;
+                            bool metFuzzy = false;
                             string lastHash = null;
                             long stableSince = -1;
                             while (swW.ElapsedMilliseconds < timeoutMs)
@@ -3137,6 +3347,23 @@ public sealed class AgentServer
                                             {
                                                 var rr = OcrReader.Read(bmp, eff.X, eff.Y);
                                                 if (rr.Text != null && rr.Text.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0) met = true;
+                                                else if (fuzzy && rr.Text != null)
+                                                {
+                                                    // Lolos kabur OPT-IN
+                                                    // (v3.7.0): hanya query
+                                                    // berdigit; menukar
+                                                    // pasangan glyph yang
+                                                    // sering tertukar di OCR
+                                                    // (0/O/ø, 1/l/I, 5/S, 8/B).
+                                                    // Exact selalu dicoba
+                                                    // lebih dulu dan tetap
+                                                    // perilaku bawaan.
+                                                    string hayN = NormalizeOcrFuzzy(rr.Text);
+                                                    string qN = NormalizeOcrFuzzy(text);
+                                                    if (hayN != null && qN != null &&
+                                                        hayN.IndexOf(qN, StringComparison.OrdinalIgnoreCase) >= 0)
+                                                    { met = true; metFuzzy = true; }
+                                                }
                                             }
                                             break;
                                         }
@@ -3193,6 +3420,8 @@ public sealed class AgentServer
                                 ["ok"] = true,
                                 ["met"] = met,
                                 ["kind"] = kind,
+                                ["fuzzy"] = fuzzy,
+                                ["matchedVia"] = met ? (metFuzzy ? "fuzzy" : "exact") : "",
                                 ["waitedMs"] = (int)swW.ElapsedMilliseconds,
                             });
                         }
@@ -3243,6 +3472,20 @@ public sealed class AgentServer
             }
 
             return Response.Json("{\"ok\":false,\"error\":\"endpoint tidak dikenal\"}", 404);
+        }
+        catch (UiTimeoutException tex)
+        {
+            // v3.7.0 (BUG-10): request timeout, operasi TIDAK
+            // dibatalkan — hasil akhirnya bisa dicek lewat /op.
+            return Response.JsonObject(new Dictionary<string, object>
+            {
+                ["ok"] = false,
+                ["error"] = "ui-timeout",
+                ["message"] = tex.Message,
+                ["opId"] = tex.OpId,
+                ["timeoutMs"] = tex.TimeoutMs,
+                ["note"] = "operasi tidak dibatalkan dan tidak diulang otomatis; cek GET /op?id=" + tex.OpId,
+            }, 504);
         }
         catch (JsonException)
         {
@@ -4448,11 +4691,169 @@ public sealed class AgentServer
         return v;
     }
 
+    // ---------- Sesi grounding (v3.7.0) ----------
+    //
+    // /locate menyimpan hasilnya sebagai sesi: kandidat punya cid
+    // stabil, sesi berlaku 60 detik dan mengingat jendela asal
+    // (HWND + PID + judul). /locate/act mengklik kandidat dari
+    // sesi itu SESUDAH validasi ulang — jendela depan harus sama
+    // dan target harus masih di tempatnya (UIA: pindai segar;
+    // OCR: baca ulang wilayahnya). Gagal validasi -> 409, tidak
+    // diklik. Sesudah klik, perubahan layar di sekitar titik
+    // klik diverifikasi dan dilaporkan ke pemanggil.
+
+    private sealed class GroundCandidate
+    {
+        public string Cid = "";
+        public string Via = "";
+        public string Text = "";
+        public string Type = "";
+        public Rectangle Rect;
+        public bool DigitFuzzy; // query berdigit -> lolos kabur OCR berlaku
+        public int CX => Rect.X + Rect.Width / 2;
+        public int CY => Rect.Y + Rect.Height / 2;
+    }
+
+    private sealed class GroundSession
+    {
+        public string Id = "";
+        public string Query = "";
+        public long CreatedTick;
+        public long Hwnd;
+        public int Pid;
+        public string WindowTitle = "";
+        public readonly List<GroundCandidate> Candidates = new List<GroundCandidate>();
+    }
+
+    private long _groundSeq;
+    private readonly Dictionary<string, GroundSession> _groundSessions = new Dictionary<string, GroundSession>();
+    private readonly object _groundLock = new object();
+    private const int GroundSessionTtlMs = 60000;
+
+    private void PruneGroundSessions(long now)
+    {
+        lock (_groundLock)
+        {
+            var dead = new List<string>();
+            foreach (var kv in _groundSessions)
+                if (now - kv.Value.CreatedTick > GroundSessionTtlMs)
+                    dead.Add(kv.Key);
+            foreach (var k in dead) _groundSessions.Remove(k);
+            while (_groundSessions.Count > 8)
+            {
+                string oldest = null; long ot = long.MaxValue;
+                foreach (var kv in _groundSessions)
+                    if (kv.Value.CreatedTick < ot) { ot = kv.Value.CreatedTick; oldest = kv.Key; }
+                if (oldest == null) break;
+                _groundSessions.Remove(oldest);
+            }
+        }
+    }
+
+    // ---------- Operasi UI berbatas waktu (v3.7.0 — BUG-10) ----------
+    //
+    // Dulu OnUi memakai Control.Invoke tanpa batas: thread UI yang
+    // macet menggantung request selamanya. Kini setiap operasi UI:
+    //  - punya ID & nama (dari request yang melayaninya),
+    //  - ditunggu maksimal Settings.OnUiTimeoutMs (bawaan 10 dtk),
+    //  - TIMEOUT TIDAK membatalkan pekerjaannya — ia jalan terus di
+    //    thread UI dan hasil akhirnya tercatat (state "done-late"),
+    //    bisa dicek lewat GET /op?id= dan GET /ops,
+    //  - pemanggil menerima UiTimeoutException -> respons 504,
+    //    dan TIDAK ada pengulangan otomatis di lapisan mana pun.
+
+    private sealed class UiOp
+    {
+        public long Id;
+        public string Name = "";
+        public long StartedTick;
+        public long FinishedTick; // 0 = belum selesai
+        public string State = "running"; // running|done|error|timeout|done-late
+        public string Error = "";
+        public bool TimedOut;
+    }
+
+    private sealed class UiTimeoutException : Exception
+    {
+        public readonly long OpId;
+        public readonly int TimeoutMs;
+        public UiTimeoutException(long id, string name, int timeoutMs)
+            : base("operasi UI '" + name + "' melewati batas " + timeoutMs + "ms")
+        {
+            OpId = id;
+            TimeoutMs = timeoutMs;
+        }
+    }
+
+    private long _uiOpSeq;
+    private readonly ConcurrentDictionary<long, UiOp> _uiOps = new ConcurrentDictionary<long, UiOp>();
+    private readonly Queue<long> _uiOpOrder = new Queue<long>();
+    private readonly object _uiOpOrderLock = new object();
+    [ThreadStatic] private static string _opNameTls;
+    private int _uiTimeoutCache;
+    private long _uiTimeoutCacheTick;
+
+    private int UiTimeoutMs()
+    {
+        long now = Environment.TickCount64;
+        if (_uiTimeoutCache > 0 && now - _uiTimeoutCacheTick < 5000)
+            return _uiTimeoutCache;
+        _uiTimeoutCache = Settings.OnUiTimeoutMs;
+        _uiTimeoutCacheTick = now;
+        return _uiTimeoutCache;
+    }
+
+    private void RegisterUiOp(UiOp op)
+    {
+        _uiOps[op.Id] = op;
+        lock (_uiOpOrderLock)
+        {
+            _uiOpOrder.Enqueue(op.Id);
+            while (_uiOpOrder.Count > 100)
+                _uiOps.TryRemove(_uiOpOrder.Dequeue(), out _);
+        }
+    }
+
     private T OnUi<T>(Func<T> func)
     {
-        if (_ui.InvokeRequired)
-            return (T)_ui.Invoke(func);
-        return func();
+        if (!_ui.InvokeRequired)
+            return func(); // sudah di thread UI — menunggu diri sendiri tak ada artinya
+
+        long id = Interlocked.Increment(ref _uiOpSeq);
+        var op = new UiOp
+        {
+            Id = id,
+            Name = string.IsNullOrEmpty(_opNameTls) ? "ui" : _opNameTls,
+            StartedTick = Environment.TickCount64,
+        };
+        RegisterUiOp(op);
+        T result = default;
+        Exception error = null;
+        using (var done = new ManualResetEventSlim(false))
+        {
+            _ui.BeginInvoke((Action)(() =>
+            {
+                try { result = func(); }
+                catch (Exception ex) { error = ex; }
+                finally
+                {
+                    op.FinishedTick = Environment.TickCount64;
+                    op.State = op.TimedOut ? "done-late" : (error == null ? "done" : "error");
+                    if (error != null) op.Error = error.Message;
+                    done.Set();
+                }
+            }));
+            int timeout = UiTimeoutMs();
+            if (!done.Wait(timeout))
+            {
+                op.TimedOut = true;
+                op.State = "timeout";
+                _log($"operasi UI #{id} ({op.Name}) TIMEOUT {timeout}ms — tetap jalan di latar; cek GET /op?id={id}");
+                throw new UiTimeoutException(id, op.Name, timeout);
+            }
+        }
+        if (error != null) throw error;
+        return result;
     }
 
     private static string SafeResult(Task<string> task)

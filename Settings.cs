@@ -59,6 +59,32 @@ internal static class Settings
         }
     }
 
+    private const string OnUiTimeoutMsValueName = "OnUiTimeoutMs";
+
+    /// <summary>
+    /// Batas tunggu operasi UI (v3.7.0 — BUG-10): berapa lama
+    /// server menunggu thread UI sebelum menjawab 504 (operasi
+    /// TIDAK dibatalkan — hasil akhirnya tetap tercatat).
+    /// Bawaan 10.000 ms; sah 250–120.000; diatur lewat registry
+    /// HKCU\Software\Jembatan\OnUiTimeoutMs (DWORD, milidetik).
+    /// </summary>
+    public static int OnUiTimeoutMs
+    {
+        get
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath, false))
+                {
+                    if (key?.GetValue(OnUiTimeoutMsValueName) is int v && v >= 250 && v <= 120000)
+                        return v;
+                }
+            }
+            catch { /* abaikan — pakai bawaan */ }
+            return 10000;
+        }
+    }
+
     private const string ThemeValueName = "Theme";
     private const string KeepAwakeValueName = "KeepAwake";
     private const string LogPanelOpenValueName = "LogPanelOpen";
