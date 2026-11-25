@@ -2416,19 +2416,33 @@ public sealed class AgentServer
                                 // dua kata berurutan digabung (query
                                 // berspasi, mis. "Create project").
                                 var ws = ocrRes.Words;
-                                for (int i = 0; i < ws.Count && hits.Count < 10; i++)
+                                // Lolos 1: cocok persis. Lolos 2 (bila
+                                // kosong & query mengandung angka):
+                                // cocok KABUR — OCR sering menukar
+                                // 0<->O/ø, 1<->l/I, 5<->S, 8<->B
+                                // ("ZEBRA360" terbaca "ZEBRA36ø").
+                                for (int pass = 0; pass < 2 && hits.Count == 0; pass++)
                                 {
-                                    if (ws[i].Text.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    string qq = pass == 0 ? q : NormalizeOcrFuzzy(q);
+                                    if (qq == null) break;
+                                    for (int i = 0; i < ws.Count && hits.Count < 10; i++)
                                     {
-                                        hits.Add(new LocateHit { Via = "ocr", Text = ws[i].Text, Type = "word", Rect = ws[i].Rect });
-                                    }
-                                    else if (q.IndexOf(' ') > 0 && i + 1 < ws.Count)
-                                    {
-                                        string gab = ws[i].Text + " " + ws[i + 1].Text;
-                                        if (gab.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                        string w1 = pass == 0 ? ws[i].Text
+                                            : (NormalizeOcrFuzzy(ws[i].Text) ?? ws[i].Text);
+                                        if (w1.IndexOf(qq, StringComparison.OrdinalIgnoreCase) >= 0)
                                         {
-                                            var rr = Rectangle.Union(ws[i].Rect, ws[i + 1].Rect);
-                                            hits.Add(new LocateHit { Via = "ocr", Text = gab, Type = "words", Rect = rr });
+                                            hits.Add(new LocateHit { Via = "ocr", Text = ws[i].Text, Type = "word", Rect = ws[i].Rect });
+                                        }
+                                        else if (q.IndexOf(' ') > 0 && i + 1 < ws.Count)
+                                        {
+                                            string gab = ws[i].Text + " " + ws[i + 1].Text;
+                                            string gabN = pass == 0 ? gab
+                                                : (NormalizeOcrFuzzy(gab) ?? gab);
+                                            if (gabN.IndexOf(qq, StringComparison.OrdinalIgnoreCase) >= 0)
+                                            {
+                                                var rr = Rectangle.Union(ws[i].Rect, ws[i + 1].Rect);
+                                                hits.Add(new LocateHit { Via = "ocr", Text = gab, Type = "words", Rect = rr });
+                                            }
                                         }
                                     }
                                 }
@@ -3854,6 +3868,34 @@ public sealed class AgentServer
     /// grid hanya ada di gambar yang dikirim ke Muse, supaya
     /// koordinat klik dibaca dari label, bukan ditebak.
     /// </summary>
+    /// <summary>
+    /// Normalisasi kabur OCR (v3.6.0): petakan huruf yang sering
+    /// tertukar dengan angka (O/ø→0, l/I→1, S→5, B→8). Mengembalikan
+    /// null bila teks tidak mengandung angka — pemanggil lalu
+    /// memakai teks asli (query huruf murni tetap dicocokkan persis).
+    /// </summary>
+    private static string NormalizeOcrFuzzy(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return null;
+        bool hasDigit = false;
+        foreach (char c in s)
+            if (c >= '0' && c <= '9') { hasDigit = true; break; }
+        if (!hasDigit) return null;
+        var sb = new StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            switch (c)
+            {
+                case 'O': case 'o': case 'ø': case 'Ø': sb.Append('0'); break;
+                case 'l': case 'I': case '|': sb.Append('1'); break;
+                case 'S': sb.Append('5'); break;
+                case 'B': sb.Append('8'); break;
+                default: sb.Append(c); break;
+            }
+        }
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Kotak bernomor di atas kandidat /locate (v3.6.0 —
     /// Set-of-Marks): nomor pada gambar = urutan kandidat pada
