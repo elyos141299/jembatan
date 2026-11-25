@@ -122,7 +122,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "3.11.0";
+            return "4.0.0";
         }
     }
     private Label _tileRamValue;
@@ -134,6 +134,14 @@ public sealed class MainForm : Form
     private string _statusState = "waiting";
     private Panel _leftRoot;
     private Panel _chatRoot;
+    // v4.0.0 — Control Room: kontainer tengah lama & kerangka baru.
+    private Panel _midLegacy;
+    private RoomShell _roomShell;
+
+    /// <summary>Teks sensor CPU terakhir (untuk Overview Control Room).</summary>
+    internal string RoomCpuText => _cpuText;
+    /// <summary>Teks sensor GPU terakhir (untuk Overview Control Room).</summary>
+    internal string RoomGpuText => _gpuText;
     private SettingsForm _settingsForm;
     // v2.8.0 — permukaan rombak total: bar judul, strip status,
     // panel log bawah, tombol akses & pengaturan di panel kiri.
@@ -272,6 +280,39 @@ public sealed class MainForm : Form
         };
 
         _server = new AgentServer(this, Log, OnActivity);
+
+        // v4.0.0 — Control Room mengambil alih permukaan utama:
+        // kerangka gelap dipasang di slot kontainer tengah lama
+        // (indeks 1: sesudah mid, sebelum bar judul), kontainer
+        // lama disembunyikan, bar judul dicat ulang gelap agar
+        // menyatu. Semua perilaku lama (tray, flyout Chat/Log,
+        // Pengaturan, watchdog, sensor) berjalan seperti biasa.
+        try
+        {
+            _roomShell = new RoomShell(this, _server);
+            Controls.Add(_roomShell);
+            Controls.SetChildIndex(_roomShell, 1);
+            if (_midLegacy != null) _midLegacy.Visible = false;
+            if (_titleBar != null)
+            {
+                _titleBar.Paint -= TitleBarPaint;
+                _titleBar.BackColor = RoomTheme.Sidebar;
+                if (_barTitle != null) _barTitle.ForeColor = RoomTheme.Text;
+                foreach (var cap in new[] { _capMin, _capMax, _capClose })
+                {
+                    if (cap == null) continue;
+                    cap.GlyphColor = RoomTheme.Text;
+                    cap.HoverFill = RoomTheme.Hover;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Kerangka baru gagal dibangun: permukaan lama tetap
+            // tampil — aplikasi tidak boleh jatuh karenanya.
+            try { if (_midLegacy != null) _midLegacy.Visible = true; } catch { }
+            System.Diagnostics.Debug.WriteLine("RoomShell gagal: " + ex);
+        }
 
         // Tema "Ikuti perangkat": cat ulang langsung saat tema
         // Windows berubah; kunci/buka layar masuk catatan kejadian.
@@ -978,6 +1019,9 @@ public sealed class MainForm : Form
         // lalu atas. Rel menempel di tuan rumah yang sama agar
         // tingginya penuh sebadan jendela.
         var mid = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
+        // v4.0.0: disimpan agar Control Room bisa menyembunyikan
+        // kontainer lama dan mengambil slotnya.
+        _midLegacy = mid;
         mid.Controls.Add(leftRoot);
         // v3.3.2 (koreksi user): garis pembatas rel <-> panel —
         // ditambah SESUDAH leftRoot agar terdok lebih dulu, persis
@@ -2447,7 +2491,7 @@ public sealed class MainForm : Form
     /// Saling eksklusif dengan log & Pengaturan (pola v3.2.2
     /// diperluas): membuka chat menutup keduanya.
     /// </summary>
-    private void ToggleChatPanel()
+    internal void ToggleChatPanel()
     {
         if (_chatFlyout == null || _railChatBtn == null) return;
         long now = Environment.TickCount64;
@@ -2479,7 +2523,7 @@ public sealed class MainForm : Form
     /// pasangan MouseDown+Click pada tombol yang sama. Keadaan
     /// strip & rel diselaraskan lewat VisibleChanged flyout.
     /// </summary>
-    private void ToggleLogPanel()
+    internal void ToggleLogPanel()
     {
         if (_logFlyout == null || _railLogBtn == null) return;
         long now = Environment.TickCount64;
@@ -2797,6 +2841,7 @@ public sealed class MainForm : Form
         _statusLabel.Text = _statusTextFull;
         _statusState = "connected";
         RefreshStatusPill();
+        try { _roomShell?.NotifyActivity(); } catch { /* abaikan */ }
     }
 
     /// <summary>Menulis satu baris ke log jendela (aman dari thread mana pun).</summary>

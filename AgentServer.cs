@@ -72,7 +72,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.11.0";
+        return "4.0.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
@@ -641,6 +641,25 @@ public sealed class AgentServer
         if (taskFromBody != null) _opTaskTls = taskFromBody;
         try
         {
+            // Emergency Stop (v4.0.0): selama pengguna menahan
+            // input, SEMUA POST pengubah keadaan ditolak 423 —
+            // termasuk /batch & /exec. GET tetap jalan agar
+            // pemantauan tidak ikut mati. /halt dikecualikan
+            // (memasang stop harus selalu bisa).
+            if (_inputHalted && req.Method == "POST" && req.Path != "/halt" &&
+                (InputPaths.Contains(req.Path) || req.Path == "/batch" ||
+                 req.Path == "/exec" || req.Path == "/shell" ||
+                 req.Path == "/open" || req.Path == "/upload"))
+            {
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = false,
+                    ["error"] = "input dihentikan pengguna lewat Emergency Stop — hanya bisa dilepas dari aplikasi MuseLink",
+                    ["code"] = "input_halted",
+                    ["retryable"] = false,
+                }, 423);
+            }
+
             // InputArbiter (v3.11.0): selama /batch memegang lease,
             // endpoint input dari tugas LAIN ditolak 429. Sub-aksi
             // pemilik lease lolos — taskId warisannya cocok.
@@ -667,7 +686,8 @@ public sealed class AgentServer
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
                 return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"" + AppVersion + "\",\"admin\":"
-                    + (Settings.IsElevated() ? "true" : "false") + "}");
+                    + (Settings.IsElevated() ? "true" : "false")
+                    + ",\"halted\":" + (_inputHalted ? "true" : "false") + "}");
             }
 
             if (req.Method == "GET" && req.Path == "/screenshot")
@@ -1382,55 +1402,37 @@ public sealed class AgentServer
 
             if (req.Method == "GET" && req.Path == "/health")
             {
-                // Diagnosis satu panggilan (v3.10.0 — DSA-13):
-                // TIDAK lewat OnUi — justru untuk tahu UI macet
-                // atau tidak. Probe UI = BeginInvoke pulang-pergi
-                // bermeterai waktu, batas 1500ms.
-                long probeMs = -1;
-                try
+                // Diagnosis satu panggilan (v3.10.0 — DSA-13).
+                // Isi dibangun BuildHealth() — UI Control Room
+                // (v4.0.0) membaca data yang sama persis.
+                return Response.JsonObject(BuildHealth());
+            }
+
+            if (req.Method == "POST" && req.Path == "/halt")
+            {
+                // Emergency Stop dari sisi agen (v4.0.0): agen
+                // BOLEH menghentikan dirinya sendiri, tetapi
+                // MELEPAS stop hanya bisa dari aplikasi — jaringan
+                // tidak boleh membatalkan keputusan pengguna.
+                using (var doc = JsonDocument.Parse(req.Body))
                 {
-                    using (var probeDone = new ManualResetEventSlim(false))
+                    bool on = GetBool(doc.RootElement, "on", true);
+                    if (!on)
+                        return Response.JsonObject(new Dictionary<string, object>
+                        {
+                            ["ok"] = false,
+                            ["error"] = "Emergency Stop hanya bisa dilepas dari aplikasi MuseLink",
+                            ["code"] = "halt_release_forbidden",
+                            ["retryable"] = false,
+                        }, 403);
+                    SetHalt(true, "agen (POST /halt)");
+                    return Response.JsonObject(new Dictionary<string, object>
                     {
-                        var swP = Stopwatch.StartNew();
-                        _ui.BeginInvoke((Action)(() => probeDone.Set()));
-                        if (probeDone.Wait(1500)) probeMs = swP.ElapsedMilliseconds;
-                    }
+                        ["ok"] = true,
+                        ["halted"] = true,
+                        ["note"] = "semua input ditahan sampai pengguna melepas Stop dari aplikasi",
+                    });
                 }
-                catch { /* UI tak terjangkau — probeMs tetap -1 */ }
-                int running = 0;
-                foreach (var u in _uiOps.Values) if (u.State == "running") running++;
-                bool shellAlive = false;
-                try { lock (_shellLock) { shellAlive = _shell != null && !_shell.Proc.HasExited; } } catch { }
-                object lastTimeout = null;
-                if (_lastUiTimeoutTick > 0)
-                {
-                    lastTimeout = new Dictionary<string, object>
-                    {
-                        ["time"] = _lastUiTimeoutTime,
-                        ["name"] = _lastUiTimeoutName,
-                        ["agoSec"] = (Environment.TickCount64 - _lastUiTimeoutTick) / 1000,
-                    };
-                }
-                string fgTitle = "";
-                try { fgTitle = NativeInput.TitleOf(NativeInput.ForegroundHandle()); } catch { }
-                return Response.JsonObject(new Dictionary<string, object>
-                {
-                    ["ok"] = true,
-                    ["version"] = AppVersion,
-                    ["uptimeSec"] = (Environment.TickCount64 - _startTick) / 1000,
-                    ["listener"] = IsRunning,
-                    ["ui"] = new Dictionary<string, object>
-                    {
-                        ["ok"] = probeMs >= 0,
-                        ["responsiveMs"] = probeMs,
-                    },
-                    ["uiOpsRunning"] = running,
-                    ["lastUiTimeout"] = lastTimeout,
-                    ["inputLease"] = ActiveLeaseOwner(),
-                    ["shellAlive"] = shellAlive,
-                    ["eventsLastSeq"] = EventLog.LastSeq,
-                    ["foreground"] = fgTitle,
-                });
             }
 
             if (req.Method == "GET" && req.Path == "/task")
@@ -5406,6 +5408,160 @@ public sealed class AgentServer
         {
             if (_leaseOwner == owner) _leaseOwner = null;
         }
+    }
+
+    // Emergency Stop (v4.0.0 — brief Control Room Fase 4):
+    // bendera tahan-input global. Saat aktif, semua POST yang
+    // mengubah keadaan PC ditolak 423; GET (pemantauan) tetap
+    // jalan. Mengaktifkan Stop juga membatalkan operasi UI yang
+    // masih antre dan menghentikan shell persisten. Pelepasan
+    // HANYA dari aplikasi (SetHalt dipanggil UI langsung);
+    // POST /halt dari jaringan hanya boleh memasang, tak pernah
+    // melepas.
+    private volatile bool _inputHalted;
+
+    /// <summary>True selama Emergency Stop aktif.</summary>
+    public bool InputHalted => _inputHalted;
+
+    /// <summary>Pasang/lepas Emergency Stop. Dipanggil UI
+    /// aplikasi (dua arah) atau handler /halt (pasang saja).</summary>
+    public void SetHalt(bool on, string source)
+    {
+        if (on == _inputHalted) return;
+        _inputHalted = on;
+        if (on)
+        {
+            int dibatalkan = 0;
+            foreach (var op in _uiOps.Values)
+            {
+                if (op.FinishedTick == 0 && !op.Started && !op.CancelRequested)
+                {
+                    op.CancelRequested = true;
+                    dibatalkan++;
+                }
+            }
+            try { KillShell(); } catch { /* abaikan */ }
+            _log("EMERGENCY STOP aktif dari " + source + " — " + dibatalkan + " operasi antre dibatalkan, shell dihentikan, semua input ditahan");
+            EventLog.Add("emergency-stop", "Emergency Stop AKTIF dari " + source + " (" + dibatalkan + " operasi antre dibatalkan)");
+        }
+        else
+        {
+            _log("Emergency Stop dilepas dari " + source + " — input berjalan lagi");
+            EventLog.Add("emergency-stop", "Emergency Stop dilepas dari " + source);
+        }
+    }
+
+    /// <summary>Isi GET /health sebagai data (v4.0.0): handler
+    /// HTTP dan UI Control Room membaca dari sini agar tidak
+    /// pernah berbeda. Probe UI TIDAK lewat OnUi — justru untuk
+    /// mendeteksi UI macet.</summary>
+    public Dictionary<string, object> BuildHealth()
+    {
+        long probeMs = -1;
+        try
+        {
+            using (var probeDone = new ManualResetEventSlim(false))
+            {
+                var swP = Stopwatch.StartNew();
+                _ui.BeginInvoke((Action)(() => probeDone.Set()));
+                if (probeDone.Wait(1500)) probeMs = swP.ElapsedMilliseconds;
+            }
+        }
+        catch { /* UI tak terjangkau — probeMs tetap -1 */ }
+        int running = 0;
+        foreach (var u in _uiOps.Values) if (u.State == "running") running++;
+        bool shellAlive = false;
+        try { lock (_shellLock) { shellAlive = _shell != null && !_shell.Proc.HasExited; } } catch { }
+        object lastTimeout = null;
+        if (_lastUiTimeoutTick > 0)
+        {
+            lastTimeout = new Dictionary<string, object>
+            {
+                ["time"] = _lastUiTimeoutTime,
+                ["name"] = _lastUiTimeoutName,
+                ["agoSec"] = (Environment.TickCount64 - _lastUiTimeoutTick) / 1000,
+            };
+        }
+        string fgTitle = "";
+        try { fgTitle = NativeInput.TitleOf(NativeInput.ForegroundHandle()); } catch { }
+        return new Dictionary<string, object>
+        {
+            ["ok"] = true,
+            ["version"] = AppVersion,
+            ["uptimeSec"] = (Environment.TickCount64 - _startTick) / 1000,
+            ["listener"] = IsRunning,
+            ["ui"] = new Dictionary<string, object>
+            {
+                ["ok"] = probeMs >= 0,
+                ["responsiveMs"] = probeMs,
+            },
+            ["uiOpsRunning"] = running,
+            ["lastUiTimeout"] = lastTimeout,
+            ["inputLease"] = ActiveLeaseOwner(),
+            ["inputHalted"] = _inputHalted,
+            ["shellAlive"] = shellAlive,
+            ["eventsLastSeq"] = EventLog.LastSeq,
+            ["foreground"] = fgTitle,
+        };
+    }
+
+    /// <summary>Snapshot operasi Route terakhir untuk UI
+    /// (v4.0.0): [time, method, path, status, ms, taskId,
+    /// summary], terbaru dulu.</summary>
+    public List<string[]> RecentOpsSnapshot(int max)
+    {
+        var hasil = new List<string[]>();
+        lock (_opsLock)
+        {
+            for (int i = _ops.Count - 1; i >= 0 && hasil.Count < max; i--)
+            {
+                var o = _ops[i];
+                hasil.Add(new[]
+                {
+                    o.Time, o.Method, o.Path, o.Status.ToString(),
+                    o.Ms.ToString(), o.TaskId ?? "", o.Summary ?? "",
+                });
+            }
+        }
+        return hasil;
+    }
+
+    /// <summary>Snapshot operasi UI terakhir untuk UI (v4.0.0):
+    /// [id, name, state, durationMs, taskId], terbaru dulu.</summary>
+    public List<string[]> RecentUiOpsSnapshot(int max)
+    {
+        var salin = new List<UiOp>(_uiOps.Values);
+        salin.Sort((a, b) => b.Id.CompareTo(a.Id));
+        var hasil = new List<string[]>();
+        foreach (var u in salin)
+        {
+            if (hasil.Count >= max) break;
+            long dur = (u.FinishedTick > 0 ? u.FinishedTick : Environment.TickCount64) - u.StartedTick;
+            hasil.Add(new[]
+            {
+                u.Id.ToString(), u.Name, u.State, dur.ToString(), u.TaskId ?? "",
+            });
+        }
+        return hasil;
+    }
+
+    /// <summary>Aktivitas tugas terakhir untuk kartu Active Task
+    /// (v4.0.0): [taskId, jumlah operasi, operasi terakhir,
+    /// waktu terakhir] atau null bila belum ada tugas.</summary>
+    public string[] LatestTaskActivity()
+    {
+        lock (_opsLock)
+        {
+            for (int i = _ops.Count - 1; i >= 0; i--)
+            {
+                var o = _ops[i];
+                if (string.IsNullOrEmpty(o.TaskId)) continue;
+                int jumlah = 0;
+                foreach (var x in _ops) if (x.TaskId == o.TaskId) jumlah++;
+                return new[] { o.TaskId, jumlah.ToString(), o.Method + " " + o.Path, o.Time };
+            }
+        }
+        return null;
     }
 
     /// <summary>Ambil "taskId" dari body JSON request (POST);

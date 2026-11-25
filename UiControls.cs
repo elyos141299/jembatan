@@ -390,6 +390,11 @@ public class CaptionButton : Control
     public GlyphKind Kind { get; set; } = GlyphKind.Close;
     /// <summary>True saat jendela pemilik termaksimalkan (glif pulihkan).</summary>
     public bool Maximized { get; set; }
+    /// <summary>Pengganti warna glif (v4.0.0, bar judul gelap
+    /// Control Room); null = AppTheme.Ink bawaan.</summary>
+    public Color? GlyphColor { get; set; }
+    /// <summary>Pengganti warna hover; null = AppTheme.LightFill.</summary>
+    public Color? HoverFill { get; set; }
 
     private bool _hover;
     private bool _pressed;
@@ -417,12 +422,13 @@ public class CaptionButton : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         bool closeHover = Kind == GlyphKind.Close && (_hover || _pressed);
+        Color hoverFill = HoverFill ?? AppTheme.LightFill;
         Color bg = closeHover ? Color.FromArgb(232, 17, 35)
-            : _pressed ? ControlPaint.Dark(AppTheme.LightFill, 0.1f)
-            : _hover ? AppTheme.LightFill
+            : _pressed ? ControlPaint.Dark(hoverFill, 0.1f)
+            : _hover ? hoverFill
             : (Parent != null ? Parent.BackColor : AppTheme.Panel);
         using (var b = new SolidBrush(bg)) g.FillRectangle(b, ClientRectangle);
-        Color ink = closeHover ? Color.White : AppTheme.Ink;
+        Color ink = closeHover ? Color.White : (GlyphColor ?? AppTheme.Ink);
         using (var pen = new Pen(ink, 1f))
         {
             int cx = Width / 2, cy = Height / 2;
