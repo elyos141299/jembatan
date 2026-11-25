@@ -1,4 +1,20 @@
-# MuseLink v3.0.1 — catatan pengembang
+# MuseLink v3.0.2 — catatan pengembang
+
+## v3.0.2 — Perbaikan penjaga sensor (diagnostik v3.0.1)
+
+- v3.0.1 terpasang & terverifikasi visual (flyout log, animasi,
+  RAM, CAPTURE "gpu"), TAPI baris CPU & GPU berhenti di "…":
+  timer polling v3.0.1 adalah variabel lokal (bisa dipungut GC
+  → berhenti diam-diam) dan polling GPU pertama menumpang di
+  belakang init LibreHardwareMonitor yang tidak kunjung selesai
+  (driver WinRing0 tidak pernah terekstrak/terdaftar di mode
+  single-file — terbukti dari tidak adanya service & berkas
+  .sys di PC user).
+- v3.0.2: timer jadi field, GPU dipolling independen sejak
+  detik pertama, init CPU di utas sendiri, stderr nvidia-smi
+  tidak lagi dialihkan, dan hasil pertama tiap sensor dicatat
+  ke log ("Sensor GPU: …" / "Sensor CPU aktif/tidak aktif: …")
+  agar kegagalan berikutnya terbaca, bukan ditebak.
 
 ## v3.0.1 — Log melayang, animasi & sensor sistem (permintaan user 25 Nov 2026)
 

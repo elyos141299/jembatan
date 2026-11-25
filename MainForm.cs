@@ -264,14 +264,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.0.1 dimulai ===");
+            Log("=== MuseLink v3.0.2 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.0.1 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.0.2 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -601,7 +601,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v3.0.1",
+            Text = "v3.0.2",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -843,7 +843,7 @@ public sealed class MainForm : Form
         MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
         MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
         MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
-        MakeRow(tiles, 6, "VERSI", "3.0.1", out _tileVersionValue);
+        MakeRow(tiles, 6, "VERSI", "3.0.2", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -1829,21 +1829,44 @@ public sealed class MainForm : Form
     // (P/Invoke ringan). Semua jalur boleh gagal dengan aman —
     // baris menampilkan nilai terakhir yang bagus / "—".
 
+    // v3.0.2: penjaga ditulis ulang setelah v3.0.1 terbukti diam
+    // (CPU & GPU berhenti di "…"): timer kini FIELD (timer lokal
+    // bisa dipungut GC dan berhenti diam-diam), init CPU berjalan
+    // di utasnya sendiri (Open() LibreHardwareMonitor bisa lama /
+    // menggantung — tidak lagi menahan polling GPU), dan hasil
+    // pertama tiap sensor DICATAT ke log sebagai diagnostik.
+    private System.Windows.Forms.Timer _sensorTimer;
+    private volatile bool _cpuInitDone;
+    private bool _sensorDiagLogged;
+
     private void StartSensorPoller()
     {
         _cpuSensor = new CpuTempSensor();
+        System.Threading.Tasks.Task.Run(PollSensorsOnce);
         System.Threading.Tasks.Task.Run(() =>
         {
-            try { _cpuSensor.TryInit(); } catch { /* abaikan */ }
-            PollSensorsOnce();
+            bool ok = false;
+            try { ok = _cpuSensor != null && _cpuSensor.TryInit(); } catch { /* diag di sensor */ }
+            _cpuInitDone = true;
+            if (ok)
+            {
+                var c = _cpuSensor.Read();
+                if (c.HasValue) _cpuText = c.Value + "°C";
+                Log("Sensor CPU aktif: " + (c.HasValue ? c.Value + "°C" : "belum terbaca")
+                    + " [" + _cpuSensor.InitDiag + "].");
+            }
+            else
+            {
+                Log("Sensor CPU tidak aktif: " + (_cpuSensor != null ? _cpuSensor.InitDiag : "?"));
+            }
         });
-        var t = new System.Windows.Forms.Timer { Interval = 10000 };
-        t.Tick += (s, e) =>
+        _sensorTimer = new System.Windows.Forms.Timer { Interval = 10000 };
+        _sensorTimer.Tick += (s, e) =>
         {
             if (!_sensorPollBusy)
                 System.Threading.Tasks.Task.Run(PollSensorsOnce);
         };
-        t.Start();
+        _sensorTimer.Start();
     }
 
     private void PollSensorsOnce()
@@ -1854,11 +1877,16 @@ public sealed class MainForm : Form
         {
             var g = SysSensors.GpuText();
             if (g != null) _gpuText = g;
-            if (_cpuSensor != null)
+            if (_cpuInitDone && _cpuSensor != null)
             {
                 var c = _cpuSensor.Read();
                 if (c.HasValue) _cpuText = c.Value + "°C";
                 else if (_cpuSensor.Failed) _cpuText = "—";
+            }
+            if (!_sensorDiagLogged)
+            {
+                _sensorDiagLogged = true;
+                Log("Sensor GPU: " + (g != null ? g : "gagal [" + SysSensors.LastDiag + "]") + ".");
             }
         }
         catch { /* sensor hanya keterangan — jangan ganggu aplikasi */ }

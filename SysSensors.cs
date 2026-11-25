@@ -71,10 +71,15 @@ internal static class SysSensors
         return "nvidia-smi";
     }
 
+    /// <summary>Diagnostik panggilan GPU terakhir (untuk log).</summary>
+    public static string LastDiag { get; private set; } = "belum dipanggil";
+
     /// <summary>
     /// "37°C · 12%" (suhu · beban GPU) atau null bila gagal —
     /// pemanggil mempertahankan nilai terakhir yang bagus.
     /// MENGGANTUNG ±100–300ms: panggil dari utas latar saja.
+    /// v3.0.2: stderr TIDAK dialihkan (pipa tak terbaca bisa
+    /// membuat proses menggantung) dan stdout dibaca asinkron.
     /// </summary>
     public static string GpuText()
     {
@@ -86,27 +91,37 @@ internal static class SysSensors
                 Arguments = "--query-gpu=temperature.gpu,utilization.gpu --format=csv,noheader,nounits",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true,
                 CreateNoWindow = true,
             };
             using (var p = Process.Start(psi))
             {
-                if (p == null) return null;
-                string output = p.StandardOutput.ReadToEnd();
-                if (!p.WaitForExit(4000))
+                if (p == null) { LastDiag = "proses tidak mulai"; return null; }
+                var readTask = p.StandardOutput.ReadToEndAsync();
+                if (!p.WaitForExit(5000))
                 {
                     try { p.Kill(); } catch { /* abaikan */ }
+                    LastDiag = "timeout 5 detik";
                     return null;
                 }
+                string output = readTask.Result ?? "";
                 var parts = output.Trim().Split(',');
                 if (parts.Length >= 2
                     && int.TryParse(parts[0].Trim(), out int temp)
                     && int.TryParse(parts[1].Trim(), out int util))
+                {
+                    LastDiag = "ok";
                     return temp + "°C · " + util + "%";
+                }
+                string flat = output.Trim().Replace("\n", " ");
+                LastDiag = "keluaran tak dikenal: " + (flat.Length > 60 ? flat.Substring(0, 60) : flat);
+                return null;
             }
         }
-        catch { /* nvidia-smi tidak ada / gagal — nilai lama dipertahankan */ }
-        return null;
+        catch (Exception ex)
+        {
+            LastDiag = ex.GetType().Name + ": " + (ex.Message ?? "").Split('\n')[0];
+            return null;
+        }
     }
 }
 
@@ -124,18 +139,35 @@ internal sealed class CpuTempSensor : IDisposable
     /// <summary>True bila inisialisasi sensor dipastikan gagal.</summary>
     public bool Failed { get; private set; }
 
+    /// <summary>Rincian hasil init terakhir (untuk log).</summary>
+    public string InitDiag { get; private set; } = "belum init";
+
     public bool TryInit()
     {
         try
         {
             _computer = new Computer { IsCpuEnabled = true };
             _computer.Open();
+            int hwCount = 0, tempSensors = 0;
+            string hwName = "";
+            foreach (var hw in _computer.Hardware)
+            {
+                if (hw.HardwareType != HardwareType.Cpu) continue;
+                hwCount++;
+                hwName = hw.Name;
+                hw.Update();
+                foreach (var sensor in hw.Sensors)
+                    if (sensor.SensorType == SensorType.Temperature) tempSensors++;
+            }
+            InitDiag = hwCount + " CPU (" + hwName + "), " + tempSensors + " sensor suhu";
+            if (hwCount == 0) { Failed = true; return false; }
             return true;
         }
-        catch
+        catch (Exception ex)
         {
             Failed = true;
             _computer = null;
+            InitDiag = ex.GetType().Name + ": " + (ex.Message ?? "").Split('\n')[0];
             return false;
         }
     }
