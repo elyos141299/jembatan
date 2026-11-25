@@ -72,7 +72,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.10.0";
+        return "3.11.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
@@ -641,6 +641,24 @@ public sealed class AgentServer
         if (taskFromBody != null) _opTaskTls = taskFromBody;
         try
         {
+            // InputArbiter (v3.11.0): selama /batch memegang lease,
+            // endpoint input dari tugas LAIN ditolak 429. Sub-aksi
+            // pemilik lease lolos — taskId warisannya cocok.
+            if (req.Method == "POST" && InputPaths.Contains(req.Path))
+            {
+                string pemilik = ActiveLeaseOwner();
+                if (pemilik != null && _opTaskTls != pemilik)
+                {
+                    return Response.JsonObject(new Dictionary<string, object>
+                    {
+                        ["ok"] = false,
+                        ["error"] = "input sedang disewa rangkaian batch lain (" + pemilik + ")",
+                        ["code"] = "input_leased",
+                        ["retryable"] = true,
+                        ["leaseOwner"] = pemilik,
+                    }, 429);
+                }
+            }
             if (req.Method == "GET" && req.Path == "/ping")
             {
                 _onActivity();
@@ -1408,6 +1426,7 @@ public sealed class AgentServer
                     },
                     ["uiOpsRunning"] = running,
                     ["lastUiTimeout"] = lastTimeout,
+                    ["inputLease"] = ActiveLeaseOwner(),
                     ["shellAlive"] = shellAlive,
                     ["eventsLastSeq"] = EventLog.LastSeq,
                     ["foreground"] = fgTitle,
@@ -2015,6 +2034,28 @@ public sealed class AgentServer
                             if (!root.TryGetProperty("actions", out var actions) ||
                                 actions.ValueKind != JsonValueKind.Array)
                                 return Response.Json("{\"ok\":false,\"error\":\"actions wajib berupa array\"}", 400);
+                            // InputArbiter (v3.11.0 — DSA-15): sewa
+                            // input selama rangkaian berjalan; batch
+                            // lain & input asing ditolak 429
+                            // input_leased sampai rangkaian selesai.
+                            string leaseOwner = _opTaskTls;
+                            if (string.IsNullOrEmpty(leaseOwner))
+                            {
+                                leaseOwner = "batch-" + Interlocked.Increment(ref _leaseSeq);
+                                _opTaskTls = leaseOwner; // sub-aksi mewarisi pemilik
+                            }
+                            if (!TryAcquireLease(leaseOwner))
+                            {
+                                string pemilikAktif = ActiveLeaseOwner();
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "input sedang disewa rangkaian batch lain (" + pemilikAktif + ")",
+                                    ["code"] = "input_leased",
+                                    ["retryable"] = true,
+                                    ["leaseOwner"] = pemilikAktif,
+                                }, 429);
+                            }
                             bool stopOnError = !root.TryGetProperty("stopOnError", out var soe) ||
                                                soe.ValueKind != JsonValueKind.False;
                             // diffAfter (v2.6.1): garis dasar
@@ -2054,6 +2095,7 @@ public sealed class AgentServer
                                     });
                                     break;
                                 }
+                                TouchLease(leaseOwner);
                                 string doName = action.ValueKind == JsonValueKind.Object
                                     ? GetString(action, "do", "") : "";
                                 if (doName == "sleep")
@@ -2251,6 +2293,7 @@ public sealed class AgentServer
                                     diffBefore.Dispose();
                                 }
                             }
+                            ReleaseLease(leaseOwner);
                             return Response.JsonObject(batchResp);
                         }
                         case "/move":
@@ -3500,7 +3543,16 @@ public sealed class AgentServer
                             // Mesin Unicode SendInput sejak v2.4.0 —
                             // SendKeys lama tidak stabil untuk karakter
                             // di luar tata letak keyboard aktif.
-                            OnUi(() => { NativeInput.TypeUnicode(text); return true; });
+                            // v3.11.0 (DSA-16): ketik per potongan
+                            // ±20 karakter — satu OnUi per potongan
+                            // agar operasi UI lain bisa menyela di
+                            // antara potongan, bukan menunggu seluruh
+                            // teks panjang selesai.
+                            for (int off = 0; off < text.Length; off += 20)
+                            {
+                                string potongan = text.Substring(off, Math.Min(20, text.Length - off));
+                                OnUi(() => { NativeInput.TypeUnicode(potongan); return true; });
+                            }
                             _onActivity();
                             string preview = text.Length > 30 ? text.Substring(0, 30) + "…" : text;
                             _log($"ketik: {preview} ({text.Length} karakter)");
@@ -4365,8 +4417,30 @@ public sealed class AgentServer
         }));
     }
 
+    private int _streamClients;
+
     private void HandleStream(NetworkStream stream, RequestHead head)
     {
+        // Batas klien stream (v3.11.0 — DSA-18): maks 2 serentak.
+        // Tiap klien memicu tangkap+encode layar penuh di thread
+        // sendiri; tanpa batas, klien menumpuk bisa membebani PC.
+        int jumlah = Interlocked.Increment(ref _streamClients);
+        if (jumlah > 2)
+        {
+            Interlocked.Decrement(ref _streamClients);
+            try
+            {
+                var body429 = Encoding.UTF8.GetBytes("{\"ok\":false,\"error\":\"stream penuh — maksimal 2 klien serentak\",\"code\":\"stream_busy\",\"retryable\":true}");
+                var head429 = Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: " +
+                    body429.Length + "\r\nConnection: close\r\n\r\n");
+                stream.Write(head429, 0, head429.Length);
+                stream.Write(body429, 0, body429.Length);
+            }
+            catch { /* klien sudah hilang — abaikan */ }
+            _log("stream ditolak: sudah 2 klien aktif");
+            return;
+        }
         _onActivity();
         int maxWidth = ParseClamp(GetQueryParam(head.Query, "w"), 1280, 320, 1920);
         int quality = ParseClamp(GetQueryParam(head.Query, "q"), 60, 30, 90);
@@ -4451,6 +4525,7 @@ public sealed class AgentServer
         }
         finally
         {
+            Interlocked.Decrement(ref _streamClients);
             _log("stream berhenti");
         }
     }
@@ -5266,6 +5341,72 @@ public sealed class AgentServer
     private long _lastUiTimeoutTick;
     private string _lastUiTimeoutName;
     private string _lastUiTimeoutTime;
+
+    // InputArbiter (v3.11.0 — DSA-15): lease input eksklusif
+    // dipegang /batch selama rangkaiannya berjalan, agar dua
+    // rangkaian tidak saling menyela di tengah jalan. Pemilik =
+    // taskId batch (atau id tergenerasi untuk batch tanpa
+    // taskId). TTL 180 dtk, diperbarui tiap aksi — lease yang
+    // pemegangnya mati/hang kedaluwarsa sendiri, tidak mengunci
+    // input selamanya.
+    private readonly object _leaseLock = new object();
+    private string _leaseOwner;
+    private long _leaseExpiryTick;
+    private long _leaseSeq;
+    private const int LeaseTtlMs = 180000;
+
+    private static readonly HashSet<string> InputPaths = new HashSet<string>
+    {
+        "/move", "/click", "/type", "/key", "/keydown", "/keyup",
+        "/scroll", "/drag", "/focus", "/window", "/paste",
+        "/uia/click", "/uia/act", "/locate/act", "/routines/run",
+    };
+
+    /// <summary>Pemilik lease aktif, atau null. Lease lewat TTL
+    /// dilepas malas di sini (dicatat ke log).</summary>
+    private string ActiveLeaseOwner()
+    {
+        lock (_leaseLock)
+        {
+            if (_leaseOwner == null) return null;
+            if (Environment.TickCount64 > _leaseExpiryTick)
+            {
+                _log("lease input dari " + _leaseOwner + " kedaluwarsa — dilepas otomatis");
+                _leaseOwner = null;
+                return null;
+            }
+            return _leaseOwner;
+        }
+    }
+
+    private bool TryAcquireLease(string owner)
+    {
+        lock (_leaseLock)
+        {
+            string aktif = ActiveLeaseOwner();
+            if (aktif != null && aktif != owner) return false;
+            _leaseOwner = owner;
+            _leaseExpiryTick = Environment.TickCount64 + LeaseTtlMs;
+            return true;
+        }
+    }
+
+    private void TouchLease(string owner)
+    {
+        lock (_leaseLock)
+        {
+            if (_leaseOwner == owner)
+                _leaseExpiryTick = Environment.TickCount64 + LeaseTtlMs;
+        }
+    }
+
+    private void ReleaseLease(string owner)
+    {
+        lock (_leaseLock)
+        {
+            if (_leaseOwner == owner) _leaseOwner = null;
+        }
+    }
 
     /// <summary>Ambil "taskId" dari body JSON request (POST);
     /// null bila tidak ada/rusak. Dipotong 64 karakter.</summary>

@@ -52,8 +52,18 @@ public static class UiaScan
 
     private static readonly List<Item> _last = new List<Item>();
 
+    // Kunci daftar hasil pindai (v3.11.0 — DSA-17): _last ditulis
+    // thread UI saat pindai dan bisa dibaca thread HTTP (Find dari
+    // handler, Last dari pemanggil mana pun) — semua akses kini
+    // lewat satu kunci; Last mengembalikan SALINAN, bukan daftar
+    // hidup yang bisa berubah di tengah enumerasi pembaca.
+    private static readonly object _lastLock = new object();
+
     /// <summary>Hasil pindai terakhir (kosong sebelum pindai pertama).</summary>
-    public static IReadOnlyList<Item> Last => _last;
+    public static IReadOnlyList<Item> Last
+    {
+        get { lock (_lastLock) { return new List<Item>(_last); } }
+    }
 
     // Metadata pindai terakhir (v3.6.0): /uia/click menolak
     // mengklik hasil pindai yang jendela depannya sudah berganti
@@ -75,7 +85,7 @@ public static class UiaScan
     private static List<Item> Snapshot()
     {
         LastScanTick = Environment.TickCount64;
-        return new List<Item>(_last);
+        lock (_lastLock) { return new List<Item>(_last); }
     }
 
     // Tipe kontrol yang bisa diajak berinteraksi — elemen teks murni,
@@ -110,6 +120,8 @@ public static class UiaScan
     /// </summary>
     public static List<Item> ScanForeground(int maxItems)
     {
+      lock (_lastLock)
+      {
         _last.Clear();
         var fg = NativeInput.ForegroundHandle();
         LastScanHwnd = fg;
@@ -147,6 +159,7 @@ public static class UiaScan
         }
         catch { /* UIA gagal total (jendela aman dsb.) — daftar kosong */ }
         return Snapshot();
+      }
     }
 
     /// <summary>
@@ -199,16 +212,19 @@ public static class UiaScan
     /// </summary>
     public static Item Find(int index, string nameQuery)
     {
-        if (index >= 0 && index < _last.Count) return _last[index];
-        if (!string.IsNullOrWhiteSpace(nameQuery))
+        lock (_lastLock)
         {
-            foreach (var item in _last)
+            if (index >= 0 && index < _last.Count) return _last[index];
+            if (!string.IsNullOrWhiteSpace(nameQuery))
             {
-                if (item.Name.IndexOf(nameQuery, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return item;
+                foreach (var item in _last)
+                {
+                    if (item.Name.IndexOf(nameQuery, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return item;
+                }
             }
+            return null;
         }
-        return null;
     }
 
     /// <summary>

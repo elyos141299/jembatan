@@ -243,12 +243,12 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
 | `GET /windows` | — | `{ok:true, windows:[{hwnd, title, process, pid, x, y, w, h, foreground, hung, state, dialog, ownerHwnd}]}` — skema jendela tunggal (v3.8.0): hwnd = identitas stabil, state = normal/minimized/maximized, dialog + ownerHwnd untuk dialog/modal (termasuk dialog tanpa judul) |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
-| `GET /stream?w=&q=&fps=` | — | MJPEG `multipart/x-mixed-replace; boundary=frame` — lebar maks `w` (bawaan 1280, 320–1920), kualitas JPEG `q` (bawaan 60, 30–90), target `fps` (bawaan 10, 1–15); frame yang tidak berubah tidak dikirim (keepalive ±1 detik) |
+| `GET /stream?w=&q=&fps=` | — | MJPEG `multipart/x-mixed-replace; boundary=frame` — lebar maks `w` (bawaan 1280, 320–1920), kualitas JPEG `q` (bawaan 60, 30–90), target `fps` (bawaan 10, 1–15); frame yang tidak berubah tidak dikirim (keepalive ±1 detik); maks **2 klien serentak** (v3.11.0), berikutnya 429 `stream_busy` |
 | `POST /move` | `{x, y}` | `{ok:true}` |
 | `POST /click` | `{x, y, button, count?, modifiers?}` (`left`/`right`/`middle`; `count` 1–3, 2 = klik ganda; `modifiers` mis. `"ctrl,shift"` ditahan selama klik) | `{ok:true}` |
 | `POST /scroll` | `{x, y, delta}` | `{ok:true}` — delta positif = scroll ke atas (120 per "klik" roda) |
 | `POST /drag` | `{x1, y1, x2, y2, button?, modifiers?}` | `{ok:true}` — seret bertahap dari titik awal ke titik akhir; `modifiers` ditahan selama seret |
-| `POST /type` | `{text}` | `{ok:true}` — teks diketik lewat SendInput Unicode (v2.4.0): karakter apa pun terkirim apa adanya, baris baru = Enter |
+| `POST /type` | `{text}` | `{ok:true}` — teks diketik lewat SendInput Unicode (v2.4.0): karakter apa pun terkirim apa adanya, baris baru = Enter; sejak v3.11.0 diketik per potongan ±20 karakter agar operasi UI lain bisa menyela |
 | `POST /key` | `{keys}` | `{ok:true}` — nama tombol (`ENTER`, `F5`, …) atau sintaks SendKeys (`^c`, `%{F4}`) |
 | `POST /clipboard` | `{text}` | `{ok:true}` — isi clipboard diganti teks ini (log hanya mencatat panjangnya) |
 | `POST /paste` | `{text}` | `{ok:true}` — clipboard diisi teks lalu Ctrl+V ditekan: cara tercepat memasukkan teks panjang |
@@ -271,7 +271,7 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `POST /keepawake` | `{on}` | `{ok, keepAwake}` — saklar Jangan tidur lewat API (v2.5.0) |
 | `POST /keydown` / `POST /keyup` | `{key}` | `{ok:true}` — tahan/lepas satu tombol (`CTRL`, `SHIFT`, `ALT`, `WIN`, huruf/angka, `F1`–`F12`, arah, dst.) untuk kombinasi lintas perintah |
 | `POST /wait` | `{windowTitle?, filePath?, screenChange?, screenQuiet?, processGone?, processExists?, see?, timeoutMs?}` | `{ok, found, via, waitedMs, frame?}` — tunggu di sisi server sampai salah satu kondisi ketemu; `frame` (bila `see:true` & kondisi layar yang ketemu) = gambar wilayah yang dipantau, `{mime, x, y, width, height, b64}` (v2.4.4) |
-| `POST /batch` | `{actions:[{do, ...}], stopOnError?}` | `{ok, count, results}` — rangkaian aksi dijalankan berurutan di sisi PC dalam SATU panggilan (v2.4.1, "mode ngebut"); `do` = nama endpoint POST tanpa garis miring (`uia_click` = `/uia/click`) atau `sleep` {ms}; maks 100 aksi; berhenti pada galat pertama kecuali `stopOnError:false` |
+| `POST /batch` | `{actions:[{do, ...}], stopOnError?}` | `{ok, count, results}` — rangkaian aksi dijalankan berurutan di sisi PC dalam SATU panggilan (v2.4.1, "mode ngebut"); `do` = nama endpoint POST tanpa garis miring (`uia_click` = `/uia/click`) atau `sleep` {ms}; maks 100 aksi; berhenti pada galat pertama kecuali `stopOnError:false`. Sejak v3.11.0 batch memegang **lease input eksklusif** selama berjalan: batch/input lain → 429 `input_leased` (TTL 180 dtk diperbarui tiap aksi; pemilik = taskId) |
 | `POST /open` | `{path}` | `{ok:true}` — `Process.Start` dengan shell |
 | `POST /upload?path=<urlencoded>` | badan mentah (bukan JSON) | `{ok:true, bytes}` — badan ditulis jadi berkas di `path`; folder induk dibuat bila belum ada |
 | `GET /state` | — | `{ok, monitors, dpiScale, foreground:"<judul>", windows:[skema tunggal v3.8.0], mouse, userIdleSec}` — snapshot keadaan desktop satu panggilan UI gabungan (v3.5.0; disatukan v3.8.0); `hung:true` per jendela = terdeteksi tidak merespons. POST /focus & /window menerima `hwnd` opsional untuk penargetan stabil (v3.8.0) |
@@ -286,7 +286,7 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `GET /op?id=` | — | `{ok, id, name, taskId, state, durationMs, error}` — status satu operasi UI (v3.7.0): `running\|done\|error\|timeout\|done-late\|cancelled` |
 | `GET /ops` | — | `{ok, ops:[{id, name, taskId, state, durationMs}]}` — 20 operasi UI terakhir, terbaru dulu (v3.7.0) |
 | `POST /op/cancel` | `{id}` | `{ok, cancelled, id, note}` — batalkan operasi UI yang masih ANTRI (v3.10.0); 404 tidak ada, 409 `op_finished`/`op_running`; pemanggil operasi yang dibatalkan menerima 409 `op_cancelled` (retryable) |
-| `GET /health` | — | `{ok, version, uptimeSec, listener, ui:{ok, responsiveMs}, uiOpsRunning, lastUiTimeout, shellAlive, eventsLastSeq, foreground}` — diagnosis satu panggilan (v3.10.0); probe UI tidak lewat OnUi |
+| `GET /health` | — | `{ok, version, uptimeSec, listener, ui:{ok, responsiveMs}, uiOpsRunning, lastUiTimeout, inputLease, shellAlive, eventsLastSeq, foreground}` — diagnosis satu panggilan (v3.10.0); probe UI tidak lewat OnUi; `inputLease` = pemilik lease InputArbiter atau null (v3.11.0) |
 
 Semua permintaan dicatat ke log jendela (jam + ringkasan). Khusus
 `/stream`: hanya dua baris log — "stream dimulai" dan "stream berhenti",

@@ -3,6 +3,30 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 3.11.0 — 2026-11-26
+
+"Satpam Input" — Desktop State Awareness tahap 4, terakhir
+(audit DSA-15/16/17/18).
+
+### Ditambahkan
+- **InputArbiter**: /batch kini memegang lease input eksklusif
+  selama rangkaiannya berjalan (pemilik = taskId, atau id
+  tergenerasi). Batch lain dan endpoint input langsung dari
+  tugas lain ditolak **429 `input_leased`** (retryable) —
+  sub-aksi pemilik lease lolos lewat taskId warisan. Lease
+  ber-TTL 180 detik yang diperbarui tiap aksi: pemegang yang
+  mati/hang melepasnya otomatis. /health memuat `inputLease`.
+
+### Diubah
+- **/type mengetik per potongan ±20 karakter** (satu operasi UI
+  per potongan) — operasi lain bisa menyela di antara potongan
+  teks panjang, tidak lagi menunggu seluruh teks selesai.
+- **/stream dibatasi 2 klien serentak**; klien berikutnya
+  menerima 429 `stream_busy`.
+- **UiaScan._last kini di bawah satu kunci statis** dan `Last`
+  mengembalikan salinan — tidak ada lagi bacaan daftar hidup
+  dari thread lain di tengah pindai.
+
 ## 3.10.0 — 2026-11-26
 
 "Dokter & Rem" — Desktop State Awareness tahap 3 (audit
