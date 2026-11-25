@@ -45,6 +45,38 @@ public partial class MainWindow : Window
         timer.Tick += (s, e) => RefreshStatus();
         timer.Start();
         RefreshStatus();
+
+        // Perilaku MuseLink sejak lama: tombol X hanya
+        // menyembunyikan ke tray; keluar hanya lewat menu tray.
+        Closing += (s, e) =>
+        {
+            if (!App.Exiting)
+            {
+                e.Cancel = true;
+                Hide();
+            }
+        };
+
+        // Jalan otomatis (--auto): jendela tampil sebentar lalu
+        // sembunyi sendiri ke tray sesudah 6 detik.
+        if (Program.StartedAuto)
+        {
+            var autoHide = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+            autoHide.Tick += (s, e) =>
+            {
+                autoHide.Stop();
+                if (IsVisible) Hide();
+            };
+            autoHide.Start();
+        }
+    }
+
+    /// <summary>Dipanggil ikon tray: tampilkan lagi jendela.</summary>
+    public void ShowFromTray()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
     }
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
