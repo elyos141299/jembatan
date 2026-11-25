@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Diagnostics;
@@ -881,6 +882,77 @@ public static class NativeInput
         int h = GetSystemMetrics(1); // SM_CYSCREEN
         if (w <= 0 || h <= 0) return new Rectangle(0, 0, 1280, 720);
         return new Rectangle(0, 0, w, h);
+    }
+
+    /// <summary>Info satu monitor (pengganti Screen WinForms).</summary>
+    public sealed class MonitorInfo
+    {
+        public string DeviceName = "";
+        public Rectangle Bounds;
+        public bool Primary;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RectNative { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfoEx
+    {
+        public int Size;
+        public RectNative Monitor;
+        public RectNative WorkArea;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string Device;
+    }
+
+    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdc, ref RectNative rect, IntPtr data);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, MonitorEnumProc callback, IntPtr data);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx info);
+
+    /// <summary>Semua monitor (pengganti Screen.AllScreens).</summary>
+    public static List<MonitorInfo> AllScreens()
+    {
+        var list = new List<MonitorInfo>();
+        try
+        {
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (hMon, hdc, ref RectNative rect, IntPtr data) =>
+            {
+                var info = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };
+                if (GetMonitorInfo(hMon, ref info))
+                {
+                    list.Add(new MonitorInfo
+                    {
+                        DeviceName = info.Device ?? "",
+                        Bounds = new Rectangle(info.Monitor.Left, info.Monitor.Top,
+                            info.Monitor.Right - info.Monitor.Left,
+                            info.Monitor.Bottom - info.Monitor.Top),
+                        Primary = (info.Flags & 1) != 0,
+                    });
+                }
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch { /* jatuh ke bawaan di bawah */ }
+        if (list.Count == 0)
+            list.Add(new MonitorInfo { DeviceName = "DISPLAY1", Bounds = PrimaryBounds(), Primary = true });
+        return list;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointNative { public int X, Y; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out PointNative pt);
+
+    /// <summary>Posisi kursor (pengganti Cursor.Position WinForms).</summary>
+    public static Point CursorPosition()
+    {
+        return GetCursorPos(out var pt) ? new Point(pt.X, pt.Y) : new Point(0, 0);
     }
 
     // Nama tombol -> kode virtual (v5.0.0; dulu token SendKeys).

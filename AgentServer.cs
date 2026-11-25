@@ -960,9 +960,7 @@ public sealed class AgentServer
                 // mode "none" tanpa gambar.
                 int dw = ParseClamp(GetQueryParam(req.Query, "w"), 1280, 320, 1920);
                 int dq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
-                var scrD = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 1280, 720);
+                var scrD = NativeInput.PrimaryBounds();
                 Bitmap cur;
                 try { cur = NativeInput.CaptureScreenScaled(dw); }
                 catch { cur = CaptureScaledBitmap(dw); }
@@ -1049,9 +1047,7 @@ public sealed class AgentServer
                 int ifw = ParseClamp(GetQueryParam(req.Query, "fw"), 960, 320, 1920);
                 int iq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
                 bool withUia = GetQueryParam(req.Query, "uia") != "0";
-                var scrI = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 1280, 720);
+                var scrI = NativeInput.PrimaryBounds();
                 var mintaI = (iw2 > 0 && ih > 0) ? new Rectangle(ix, iy, iw2, ih) : scrI;
                 // Jendela latar (v2.6.4): ?win=<potongan judul>
                 // mengarahkan inspeksi ke jendela itu (wilayah
@@ -1236,7 +1232,7 @@ public sealed class AgentServer
                 foreach (var w in wins)
                     wlist.Add(WindowJson(w, fgH));
                 var mons = new List<Dictionary<string, object>>();
-                foreach (var s in Screen.AllScreens)
+                foreach (var s in NativeInput.AllScreens())
                 {
                     mons.Add(new Dictionary<string, object>
                     {
@@ -1250,7 +1246,7 @@ public sealed class AgentServer
                 }
                 double dpiScale = 1.0;
                 try { using (var g = Graphics.FromHwnd(IntPtr.Zero)) dpiScale = Math.Round(g.DpiX / 96.0, 3); } catch { }
-                var mouse = Cursor.Position;
+                var mouse = NativeInput.CursorPosition();
                 int idleSec = -1;
                 try { idleSec = NativeInput.IdleSeconds(); } catch { }
                 string fgTitle = "";
@@ -1583,9 +1579,7 @@ public sealed class AgentServer
                 }
                 else
                 {
-                    var scrB = Screen.PrimaryScreen != null
-                        ? Screen.PrimaryScreen.Bounds
-                        : new Rectangle(0, 0, 1280, 720);
+                    var scrB = NativeInput.PrimaryBounds();
                     try
                     {
                         using (var bmp = NativeInput.CaptureScreenScaled(fw))
@@ -1694,9 +1688,7 @@ public sealed class AgentServer
                 int dw = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
                 int dh = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
                 bool reset = GetQueryParam(req.Query, "reset") == "1";
-                var scrD = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 1280, 720);
+                var scrD = NativeInput.PrimaryBounds();
                 var mintaD = (dw > 0 && dh > 0) ? new Rectangle(dx, dy, dw, dh) : scrD;
                 lock (_diffLock)
                 {
@@ -1821,9 +1813,7 @@ public sealed class AgentServer
                 int oy = ParseClamp(GetQueryParam(req.Query, "y"), 0, 0, 4320);
                 int ow = ParseClamp(GetQueryParam(req.Query, "w"), 0, 0, 7680);
                 int oh = ParseClamp(GetQueryParam(req.Query, "h"), 0, 0, 4320);
-                var scr = Screen.PrimaryScreen != null
-                    ? Screen.PrimaryScreen.Bounds
-                    : new Rectangle(0, 0, 1280, 720);
+                var scr = NativeInput.PrimaryBounds();
                 var minta = (ow > 0 && oh > 0) ? new Rectangle(ox, oy, ow, oh) : scr;
                 var wilayah = Rectangle.Intersect(scr, minta);
                 if (wilayah.Width <= 0 || wilayah.Height <= 0) wilayah = scr;
@@ -2065,9 +2055,7 @@ public sealed class AgentServer
                             Rectangle diffRegion = Rectangle.Empty;
                             if (diffAfter)
                             {
-                                var scrDiff = Screen.PrimaryScreen != null
-                                    ? Screen.PrimaryScreen.Bounds
-                                    : new Rectangle(0, 0, 1280, 720);
+                                var scrDiff = NativeInput.PrimaryBounds();
                                 int dX = GetInt(root, "diffX", 0);
                                 int dY = GetInt(root, "diffY", 0);
                                 int dW = GetInt(root, "diffW", 0);
@@ -2397,7 +2385,7 @@ public sealed class AgentServer
                             int cwTimeout = GetInt(root, "timeoutMs", 15000);
                             if (cwTimeout < 1000) cwTimeout = 1000;
                             if (cwTimeout > 60000) cwTimeout = 60000;
-                            var scrW = Screen.PrimaryScreen != null ? Screen.PrimaryScreen.Bounds : new Rectangle(0, 0, 1280, 720);
+                            var scrW = NativeInput.PrimaryBounds();
                             var wilW = scrW;
                             if (HasInt(root, "x") && HasInt(root, "y") && HasInt(root, "w") && HasInt(root, "h"))
                             {
@@ -2811,9 +2799,7 @@ public sealed class AgentServer
                             }
                             if (hits.Count == 0 && (mode == "auto" || mode == "ocr"))
                             {
-                                var bounds = Screen.PrimaryScreen != null
-                                    ? Screen.PrimaryScreen.Bounds
-                                    : new Rectangle(0, 0, 1280, 720);
+                                var bounds = NativeInput.PrimaryBounds();
                                 OcrReader.Result ocrRes = null;
                                 using (var bmp = CaptureRegionBitmap(bounds, 0, out var eff))
                                     ocrRes = OcrReader.Read(bmp, eff.X, eff.Y);
@@ -2939,9 +2925,7 @@ public sealed class AgentServer
                             resp["sessionTtlSec"] = GroundSessionTtlMs / 1000;
                             if (wantMarks && hits.Count > 0)
                             {
-                                var boundsM = Screen.PrimaryScreen != null
-                                    ? Screen.PrimaryScreen.Bounds
-                                    : new Rectangle(0, 0, 1280, 720);
+                                var boundsM = NativeInput.PrimaryBounds();
                                 using (var bmp = CaptureRegionBitmap(boundsM, 1280, out var effM))
                                 {
                                     DrawMarks(bmp, effM, hits);
@@ -3022,9 +3006,7 @@ public sealed class AgentServer
                                 // wilayah lega terbaca normal). Baca
                                 // potongan layar yang lega, cari
                                 // KATA-nya untuk koordinat segar.
-                                var scrB = Screen.PrimaryScreen != null
-                                    ? Screen.PrimaryScreen.Bounds
-                                    : new Rectangle(0, 0, 1280, 720);
+                                var scrB = NativeInput.PrimaryBounds();
                                 int vx = Math.Max(scrB.X, candSel.Rect.X - 200);
                                 int vy = Math.Max(scrB.Y, candSel.Rect.Y - 60);
                                 int vw = Math.Min(scrB.Right - vx, candSel.Rect.Width + 400);
@@ -3230,9 +3212,7 @@ public sealed class AgentServer
                             }
                             try
                             {
-                                var scr = fWin != null ? fWin.Rect : (Screen.PrimaryScreen != null
-                                    ? Screen.PrimaryScreen.Bounds
-                                    : new Rectangle(0, 0, 1280, 720));
+                                var scr = fWin != null ? fWin.Rect : (NativeInput.PrimaryBounds());
                                 using (var bmp = CaptureRegionBitmap(scr, 0, out var eff))
                                 {
                                     // OCR adaptif (v2.6.2): kedua mode
@@ -3735,7 +3715,7 @@ public sealed class AgentServer
                             int rw = GetInt(root, "w", 0), rh = GetInt(root, "h", 0);
                             var wil = (rw > 0 && rh > 0)
                                 ? new Rectangle(rx, ry, rw, rh)
-                                : (Screen.PrimaryScreen != null ? Screen.PrimaryScreen.Bounds : new Rectangle(0, 0, 1280, 720));
+                                : (NativeInput.PrimaryBounds());
                             var swW = System.Diagnostics.Stopwatch.StartNew();
                             bool met = false;
                             bool metFuzzy = false;
@@ -4897,9 +4877,7 @@ public sealed class AgentServer
             if (dx != null) return dx;
         }
         catch { /* jatuh ke GDI */ }
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
+        var bounds = NativeInput.PrimaryBounds();
         var bmp = new Bitmap(bounds.Width, bounds.Height);
         using (var g = Graphics.FromImage(bmp))
             g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
@@ -4908,9 +4886,7 @@ public sealed class AgentServer
 
     private static Bitmap CaptureRegionBitmap(Rectangle region, int maxWidth, out Rectangle eff)
     {
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
+        var bounds = NativeInput.PrimaryBounds();
         eff = Rectangle.Intersect(bounds, region);
         if (eff.Width <= 0 || eff.Height <= 0)
             // v3.6.0 (BUG-17 audit): wilayah sepenuhnya di luar
@@ -5106,9 +5082,7 @@ public sealed class AgentServer
     /// </summary>
     private static Bitmap CaptureScreenshotRegionBitmap(int x, int y, int w, int h, out Rectangle eff)
     {
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
+        var bounds = NativeInput.PrimaryBounds();
         eff = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
         if (eff.Width <= 0 || eff.Height <= 0)
             // v3.6.0 (BUG-17): sama seperti CaptureRegionBitmap —
@@ -5126,9 +5100,7 @@ public sealed class AgentServer
     /// </summary>
     private static byte[] CaptureScreenshotRegion(int x, int y, int w, int h)
     {
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
+        var bounds = NativeInput.PrimaryBounds();
         var region = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
         if (region.Width <= 0 || region.Height <= 0) region = bounds;
         using (var full = CaptureFullBitmap())
@@ -5151,9 +5123,7 @@ public sealed class AgentServer
     /// </summary>
     private static byte[] RegionHash(int x, int y, int w, int h)
     {
-        var bounds = Screen.PrimaryScreen != null
-            ? Screen.PrimaryScreen.Bounds
-            : new Rectangle(0, 0, 1280, 720);
+        var bounds = NativeInput.PrimaryBounds();
         var region = (w > 0 && h > 0)
             ? Rectangle.Intersect(bounds, new Rectangle(x, y, w, h))
             : bounds;
@@ -5183,8 +5153,8 @@ public sealed class AgentServer
     private static void SetClipboardText(string text)
     {
         // Clipboard.SetText menolak string kosong — pakai Clear() untuk itu.
-        if (string.IsNullOrEmpty(text)) Clipboard.Clear();
-        else Clipboard.SetText(text);
+        if (string.IsNullOrEmpty(text)) System.Windows.Clipboard.Clear();
+        else System.Windows.Clipboard.SetText(text);
     }
 
     /// <summary>Parse angka query string lalu jepit ke rentang [min, max].</summary>

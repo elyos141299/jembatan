@@ -26,6 +26,10 @@ public sealed class AppHost
     /// <summary>Server bridge (protokol tidak berubah dari v4).</summary>
     public AgentServer Server { get; }
 
+    /// <summary>Lokasi exe sendiri (pengganti Application.ExecutablePath WinForms).</summary>
+    private static string ExePath =>
+        Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Jembatan.exe");
+
     // Keadaan jalan otomatis (dirawat blok schtasks di bawah;
     // dulu field MainForm, halaman Settings membacanya dari sini).
     private bool _autoStartEnabled;
@@ -199,7 +203,7 @@ public sealed class AppHost
     private static string ExpectedRunCommand()
     {
         // Path exe dikutip agar aman dari spasi di nama folder.
-        return "\"" + Application.ExecutablePath + "\" --auto";
+        return "\"" + ExePath + "\" --auto";
     }
 
     private static bool HasAutoStartValue()
@@ -279,7 +283,7 @@ public sealed class AppHost
         // Path exe di dalam nilai /TR harus terbungkus tanda kutip —
         // pola baku schtasks: /TR "\"C:\...\Jembatan.exe\"".
         string args = "/Create /TN \"" + TaskName + "\" /TR \"\\\"" +
-                      Application.ExecutablePath + "\\\" --auto\" /SC ONLOGON /RL HIGHEST /F";
+                      ExePath + "\\\" --auto\" /SC ONLOGON /RL HIGHEST /F";
         int code = RunSchtasks(args, out string output);
         if (code != 0)
             Log("GAGAL membuat tugas terjadwal admin (kode " + code + "): " + output.Trim());
@@ -333,7 +337,7 @@ public sealed class AppHost
                 "  Set procs = GetObject(\"winmgmts:\").ExecQuery(\"SELECT Name FROM Win32_Process WHERE Name = 'Jembatan.exe'\")\r\n" +
                 "  If procs.Count = 0 Then\r\n" +
                 "    If fso.FileExists(failFile) Then fso.DeleteFile failFile\r\n" +
-                "    shell.Run \"\"\"" + Application.ExecutablePath + "\"\" --auto\", 0, False\r\n" +
+                "    shell.Run \"\"\"" + ExePath + "\"\" --auto\", 0, False\r\n" +
                 "  Else\r\n" +
                 "    okPing = False\r\n" +
                 "    Set http = CreateObject(\"WinHttp.WinHttpRequest.5.1\")\r\n" +
@@ -356,7 +360,7 @@ public sealed class AppHost
                 "        shell.Run \"taskkill /F /IM Jembatan.exe\", 0, True\r\n" +
                 "        WScript.Sleep 2000\r\n" +
                 "        fso.DeleteFile failFile\r\n" +
-                "        shell.Run \"\"\"" + Application.ExecutablePath + "\"\" --auto\", 0, False\r\n" +
+                "        shell.Run \"\"\"" + ExePath + "\"\" --auto\", 0, False\r\n" +
                 "      End If\r\n" +
                 "    End If\r\n" +
                 "  End If\r\n" +
