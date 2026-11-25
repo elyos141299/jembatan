@@ -81,6 +81,11 @@ public static class AppTheme
     public static Color Green => Color.FromArgb(107, 143, 94);
     /// <summary>Galat #B3261E.</summary>
     public static Color Red => Color.FromArgb(179, 38, 30);
+
+    // Merah terang untuk LATAR GELAP (log tinta): Red biasa di atas
+    // LogBg kontrasnya hanya ±1,7:1 — baris galat nyaris tak terbaca
+    // (temuan v3.1.0). Salmon ini ±5,7:1 di atas LogBg.
+    public static Color RedOnDark => Color.FromArgb(242, 164, 156);
     /// <summary>Isian hover terang #E9E5F6.</summary>
     public static Color LightFill => Color.FromArgb(233, 229, 246);
     /// <summary>Titik menunggu: kuningan #C8A24A.</summary>

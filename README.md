@@ -1,63 +1,27 @@
-# MuseLink v3.0.3 — catatan pengembang
+# MuseLink v3.1.0 — catatan pengembang
 
-## v3.0.3 — Sensor CPU/GPU tuntas: PawnIO + parse desimal GPU
+## v3.1.0 — WebView2: wadah + perilaku, dan perbaikan warna log
 
-- **Akar masalah CPU ketemu dari diagnostik v3.0.2:** log
-  menunjukkan LHM 0.9.6 menemukan CPU (i3-12100F, 11 sensor
-  suhu) tapi semua nilai kosong. Ternyata LHM 0.9.6 SUDAH
-  pindah dari WinRing0 ke **driver PawnIO** yang terpasang
-  terpisah — tanpa dia, sensor terhitung tapi tak terbaca.
-  PawnIO resmi (bertanda tangan, oleh pembuat LHM) DIPASANG di
-  PC user 25 Nov 2026 lewat alur bawaan LHM dan terverifikasi:
-  GUI LHM membaca suhu CPU 47°C & sensor motherboard penuh.
-  MuseLink cukup mulai ulang (init LHM segar) untuk ikut
-  membaca — tidak ada perubahan kode CPU di versi ini.
-- **GPU:** nvidia-smi PC ini mengembalikan suhu DESIMAL
-  ("38.00") sehingga int.TryParse v3.0.2 gugur total; kini
-  parse double + bulatkan. Diagnostik log v3.0.2 yang
-  menangkap keluaran mentahnya yang membuat ini ketahuan.
+Eksekusi blueprint WebView2 (lapis isi halaman TIDAK disentuh —
+yang dibangun hanya bingkai dan perilaku di sekelilingnya):
 
-## v3.0.2 — Perbaikan penjaga sensor (diagnostik v3.0.1)
-
-- v3.0.1 terpasang & terverifikasi visual (flyout log, animasi,
-  RAM, CAPTURE "gpu"), TAPI baris CPU & GPU berhenti di "…":
-  timer polling v3.0.1 adalah variabel lokal (bisa dipungut GC
-  → berhenti diam-diam) dan polling GPU pertama menumpang di
-  belakang init LibreHardwareMonitor yang tidak kunjung selesai
-  (driver WinRing0 tidak pernah terekstrak/terdaftar di mode
-  single-file — terbukti dari tidak adanya service & berkas
-  .sys di PC user).
-- v3.0.2: timer jadi field, GPU dipolling independen sejak
-  detik pertama, init CPU di utas sendiri, stderr nvidia-smi
-  tidak lagi dialihkan, dan hasil pertama tiap sensor dicatat
-  ke log ("Sensor GPU: …" / "Sensor CPU aktif/tidak aktif: …")
-  agar kegagalan berikutnya terbaca, bukan ditebak.
-
-## v3.0.1 — Log melayang, animasi & sensor sistem (permintaan user 25 Nov 2026)
-
-- **Tombol log rel DIPERBAIKI + log jadi jendela MELAYANG:** cacat
-  terbukti v3.0.0 (tombol log rel tidak menanggapi klik — glif
-  Label Dock=Fill) diganti `RailGlyphButton` yang menggambar
-  glifnya sendiri + jalur MouseDown kedua. Dock log bawah
-  PENSIUN: log kini `LogFlyoutForm` — jendela tinta tanpa bingkai
-  yang muncul menempel di kanan tombol rel, melayang di atas
-  chat (konsep user: "sama seperti Pengaturan, di kiri dan
-  menyatu dengan tombol"), lengkap dengan tombol ✕ + Esc.
-- **Animasi (permintaan user — "tidak polos muncul tiba-tiba"):**
-  flyout log geser+pudar masuk/keluar, lipat/buka panel kendali
-  bergeser halus ±170ms, jendela Pengaturan pudar masuk.
-- **Baris sensor baru di kartu rincian:** RAM (GlobalMemoryStatusEx
-  native), GPU "suhu · beban" (nvidia-smi), suhu CPU
-  (LibreHardwareMonitorLib 0.9.6 — WMI ACPI terbukti tidak
-  didukung motherboard ini; bila driver sensor diblokir Windows,
-  baris CPU menampilkan "—"). Kartu rincian kini 7 baris:
-  RELAY/UPTIME/CAPTURE/RAM/CPU/GPU/VERSI.
-- **Koreksi audit UI:** baris CAPTURE tidak lagi menampilkan
-  "gdi" sesaat di awal (DXGI dipanaskan sejak Load + label "…"
-  sampai mode menetap); lipat-otomatis panel ditunda ±450ms agar
-  lebar sesaat saat jendela dipulihkan tidak melipat panel
-  permanen; flyout ikut sembunyi saat jendela terminimalkan;
-  kotak log kini punya scrollbar vertikal.
+- **Latar pramuat lavender:** `DefaultBackgroundColor` web view =
+  warna kanvas aplikasi — tidak ada lagi kedip putih saat panel
+  chat dimuat.
+- **Zoom teks chat:** gugus − / persen / + di strip kepala chat;
+  nilai 50–200% disimpan di registry (`ChatZoomPercent`) dan
+  diterapkan sebagai `ZoomFactor` saat panel dibuat.
+- **Pengamat balasan selesai:** timer 2,5 detik memeriksa
+  keberadaan tombol "Stop" di halaman dari luar; transisi
+  muncul→hilang menulis log "Balasan chat selesai." dan memunculkan
+  balon tray bila jendela utama tidak sedang dipandang. Skrip
+  fungsi murni (bukan gaya); 3 kegagalan beruntun menonaktifkan
+  pengamat ini sendiri.
+- **PERBAIKAN warna teks log:** skema pewarnaan log lama ditulis
+  untuk latar terang tetapi log duduk di sumur tinta — baris
+  normal tak terlihat (Ink == LogBg), rutin ±1,9:1, galat ±1,7:1.
+  Skema gelap baru: normal InkOnDark, rutin InkFaint, galat
+  RedOnDark baru (#F2A49C, ±5,7:1 di atas LogBg).
 
 ## v3.0.0 — ROMBAK TOTAL sesuai blueprint final (disetujui user 25 Nov 2026)
 

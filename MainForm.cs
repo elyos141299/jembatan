@@ -43,6 +43,7 @@ public sealed class MainForm : Form
     private static Color AccentAlt => AppTheme.AccentAlt;
     private static Color Green => AppTheme.Green;
     private static Color Red => AppTheme.Red;
+    private static Color RedOnDark => AppTheme.RedOnDark;
     private static Color LightFill => AppTheme.LightFill;
     private static Color DotWaiting => AppTheme.DotWaiting;
     private static Color DotStopped => AppTheme.DotStopped;
@@ -133,6 +134,14 @@ public sealed class MainForm : Form
     private Label _railSettingsGlyph;
     private RoundedPanel _chatStrip;
     private Label _chatStripStatus;
+    // v3.1.0 — wadah & perilaku WebView2: kontrol zoom di strip
+    // chat dan pengamat "balasan selesai" (jajak pendapat ringan;
+    // menonaktifkan diri bila halaman berubah bentuk).
+    private Panel _chatZoomHost;
+    private Label _chatZoomLabel;
+    private System.Windows.Forms.Timer _chatWatch;
+    private bool _wasGenerating;
+    private int _watchFailures;
     private bool _panelAutoCollapsed;
     private bool _logSetupDone;
     private bool _autoStartEnabled;
@@ -264,14 +273,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.0.3 dimulai ===");
+            Log("=== MuseLink v3.1.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.0.3 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.1.0 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -601,7 +610,7 @@ public sealed class MainForm : Form
         stripRight.Controls.Add(_stripLogLabel);
         var version = _versionLabel = new Label
         {
-            Text = "v3.0.3",
+            Text = "v3.1.0",
             Font = new Font("Segoe UI", 8.5f),
             ForeColor = InkDim,
             BackColor = Panel,
@@ -843,7 +852,7 @@ public sealed class MainForm : Form
         MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
         MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
         MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
-        MakeRow(tiles, 6, "VERSI", "3.0.3", out _tileVersionValue);
+        MakeRow(tiles, 6, "VERSI", "3.1.0", out _tileVersionValue);
 
         // Grup AKSES: tombol putus/sambung besar (dulu hanya di
         // jendela Pengaturan; kini juga di muka panel).
@@ -1208,9 +1217,52 @@ public sealed class MainForm : Form
             AutoSize = false,
             TextAlign = ContentAlignment.MiddleRight,
             Dock = DockStyle.Right,
-            Width = 320,
+            Width = 210,
         };
         _chatStrip.Controls.Add(_chatStripStatus);
+        // v3.1.0: gugus zoom teks chat (− persen +) di strip, kiri
+        // label status. Posisi manual di penangan Resize root —
+        // dok tidak dipakai agar tidak berebut tepi dengan status.
+        _chatZoomHost = new Panel { BackColor = Ink, Width = 112, Height = 22 };
+        var zoomMinus = new Label
+        {
+            Text = "−",
+            Font = new Font("Segoe UI", 10f),
+            ForeColor = InkOnDark,
+            BackColor = Ink,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(0, 0),
+            Size = new Size(28, 22),
+            Cursor = Cursors.Hand,
+        };
+        zoomMinus.Click += (s, e) => AdjustZoom(-10);
+        _chatZoomLabel = new Label
+        {
+            Text = Settings.ChatZoomPercent + "%",
+            Font = new Font("Segoe UI", 9f),
+            ForeColor = InkOnDark,
+            BackColor = Ink,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(28, 0),
+            Size = new Size(56, 22),
+        };
+        var zoomPlus = new Label
+        {
+            Text = "+",
+            Font = new Font("Segoe UI", 10f),
+            ForeColor = InkOnDark,
+            BackColor = Ink,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Location = new Point(84, 0),
+            Size = new Size(28, 22),
+            Cursor = Cursors.Hand,
+        };
+        zoomPlus.Click += (s, e) => AdjustZoom(10);
+        _chatZoomHost.Controls.Add(zoomMinus);
+        _chatZoomHost.Controls.Add(_chatZoomLabel);
+        _chatZoomHost.Controls.Add(zoomPlus);
+        _chatStrip.Controls.Add(_chatZoomHost);
+        _chatZoomHost.BringToFront();
         root.Controls.Add(_chatStrip);
         _chatStrip.BringToFront();
         root.Resize += (s, e) =>
@@ -1219,6 +1271,7 @@ public sealed class MainForm : Form
             int h = root.ClientSize.Height - 24;
             if (w <= 0 || h <= 0) return;
             _chatStrip.SetBounds(12, 12, w, 46);
+            _chatZoomHost?.SetBounds(w - 210 - 116, 8, 112, 22);
             _chatBody.SetBounds(12, 48, w, Math.Max(60, h - 36));
         };
 
@@ -1272,7 +1325,10 @@ public sealed class MainForm : Form
             if (IsDisposed) return;
 
             _chatErrorLabel.Visible = false;
-            _webView = new WebView2 { Dock = DockStyle.Fill };
+            // v3.1.0 (wadah): latar bawaan web view = lavender kanvas
+            // aplikasi — halaman yang sedang dimuat tidak lagi
+            // berkedip putih sebelum isinya tiba.
+            _webView = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Bg };
             _chatBody.Controls.Add(_webView);
             await _webView.EnsureCoreWebView2Async(env);
             if (IsDisposed) return;
@@ -1281,6 +1337,8 @@ public sealed class MainForm : Form
             core.Settings.UserAgent = DesktopChromeUa;
             core.Settings.AreDefaultContextMenusEnabled = true;
             core.Settings.IsZoomControlEnabled = true;
+            // v3.1.0 (wadah): terapkan zoom teks tersimpan.
+            _webView.ZoomFactor = Settings.ChatZoomPercent / 100.0;
             // Jendela baru (mis. popup/redirect login) dibuka di panel
             // yang sama, tidak memunculkan jendela terpisah.
             core.NewWindowRequested += (s, e) =>
@@ -1289,11 +1347,17 @@ public sealed class MainForm : Form
                 if (!string.IsNullOrEmpty(e.Uri)) core.Navigate(e.Uri);
             };
             // Halaman pertama selesai dimuat → label memuat hilang.
+            // (Status di strip chat adalah status KONEKSI jembatan —
+            // tidak ditimpa status muat halaman.)
             core.NavigationCompleted += (s, e) =>
             {
                 if (!IsDisposed && _chatLoadingLabel != null)
                     _chatLoadingLabel.Visible = false;
             };
+            // v3.1.0 (perilaku): mulai pengamat balasan selesai.
+            _chatWatch = new System.Windows.Forms.Timer { Interval = 2500 };
+            _chatWatch.Tick += ChatWatchTick;
+            _chatWatch.Start();
             core.Navigate("https://muse.ai");
             Log("Panel chat Muse dibuka (muse.ai).");
         }
@@ -1325,6 +1389,64 @@ public sealed class MainForm : Form
             "Panel chat gagal dibuka.\n\n" + message +
             "\n\nJembatan utama tetap berjalan normal. Coba buka ulang MuseLink; bila tetap gagal, chat bisa dibuka lewat muse.ai di browser.";
         _chatErrorLabel.Visible = true;
+    }
+
+    // v3.1.0: zoom teks chat dari gugus strip (− / persen / +).
+    // Nilai persen disimpan di registry; ZoomFactor web view
+    // diterapkan seketika. Bila web view belum siap, nilai
+    // tersimpan diterapkan saat InitChatAsync selesai.
+    private void AdjustZoom(int delta)
+    {
+        int v = Math.Min(200, Math.Max(50, Settings.ChatZoomPercent + delta));
+        Settings.ChatZoomPercent = v;
+        if (_chatZoomLabel != null) _chatZoomLabel.Text = v + "%";
+        if (_webView != null) _webView.ZoomFactor = v / 100.0;
+    }
+
+    // v3.1.0: pengamat balasan selesai. Halaman chat diamati dari
+    // LUAR lewat keberadaan tombol "Stop" (tombol berhenti
+    // membangkitkan) — muncul = Muse sedang menulis, hilang
+    // sesudah muncul = balasan selesai. Ini skrip FUNGSI, bukan
+    // gaya: isi & tampilan halaman tidak diubah sama sekali.
+    // Rapuh terhadap perubahan situs, jadi kegagalan beruntun
+    // menonaktifkan pengamat ini sendiri tanpa mengganggu apa pun.
+    private async void ChatWatchTick(object sender, EventArgs e)
+    {
+        var core = _webView?.CoreWebView2;
+        if (core == null || IsDisposed) return;
+        try
+        {
+            string r = await core.ExecuteScriptAsync(
+                "!!document.querySelector('button[aria-label*=\"Stop\" i]')");
+            bool generating = r != null && r.Trim() == "true";
+            _watchFailures = 0;
+            if (_wasGenerating && !generating)
+            {
+                Log("Balasan chat selesai.");
+                NotifyReplyDone();
+            }
+            _wasGenerating = generating;
+        }
+        catch
+        {
+            if (++_watchFailures >= 3)
+            {
+                _chatWatch?.Stop();
+                Log("Pengamat balasan selesai dinonaktifkan (bentuk halaman berubah).");
+            }
+        }
+    }
+
+    // Balon tray hanya bila jendela utama bukan yang sedang
+    // dipandang user — kalau sedang dipandang, log saja cukup.
+    private void NotifyReplyDone()
+    {
+        if (Visible && WindowState != FormWindowState.Minimized &&
+            Form.ActiveForm == this) return;
+        _trayIcon?.ShowBalloonTip(4000,
+            "MuseLink",
+            "Balasan chat Muse selesai.",
+            ToolTipIcon.Info);
     }
 
     /// <summary>PUTUSKAN / Sambung lagi — kini dari jendela Pengaturan.</summary>
@@ -2272,7 +2394,7 @@ public sealed class MainForm : Form
         var lineColor = LogColorFor(message);
         _logBox.SelectionColor = lineColor;
         _logBox.AppendText(message + Environment.NewLine);
-        if (lineColor == Red) { _errorCount++; RefreshErrorBadge(); }
+        if (lineColor == RedOnDark) { _errorCount++; RefreshErrorBadge(); }
         AppendLogToFile(stamp + message);
         if (_logBox.Lines.Length > 500)
         {
@@ -2295,23 +2417,28 @@ public sealed class MainForm : Form
         return string.Join(" ", parts);
     }
 
-    // Warna isi baris log: hanya galat yang merah; baris hasil
-    // akhir ("selesai…") dan penanda mulai dibuat redup; sisanya
-    // warna teks utama. Warna hemat, hanya untuk makna.
+    // Warna isi baris log — v3.1.0 MEMPERBAIKI skema lama: skema
+    // v2.5.7 ditulis untuk latar TERANG (Ink/InkDim/Red di atas
+    // putih), tapi sejak v3.0.0 log duduk di sumur TINTA gelap —
+    // baris normal dicat Ink yang SAMA PERSIS dengan LogBg
+    // (tak terlihat sama sekali), baris rutin InkDim ±1,9:1 dan
+    // galat Red ±1,7:1 (nyaris tak terbaca). Skema gelap kini:
+    // galat salmon terang, rutin lavender redup, normal nyaris
+    // putih — cap waktu tetap InkFaint.
     private Color LogColorFor(string m)
     {
         string l = m.ToLowerInvariant();
-        if (l.Contains("gagal") || l.Contains("error") || l.Contains("timeout")) return Red;
-        // v2.7.6: baris rutin bervolume tinggi diredupkan supaya
-        // kejadian penting (stream, koneksi, galat) yang menonjol.
+        if (l.Contains("gagal") || l.Contains("error") || l.Contains("timeout")) return RedOnDark;
+        // Baris rutin bervolume tinggi diredupkan supaya kejadian
+        // penting (stream, koneksi, galat) yang menonjol.
         if (l.StartsWith("selesai") || l.StartsWith("===") ||
             l.StartsWith("jalanin:") || l.StartsWith("geser mouse") ||
             l.StartsWith("klik ") || l.StartsWith("bingkai instan") ||
             l.StartsWith("daftar jendela") || l.StartsWith("konteks instan") ||
             l.StartsWith("info sistem") || l.StartsWith("fokus ke jendela") ||
             l.StartsWith("unggah berkas") || l.StartsWith("stream berhenti"))
-            return InkDim;
-        return Ink;
+            return InkFaint;
+        return InkOnDark;
     }
 
     // ---------- Jarak antar baris log (v2.7.6) ----------

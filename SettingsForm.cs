@@ -159,7 +159,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v3.0.3", 20, 372, 8.5f, false, true);
+        MakeLabel("MuseLink v3.1.0", 20, 372, 8.5f, false, true);
     }
 
     /// <summary>Teks &amp; warna tombol server mengikuti keadaan listener.</summary>
