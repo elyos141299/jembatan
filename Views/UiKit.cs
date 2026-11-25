@@ -21,7 +21,7 @@ public interface IRoomPage
 /// WPF (padanan RoomUi di WinForms lama).</summary>
 public static class UiKit
 {
-    public static Brush Res(string key) => (Brush)Application.Current.FindResource(key);
+    public static System.Windows.Media.Brush Res(string key) => (System.Windows.Media.Brush)Application.Current.FindResource(key);
 
     public static TextBlock CardTitle(string text)
     {
