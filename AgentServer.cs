@@ -65,7 +65,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.7.0";
+        return "3.7.1";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
@@ -2658,24 +2658,66 @@ public sealed class AgentServer
                             }
                             else
                             {
-                                var reg = new Rectangle(
-                                    Math.Max(0, candSel.Rect.X - 8), Math.Max(0, candSel.Rect.Y - 8),
-                                    candSel.Rect.Width + 16, candSel.Rect.Height + 16);
-                                string ocrNow = OnUi(() =>
+                                // Wilayah validasi diperlebar jauh
+                                // (perbaikan v3.7.1): OCR WinRT
+                                // mengembalikan KOSONG pada crop
+                                // mungil seukuran kata — terbukti di
+                                // uji v3.7.0 (crop 79x26 -> 0 kata,
+                                // wilayah lega terbaca normal). Baca
+                                // potongan layar yang lega, cari
+                                // KATA-nya untuk koordinat segar.
+                                var scrB = Screen.PrimaryScreen != null
+                                    ? Screen.PrimaryScreen.Bounds
+                                    : new Rectangle(0, 0, 1280, 720);
+                                int vx = Math.Max(scrB.X, candSel.Rect.X - 200);
+                                int vy = Math.Max(scrB.Y, candSel.Rect.Y - 60);
+                                int vw = Math.Min(scrB.Right - vx, candSel.Rect.Width + 400);
+                                int vh = Math.Min(scrB.Bottom - vy, candSel.Rect.Height + 120);
+                                var reg = new Rectangle(vx, vy, Math.Max(40, vw), Math.Max(30, vh));
+                                var ocrRes = OnUi(() =>
                                 {
                                     using (var bmp = CaptureRegionBitmap(reg, 0, out var effR))
-                                        return OcrReader.Read(bmp, effR.X, effR.Y).Text;
+                                        return OcrReader.Read(bmp, effR.X, effR.Y);
                                 });
-                                bool still = (ocrNow ?? "").IndexOf(candSel.Text, StringComparison.OrdinalIgnoreCase) >= 0;
-                                if (!still && candSel.DigitFuzzy)
+                                OcrReader.Word wordHit = null;
+                                foreach (var w in ocrRes.Words)
                                 {
-                                    string hayN = NormalizeOcrFuzzy(ocrNow ?? "");
+                                    if (w.Text.IndexOf(candSel.Text, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                        (w.Text.Length >= 3 &&
+                                         candSel.Text.IndexOf(w.Text, StringComparison.OrdinalIgnoreCase) >= 0))
+                                    { wordHit = w; break; }
+                                }
+                                if (wordHit == null && candSel.DigitFuzzy)
+                                {
                                     string qN = NormalizeOcrFuzzy(candSel.Text);
-                                    still = hayN != null && qN != null &&
-                                            hayN.IndexOf(qN, StringComparison.OrdinalIgnoreCase) >= 0;
+                                    if (qN != null)
+                                        foreach (var w in ocrRes.Words)
+                                        {
+                                            string wN = NormalizeOcrFuzzy(w.Text) ?? w.Text;
+                                            if (wN.IndexOf(qN, StringComparison.OrdinalIgnoreCase) >= 0)
+                                            { wordHit = w; break; }
+                                        }
+                                }
+                                bool still = wordHit != null;
+                                if (!still)
+                                {
+                                    string hay = ocrRes.Text ?? "";
+                                    still = hay.IndexOf(candSel.Text, StringComparison.OrdinalIgnoreCase) >= 0;
+                                    if (!still && candSel.DigitFuzzy)
+                                    {
+                                        string hayN = NormalizeOcrFuzzy(hay);
+                                        string qN = NormalizeOcrFuzzy(candSel.Text);
+                                        still = hayN != null && qN != null &&
+                                                hayN.IndexOf(qN, StringComparison.OrdinalIgnoreCase) >= 0;
+                                    }
                                 }
                                 if (!still)
                                     return Response.Json("{\"ok\":false,\"error\":\"teks target tidak ditemukan lagi di wilayahnya — target berubah\"}", 409);
+                                if (wordHit != null)
+                                {
+                                    clickX = wordHit.Rect.X + wordHit.Rect.Width / 2;
+                                    clickY = wordHit.Rect.Y + wordHit.Rect.Height / 2;
+                                }
                             }
 
                             // 3) Potret wilayah klik sebelum & sesudah

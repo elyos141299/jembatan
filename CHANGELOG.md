@@ -3,6 +3,20 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 3.7.1 — 2026-11-25
+
+Perbaikan dari uji penerimaan 3.7.0.
+
+### Diperbaiki
+- **/locate/act jalur OCR selalu 409**: validasi ulang membaca
+  crop mungil seukuran kata (±8px) dan OCR WinRT mengembalikan
+  kosong pada bitmap sekecil itu (terbukti: crop 79×26 → 0 kata;
+  wilayah lega terbaca normal), jadi target yang sebenarnya
+  masih ada dinyatakan "berubah". Kini wilayah validasi
+  diperlebar (±200px horizontal, ±60px vertikal, dijepit ke
+  layar), kata dicari di hasil baca untuk koordinat segar,
+  dengan jalan teks-utuh + kabur-digit sebagai cadangan.
+
 ## 3.7.0 — 2026-11-25
 
 Menutup sisa misi implementasi atas AUDIT-2026-11-25.md.

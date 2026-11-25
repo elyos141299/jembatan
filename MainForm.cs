@@ -118,7 +118,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "3.7.0";
+            return "3.7.1";
         }
     }
     private Label _tileRamValue;
