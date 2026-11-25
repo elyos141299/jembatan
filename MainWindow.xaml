@@ -6,15 +6,113 @@
         Background="{StaticResource CrBg}"
         Foreground="{StaticResource CrText}"
         FontFamily="Segoe UI"
+        WindowStyle="None"
         WindowStartupLocation="CenterScreen">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0"/>
+    </WindowChrome.WindowChrome>
+
     <Grid>
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-            <TextBlock Text="MuseLink Control Room" Style="{StaticResource CrTitle}"
-                       FontSize="28" HorizontalAlignment="Center"/>
-            <TextBlock x:Name="VersionText" Style="{StaticResource CrMutedText}"
-                       HorizontalAlignment="Center" Margin="0,6,0,0"/>
-            <TextBlock Text="Kerangka WPF — halaman Control Room dibangun di tahap berikutnya."
-                       Style="{StaticResource CrMutedText}" HorizontalAlignment="Center" Margin="0,2,0,0"/>
-        </StackPanel>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="232"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ============ SIDEBAR ============ -->
+        <Border Grid.Column="0" Background="{StaticResource CrSidebar}"
+                BorderBrush="{StaticResource CrBorder}" BorderThickness="0,0,1,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Kepala: logo + nama + versi -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,16,16,10">
+                    <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource CrCard}"
+                            BorderBrush="{StaticResource CrBorder}" BorderThickness="1">
+                        <TextBlock Text="M" FontSize="17" FontWeight="Bold"
+                                   Foreground="{StaticResource CrAccent}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="MuseLink" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="VersionText" Style="{StaticResource CrMutedText}" FontSize="11"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Navigasi 9 halaman -->
+                <StackPanel Grid.Row="1" Margin="10,6,10,0">
+                    <RadioButton x:Name="NavOverview" Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="overview" Content="Overview" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="command" Content="Command Center" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="activity" Content="Activity Monitor" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="desktop" Content="Desktop Control" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="automation" Content="Automation" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="security" Content="Permissions &amp; Security" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="connections" Content="Connections" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="logs" Content="System Logs" Checked="Nav_Checked"/>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="settings" Content="Settings" Checked="Nav_Checked"/>
+                </StackPanel>
+
+                <!-- Kaki: kartu status bridge + putuskan -->
+                <StackPanel Grid.Row="2" Margin="12">
+                    <Border Style="{StaticResource CrCardStyle}" Padding="12">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="BridgeDot" Width="9" Height="9" Fill="{StaticResource CrGreen}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="BridgeStateText" Text="Bridge: Mendengarkan" FontSize="12.5" FontWeight="SemiBold" Margin="8,0,0,0"/>
+                            </StackPanel>
+                            <TextBlock Text="Port 8765 • Tailscale" Style="{StaticResource CrMutedText}" FontSize="11" Margin="17,3,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Button x:Name="ToggleServerButton" Content="Putuskan Akses" Style="{StaticResource CrButton}" Margin="0,10,0,0" Click="ToggleServer_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ============ AREA UTAMA ============ -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="54"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Bar atas -->
+            <Border Grid.Row="0" BorderBrush="{StaticResource CrBorder}" BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="TopBar_MouseLeftButtonDown">
+                <Grid Margin="18,0,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="PageTitle" Grid.Column="0" Text="Overview" Style="{StaticResource CrTitle}" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="ActivityText" Style="{StaticResource CrMutedText}" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                        <Button x:Name="StopButton" Content="■  EMERGENCY STOP" Style="{StaticResource CrStopButton}" Click="StopButton_Click"/>
+                        <Button Content="─" Style="{StaticResource CrButton}" Padding="10,4" Margin="14,0,0,0" Click="MinButton_Click"/>
+                        <Button Content="▢" Style="{StaticResource CrButton}" Padding="10,4" Margin="6,0,0,0" Click="MaxButton_Click"/>
+                        <Button Content="✕" Style="{StaticResource CrButton}" Padding="10,4" Margin="6,0,0,0" Click="CloseButton_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Spanduk halt -->
+            <Border x:Name="HaltBanner" Grid.Row="1" Background="{StaticResource CrStopFill}" Visibility="Collapsed">
+                <Grid Margin="18,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="EMERGENCY STOP AKTIF — semua input dari bridge sedang ditahan."
+                               Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="Lepas Stop" Style="{StaticResource CrButton}" Click="ReleaseStop_Click"/>
+                </Grid>
+            </Border>
+
+            <!-- Host halaman -->
+            <ContentControl x:Name="PageHost" Grid.Row="2" Margin="18"/>
+        </Grid>
     </Grid>
 </Window>
