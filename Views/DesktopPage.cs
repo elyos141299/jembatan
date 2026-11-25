@@ -53,10 +53,20 @@ public sealed class DesktopPage : UserControl, IRoomPage
         _preview = new Image
         {
             Stretch = System.Windows.Media.Stretch.Uniform,
-            Margin = new Thickness(14, 0, 0, 0),
         };
-        Grid.SetColumn(_preview, 1);
-        body.Children.Add(_preview);
+        // Pratinjau dibingkai kartu (v5.1).
+        var previewFrame = new Border
+        {
+            Background = UiKit.Res("CrCard"),
+            BorderBrush = UiKit.Res("CrBorder"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(6),
+            Margin = new Thickness(14, 0, 0, 0),
+            Child = _preview,
+        };
+        Grid.SetColumn(previewFrame, 1);
+        body.Children.Add(previewFrame);
 
         Grid.SetRow(body, 1);
         root.Children.Add(body);

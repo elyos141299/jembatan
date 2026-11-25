@@ -76,6 +76,36 @@ public static class UiKit
         };
     }
 
+    /// <summary>Kartu dengan titik aksen berwarna di samping judul
+    /// (v5.1 — aksen Pasangan 4 per kartu Overview).</summary>
+    public static Border Card(string title, UIElement content, string accentKey)
+    {
+        var titleBlock = CardTitle(title);
+        titleBlock.Margin = new Thickness(0);
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        row.Children.Add(new System.Windows.Shapes.Ellipse
+        {
+            Width = 8,
+            Height = 8,
+            Fill = Res(accentKey),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        });
+        row.Children.Add(titleBlock);
+        var panel = new StackPanel();
+        panel.Children.Add(row);
+        panel.Children.Add(content);
+        return new Border
+        {
+            Style = (Style)Application.Current.FindResource("CrCardStyle"),
+            Child = panel,
+        };
+    }
+
     public static Button Btn(string text, RoutedEventHandler onClick)
     {
         var b = new Button

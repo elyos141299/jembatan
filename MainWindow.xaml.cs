@@ -38,7 +38,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         var v = Assembly.GetExecutingAssembly().GetName().Version;
-        VersionText.Text = "Control Room • v" + (v != null ? v.ToString(3) : "5.0.0");
+        VersionText.Text = "Control Room • v" + (v != null ? v.ToString(3) : "5.1.0");
         NavOverview.IsChecked = true;
 
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };

@@ -32,9 +32,19 @@
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="16,16,16,10">
                     <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource CrCard}"
                             BorderBrush="{StaticResource CrBorder}" BorderThickness="1">
-                        <TextBlock Text="M" FontSize="17" FontWeight="Bold"
-                                   Foreground="{StaticResource CrAccent}"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <!-- Logo Simpul Tautan (v5.1): dua rangka anyaman + titik emas -->
+                        <Grid>
+                            <Border Width="19" Height="19" CornerRadius="5"
+                                    BorderBrush="{StaticResource CrAccent}" BorderThickness="2.5"/>
+                            <Border Width="19" Height="19" CornerRadius="5"
+                                    BorderBrush="{StaticResource CrSage}" BorderThickness="2.5"
+                                    RenderTransformOrigin="0.5,0.5">
+                                <Border.RenderTransform>
+                                    <RotateTransform Angle="45"/>
+                                </Border.RenderTransform>
+                            </Border>
+                            <Ellipse Width="4.5" Height="4.5" Fill="{StaticResource CrGold}"/>
+                        </Grid>
                     </Border>
                     <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
                         <TextBlock Text="MuseLink" FontSize="15" FontWeight="SemiBold"/>
@@ -44,15 +54,60 @@
 
                 <!-- Navigasi 9 halaman -->
                 <StackPanel Grid.Row="1" Margin="10,6,10,0">
-                    <RadioButton x:Name="NavOverview" Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="overview" Content="Overview" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="command" Content="Command Center" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="activity" Content="Activity Monitor" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="desktop" Content="Desktop Control" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="automation" Content="Automation" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="security" Content="Permissions &amp; Security" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="connections" Content="Connections" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="logs" Content="System Logs" Checked="Nav_Checked"/>
-                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="settings" Content="Settings" Checked="Nav_Checked"/>
+                    <RadioButton x:Name="NavOverview" Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="overview" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="▦" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Overview"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="command" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="❯" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Command Center"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="activity" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="∿" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Activity Monitor"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="desktop" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="▭" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Desktop Control"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="automation" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="↻" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Automation"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="security" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="◉" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Permissions &amp; Security"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="connections" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="◎" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Connections"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="logs" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="≡" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="System Logs"/>
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton Style="{StaticResource CrNavButton}" GroupName="MainNav" Tag="settings" Checked="Nav_Checked">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚙" Width="24" FontSize="14" Foreground="{StaticResource CrFaint}"/>
+                            <TextBlock Text="Settings"/>
+                        </StackPanel>
+                    </RadioButton>
                 </StackPanel>
 
                 <!-- Kaki: kartu status bridge + putuskan -->

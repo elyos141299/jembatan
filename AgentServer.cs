@@ -71,7 +71,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "5.0.0";
+        return "5.1.0";
     }
 
     private readonly IUiHost _ui;               // jendela utama, untuk Invoke ke thread UI

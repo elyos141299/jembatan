@@ -27,7 +27,12 @@ public sealed class LogsPage : UserControl, IRoomPage
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
-        _source = new ComboBox { Width = 170, FontSize = 13 };
+        _source = new ComboBox
+        {
+            Width = 170,
+            FontSize = 13,
+            Style = (Style)Application.Current.FindResource("CrComboBox"),
+        };
         _source.Items.Add("Event");
         _source.Items.Add("Operasi");
         _source.Items.Add("Log aplikasi");

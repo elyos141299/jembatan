@@ -37,10 +37,15 @@ public sealed class OverviewPage : UserControl, IRoomPage
         _permVal = UiKit.Value("…"); _permSub = UiKit.Muted("");
         _healthVal = UiKit.Value("…"); _healthSub = UiKit.Muted("");
 
-        AddCard(cards, 0, "BRIDGE & Muse", _bridgeVal, _bridgeSub);
-        AddCard(cards, 1, "SESI DESKTOP", _deskVal, _deskSub);
-        AddCard(cards, 2, "PERMISSION & STOP", _permVal, _permSub);
-        AddCard(cards, 3, "SYSTEM HEALTH", _healthVal, _healthSub);
+        // Judul jendela depan bisa sangat panjang — potong rapi
+        // dengan ellipsis, jangan membungkus berantakan (v5.1).
+        _deskVal.TextWrapping = TextWrapping.NoWrap;
+        _deskVal.TextTrimming = TextTrimming.CharacterEllipsis;
+
+        AddCard(cards, 0, "BRIDGE & Muse", _bridgeVal, _bridgeSub, "CrGreen");
+        AddCard(cards, 1, "SESI DESKTOP", _deskVal, _deskSub, "CrAccent");
+        AddCard(cards, 2, "PERMISSION & STOP", _permVal, _permSub, "CrGold");
+        AddCard(cards, 3, "SYSTEM HEALTH", _healthVal, _healthSub, "CrSage");
         Grid.SetRow(cards, 0);
         root.Children.Add(cards);
 
@@ -67,12 +72,12 @@ public sealed class OverviewPage : UserControl, IRoomPage
         _timer.Tick += (s, e) => _ = RefreshAsync();
     }
 
-    private static void AddCard(Grid parent, int col, string title, TextBlock val, TextBlock sub)
+    private static void AddCard(Grid parent, int col, string title, TextBlock val, TextBlock sub, string accentKey)
     {
         var stack = new StackPanel();
         stack.Children.Add(val);
         stack.Children.Add(sub);
-        var card = UiKit.Card(title, stack);
+        var card = UiKit.Card(title, stack, accentKey);
         if (col > 0) card.Margin = new Thickness(14, 0, 0, 0);
         Grid.SetColumn(card, col);
         parent.Children.Add(card);

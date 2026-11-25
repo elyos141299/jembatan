@@ -55,6 +55,7 @@ public sealed class SettingsPage : UserControl, IRoomPage
         {
             Foreground = UiKit.Res("CrText"),
             FontSize = 13.5,
+            Style = (Style)Application.Current.FindResource("CrCheckBox"),
         };
         var stack = new StackPanel();
         stack.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold });

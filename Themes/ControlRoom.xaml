@@ -117,7 +117,15 @@
                 <ControlTemplate TargetType="RadioButton">
                     <Border x:Name="Bd" Background="Transparent" CornerRadius="8"
                             Padding="{TemplateBinding Padding}">
-                        <ContentPresenter VerticalAlignment="Center"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="AccentBar" Grid.Column="0" Width="3" CornerRadius="1.5"
+                                    Background="{StaticResource CrAccent}" Margin="0,2,10,2" Opacity="0"/>
+                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
+                        </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -125,6 +133,7 @@
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                            <Setter TargetName="AccentBar" Property="Opacity" Value="1"/>
                             <Setter Property="Foreground" Value="{StaticResource CrText}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                         </Trigger>
@@ -143,6 +152,102 @@
         <Setter Property="Padding" Value="8,6"/>
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="CaretBrush" Value="{StaticResource CrText}"/>
+    </Style>
+
+    <!-- Kotak centang gelap (v5.1) -->
+    <Style x:Key="CrCheckBox" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+        <Setter Property="FontSize" Value="13.5"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal">
+                        <Border x:Name="Box" Width="18" Height="18" CornerRadius="4"
+                                Background="{StaticResource CrPanel}" BorderBrush="{StaticResource CrBorder}"
+                                BorderThickness="1" VerticalAlignment="Top" Margin="0,1,10,0">
+                            <Path x:Name="Check" Data="M 3.5 9.5 L 7.5 13 L 14 5.5"
+                                  Stroke="{StaticResource CrText}" StrokeThickness="2" Visibility="Collapsed"/>
+                        </Border>
+                        <ContentPresenter VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Dropdown gelap (v5.1) -->
+    <Style x:Key="CrComboBoxItem" TargetType="ComboBoxItem">
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="10,6"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Bd" Background="Transparent" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="CrComboBox" TargetType="ComboBox">
+        <Setter Property="Foreground" Value="{StaticResource CrText}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="ItemContainerStyle" Value="{StaticResource CrComboBoxItem}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="{StaticResource CrPanel}" BorderBrush="{StaticResource CrBorder}"
+                                            BorderThickness="1" CornerRadius="6">
+                                        <Path Data="M 0 0 L 5 5 L 10 0" Stroke="{StaticResource CrMuted}" StrokeThickness="1.6"
+                                              HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          Margin="10,0,30,0" VerticalAlignment="Center"/>
+                        <Popup Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                               AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                            <Border Background="{StaticResource CrPanel}" BorderBrush="{StaticResource CrBorder}"
+                                    BorderThickness="1" CornerRadius="6" Padding="4"
+                                    MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                <ScrollViewer>
+                                    <ItemsPresenter/>
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- Daftar -->
