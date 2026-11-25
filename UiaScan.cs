@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Threading;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Definitions;
 using FlaUI.UIA3;
@@ -54,6 +55,29 @@ public static class UiaScan
     /// <summary>Hasil pindai terakhir (kosong sebelum pindai pertama).</summary>
     public static IReadOnlyList<Item> Last => _last;
 
+    // Metadata pindai terakhir (v3.6.0): /uia/click menolak
+    // mengklik hasil pindai yang jendela depannya sudah berganti
+    // atau yang umurnya lewat batas (BUG-02 audit).
+    public static long LastScanTick;
+    public static IntPtr LastScanHwnd;
+
+    // Satu UIA3Automation per thread, dipakai ulang (BUG-22
+    // audit): konstruksi COM per panggilan membuang latensi tetap
+    // di tiap operasi UIA. Semua pemakaian UiaScan berjalan di
+    // thread UI lewat OnUi, jadi praktisnya satu instans.
+    private static readonly ThreadLocal<UIA3Automation> _auto =
+        new ThreadLocal<UIA3Automation>(() => new UIA3Automation());
+    private static UIA3Automation SharedAutomation => _auto.Value;
+
+    /// <summary>Salinan hasil pindai + cap waktu (v3.6.0): daftar
+    /// hidup _last tidak lagi dibaca thread HTTP saat pindaian
+    /// berikutnya membersihkannya (BUG-19 audit).</summary>
+    private static List<Item> Snapshot()
+    {
+        LastScanTick = Environment.TickCount64;
+        return new List<Item>(_last);
+    }
+
     // Tipe kontrol yang bisa diajak berinteraksi — elemen teks murni,
     // gambar, dan wadah tata letak sengaja tidak dimasukkan supaya
     // daftar tetap pendek dan berguna.
@@ -80,21 +104,23 @@ public static class UiaScan
     /// <summary>
     /// Pindai jendela yang sedang di depan. Maksimal maxItems elemen
     /// (bawaan 120) supaya jendela raksasa seperti Chrome tidak
-    /// menghasilkan daftar ribuan baris. Mengembalikan daftar yang
-    /// sama dengan yang tersimpan di Last.
+    /// menghasilkan daftar ribuan baris. Mengembalikan SALINAN
+    /// daftar yang tersimpan di Last (v3.6.0 — aman dibaca thread
+    /// lain) beserta cap waktu & handle jendela pindaian.
     /// </summary>
     public static List<Item> ScanForeground(int maxItems)
     {
         _last.Clear();
         var fg = NativeInput.ForegroundHandle();
-        if (fg == IntPtr.Zero) return _last;
+        LastScanHwnd = fg;
+        if (fg == IntPtr.Zero) return Snapshot();
 
         try
         {
-            using (var automation = new UIA3Automation())
+            var automation = SharedAutomation;
             {
                 var root = automation.FromHandle(fg);
-                if (root == null) return _last;
+                if (root == null) return Snapshot();
                 var all = root.FindAllDescendants();
                 foreach (var el in all)
                 {
@@ -120,7 +146,7 @@ public static class UiaScan
             }
         }
         catch { /* UIA gagal total (jendela aman dsb.) — daftar kosong */ }
-        return _last;
+        return Snapshot();
     }
 
     /// <summary>
@@ -134,7 +160,7 @@ public static class UiaScan
         if (handle == IntPtr.Zero) return hasil;
         try
         {
-            using (var automation = new UIA3Automation())
+            var automation = SharedAutomation;
             {
                 var root = automation.FromHandle(handle);
                 if (root == null) return hasil;
@@ -233,12 +259,12 @@ public static class UiaScan
     /// Baca nilai elemen di satu titik layar TANPA menyentuhnya
     /// (v3.5.0 — /readvalue): Value, lalu Text, lalu Name.
     /// </summary>
-    public static bool ReadAtPoint(int x, int y, out string value, out string name, out string type)
+    public static bool ReadAtPoint(int x, int y, out string value, out string name, out string type, out bool hasValue)
     {
-        value = ""; name = ""; type = "";
+        value = ""; name = ""; type = ""; hasValue = false;
         try
         {
-            using (var automation = new UIA3Automation())
+            var automation = SharedAutomation;
             {
                 var el = automation.FromPoint(new Point(x, y));
                 if (el == null) return false;
@@ -247,7 +273,7 @@ public static class UiaScan
                 try
                 {
                     var vp = el.Patterns.Value.PatternOrDefault;
-                    if (vp != null && !string.IsNullOrEmpty(vp.Value)) { value = vp.Value; return true; }
+                    if (vp != null && !string.IsNullOrEmpty(vp.Value)) { value = vp.Value; hasValue = true; return true; }
                 }
                 catch { }
                 try
@@ -256,11 +282,14 @@ public static class UiaScan
                     if (tp != null)
                     {
                         var t = tp.DocumentRange.GetText(512);
-                        if (!string.IsNullOrEmpty(t)) { value = t.Trim(); return true; }
+                        if (!string.IsNullOrEmpty(t)) { value = t.Trim(); hasValue = true; return true; }
                     }
                 }
                 catch { }
-                value = name;
+                // v3.6.0 (BUG-01 audit): elemen memang tidak punya
+                // nilai — value tetap "" dan hasValue false. Dulu
+                // nama elemen dikembalikan sebagai "nilai", membuat
+                // /readvalue berbohong pada kolom kosong.
                 return true;
             }
         }
@@ -278,7 +307,7 @@ public static class UiaScan
         readback = ""; elemName = "";
         try
         {
-            using (var automation = new UIA3Automation())
+            var automation = SharedAutomation;
             {
                 var el = automation.FromPoint(new Point(x, y));
                 if (el == null) return false;
@@ -298,7 +327,7 @@ public static class UiaScan
     {
         try
         {
-            using (var automation = new UIA3Automation())
+            var automation = SharedAutomation;
             {
                 var el = automation.FromPoint(new Point(x, y));
                 if (el == null) return false;
@@ -333,7 +362,7 @@ public static class UiaScan
         var oc = new ActOutcome();
         try
         {
-            using (var automation = new UIA3Automation())
+            var automation = SharedAutomation;
             {
                 AutomationElement el = null;
                 if (px.HasValue && py.HasValue)

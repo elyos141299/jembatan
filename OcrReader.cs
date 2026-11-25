@@ -205,7 +205,14 @@ public static class OcrReader
             var decoder = await BitmapDecoder.CreateAsync(stream);
             var sb = await decoder.GetSoftwareBitmapAsync();
             if (sb.BitmapPixelFormat != BitmapPixelFormat.Bgra8)
-                sb = SoftwareBitmap.Convert(sb, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            {
+                // v3.6.0 (OCR-1 audit): bitmap asal & hasil konversi
+                // WAJIB di-Dispose — dulu bocor per panggilan /ocr
+                // dan menumpuk saat polling OCR /waitfor.
+                var conv = SoftwareBitmap.Convert(sb, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                sb.Dispose();
+                sb = conv;
+            }
 
             var res = await engine.RecognizeAsync(sb);
             var hasil = new Result { Text = res.Text ?? "" };
@@ -225,6 +232,7 @@ public static class OcrReader
                 }
                 if (hasil.Words.Count >= 600) break;
             }
+            sb.Dispose(); // v3.6.0 (OCR-1): jangan bocor per panggilan
             return hasil;
         }
     }

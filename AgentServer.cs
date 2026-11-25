@@ -33,6 +33,9 @@ namespace Jembatan;
 /// Port 8765 hanya bisa dijangkau oleh perangkat yang SUDAH disetujui
 /// user di admin Tailscale-nya (PC ini + VM Muse bernama "muse").
 /// Jangan pernah mengekspos port ini ke internet publik (port forwarding).
+/// Audit 25 Nov 2026 mengusulkan token auth + jail berkas; user
+/// MENOLAKNYA dengan kesadaran penuh (±16:07) demi kebebasan operasi
+/// agen di PC-nya — keputusan itu yang berlaku, bukan kelalaian.
 /// </summary>
 public sealed class AgentServer
 {
@@ -40,6 +43,29 @@ public sealed class AgentServer
     private const int DefaultExecTimeoutMs = 60000;
     private const int MaxExecTimeoutMs = 300000;
     private const int MaxOutputChars = 100000;
+
+    // Versi aplikasi dari metadata rakitan (v3.6.0): dulu string
+    // versi ditulis tangan di 4 titik dan satu terlewat ("3.4.1"
+    // bertahan di /ping pada rilis 3.5.0 — BUG-14 audit). Kini
+    // /ping, /sysinfo, /context, /diag membaca dari FileVersion.
+    private static readonly string AppVersion = ComputeAppVersion();
+
+    private static string ComputeAppVersion()
+    {
+        try
+        {
+            string fv = FileVersionInfo.GetVersionInfo(
+                typeof(AgentServer).Assembly.Location).FileVersion;
+            if (!string.IsNullOrEmpty(fv))
+            {
+                var parts = fv.Split('.');
+                if (parts.Length >= 3) return parts[0] + "." + parts[1] + "." + parts[2];
+                return fv;
+            }
+        }
+        catch { /* abaikan — pakai bawaan di bawah */ }
+        return "3.6.0";
+    }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
     private readonly Action<string> _log;       // tulis ke log jendela
@@ -55,6 +81,16 @@ public sealed class AgentServer
     private int _shellSeq;
 
     public bool IsRunning { get; private set; }
+
+    // Penghangat relay (v3.6.0): bendera berhenti — dulu thread-nya
+    // while(true) abadi dan menumpuk satu per Start ulang (BUG-09).
+    private volatile bool _warmerOn;
+
+    // Tombol yang sedang ditahan lewat /keydown (v3.6.0): dicatat
+    // supaya bisa dilepas semua lewat /keys/release dan otomatis
+    // saat server berhenti (BUG-20 audit).
+    private readonly HashSet<ushort> _heldKeys = new HashSet<ushort>();
+    private readonly object _heldLock = new object();
 
     public AgentServer(Control ui, Action<string> log, Action onActivity)
     {
@@ -81,9 +117,10 @@ public sealed class AgentServer
         // `tailscale status` dingin). Thread ini mengisi cache
         // sejak start dan menyegarkannya tiap 50 detik (umur
         // cache 60 detik), jadi /sysinfo selalu dari cache.
+        _warmerOn = true;
         var warmer = new Thread(() =>
         {
-            while (true)
+            while (_warmerOn)
             {
                 try { TailscaleRelay(); } catch { /* hanya keterangan */ }
                 Thread.Sleep(50000);
@@ -94,12 +131,30 @@ public sealed class AgentServer
 
     public void Stop()
     {
+        _warmerOn = false;
+        ReleaseHeldKeys(); // v3.6.0: jangan tinggalkan tombol tertahan
         try { _cts?.Cancel(); } catch { /* abaikan */ }
         try { _listener?.Stop(); } catch { /* abaikan */ }
         _listener = null;
         IsRunning = false;
         // PUTUSKAN / jendela ditutup = shell persisten ikut dimatikan.
         lock (_shellLock) { KillShell(); }
+    }
+
+    /// <summary>Lepas semua tombol yang ditahan /keydown (v3.6.0).</summary>
+    private int ReleaseHeldKeys()
+    {
+        List<ushort> keys;
+        lock (_heldLock)
+        {
+            keys = new List<ushort>(_heldKeys);
+            _heldKeys.Clear();
+        }
+        foreach (var vk in keys)
+        {
+            try { NativeInput.KeyUp(vk); } catch { /* abaikan */ }
+        }
+        return keys.Count;
     }
 
     private async Task AcceptLoop(TcpListener listener, CancellationToken ct)
@@ -136,6 +191,15 @@ public sealed class AgentServer
         public string Path;
         public string Query; // query string mentah ("" bila tidak ada) — sejak v2.4.0
         public string Body;
+    }
+
+    /// <summary>Satu kandidat hasil /locate (v3.6.0).</summary>
+    private sealed class LocateHit
+    {
+        public string Via = "";
+        public string Text = "";
+        public string Type = "";
+        public Rectangle Rect;
     }
 
     private sealed class ShellSession
@@ -293,6 +357,7 @@ public sealed class AgentServer
             case 200: reason = "OK"; break;
             case 400: reason = "Bad Request"; break;
             case 404: reason = "Not Found"; break;
+            case 409: reason = "Conflict"; break;
             default: reason = "Internal Server Error"; break;
         }
         var sb = new StringBuilder();
@@ -422,7 +487,7 @@ public sealed class AgentServer
                 // kesehatan Muse sering datang dan membanjiri log;
                 // label status "aktivitas terakhir" tetap diperbarui
                 // lewat _onActivity di atas.
-                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"3.4.1\",\"admin\":"
+                return Response.Json("{\"ok\":true,\"app\":\"jembatan\",\"version\":\"" + AppVersion + "\",\"admin\":"
                     + (Settings.IsElevated() ? "true" : "false") + "}");
             }
 
@@ -586,7 +651,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "3.5.0",
+                    ["version"] = AppVersion,
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -685,7 +750,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "3.5.0",
+                    ["version"] = AppVersion,
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -1069,7 +1134,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "3.5.0",
+                    ["version"] = AppVersion,
                     ["uptimeSec"] = (Environment.TickCount64 - _startTick) / 1000,
                     ["process"] = new Dictionary<string, object>
                     {
@@ -2032,9 +2097,33 @@ public sealed class AgentServer
                                 else NativeInput.KeyUp(vk);
                                 return true;
                             });
+                            // v3.6.0 (BUG-20): catat tombol tertahan
+                            // supaya /keys/release & Stop() bisa
+                            // melepasnya — jangan sampai CTRL/ALT
+                            // tertahan logis di sesi Windows user.
+                            lock (_heldLock)
+                            {
+                                if (down) _heldKeys.Add(vk);
+                                else _heldKeys.Remove(vk);
+                            }
                             _onActivity();
                             _log((down ? "tahan tombol: " : "lepas tombol: ") + keyName);
                             return Ok();
+                        }
+                        case "/keys/release":
+                        {
+                            // Lepas SEMUA tombol tertahan (v3.6.0,
+                            // BUG-20 audit): jaring pengaman bila
+                            // urutan /keydown-/keyup terputus di
+                            // tengah — tombol tidak tertahan selamanya.
+                            int nRel = ReleaseHeldKeys();
+                            _onActivity();
+                            _log("lepas semua tombol tertahan: " + nRel);
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["released"] = nRel,
+                            });
                         }
                         case "/wait":
                         {
@@ -2254,6 +2343,17 @@ public sealed class AgentServer
                         {
                             // Klik elemen dari pindai /uia terakhir —
                             // berdasarkan indeks atau nama (v2.4.0).
+                            // Penjaga kebasian (v3.6.0, BUG-02 audit):
+                            // koordinat pindai tidak boleh diklik bila
+                            // jendela depan sudah berganti atau pindai
+                            // berumur >90 detik — dulu klik mendarat di
+                            // jendela lain sambil melaporkan sukses.
+                            if (UiaScan.LastScanHwnd != IntPtr.Zero &&
+                                NativeInput.ForegroundHandle() != UiaScan.LastScanHwnd)
+                                return Response.Json("{\"ok\":false,\"error\":\"jendela depan berubah sejak pindai terakhir — pindai ulang lewat GET /uia\"}", 409);
+                            if (UiaScan.LastScanTick > 0 &&
+                                Environment.TickCount64 - UiaScan.LastScanTick > 90000)
+                                return Response.Json("{\"ok\":false,\"error\":\"pindai terlalu tua (>90 detik) — pindai ulang lewat GET /uia\"}", 409);
                             int index = GetInt(root, "index", -1);
                             string name = GetString(root, "name", "");
                             var item = OnUi(() => UiaScan.Find(index, name));
@@ -2273,6 +2373,115 @@ public sealed class AgentServer
                                 ["x"] = cx,
                                 ["y"] = cy,
                             });
+                        }
+                        case "/locate":
+                        {
+                            // Fondasi Visual Grounding (v3.6.0): SATU
+                            // panggilan mencari elemen/teks di layar —
+                            // UIA dulu (pindai segar jendela depan),
+                            // gugur ke OCR layar penuh bila UIA tidak
+                            // menemukan (aplikasi buta-UIA seperti
+                            // CapCut). click:true mengklik kandidat
+                            // pertama; marks:true melampirkan gambar
+                            // berkotak nomor (Set-of-Marks) untuk
+                            // verifikasi visual sebelum bertindak.
+                            string q = GetString(root, "text", "");
+                            if (string.IsNullOrWhiteSpace(q))
+                                return Response.Json("{\"ok\":false,\"error\":\"text wajib diisi\"}", 400);
+                            string mode = GetString(root, "mode", "auto").Trim().ToLowerInvariant();
+                            bool doClick = GetBool(root, "click", false);
+                            bool wantMarks = GetBool(root, "marks", false);
+                            var hits = new List<LocateHit>();
+                            string viaUsed = "";
+                            if (mode == "auto" || mode == "uia")
+                            {
+                                var scan = OnUi(() => UiaScan.ScanForeground(500));
+                                foreach (var it in scan)
+                                {
+                                    if (it.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                        hits.Add(new LocateHit { Via = "uia", Text = it.Name, Type = it.Type, Rect = it.Rect });
+                                    if (hits.Count >= 10) break;
+                                }
+                                if (hits.Count > 0) viaUsed = "uia";
+                            }
+                            if (hits.Count == 0 && (mode == "auto" || mode == "ocr"))
+                            {
+                                var bounds = Screen.PrimaryScreen != null
+                                    ? Screen.PrimaryScreen.Bounds
+                                    : new Rectangle(0, 0, 1280, 720);
+                                OcrReader.Result ocrRes = null;
+                                using (var bmp = CaptureRegionBitmap(bounds, 0, out var eff))
+                                    ocrRes = OcrReader.Read(bmp, eff.X, eff.Y);
+                                // Kata tunggal mengandung query, atau
+                                // dua kata berurutan digabung (query
+                                // berspasi, mis. "Create project").
+                                var ws = ocrRes.Words;
+                                for (int i = 0; i < ws.Count && hits.Count < 10; i++)
+                                {
+                                    if (ws[i].Text.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    {
+                                        hits.Add(new LocateHit { Via = "ocr", Text = ws[i].Text, Type = "word", Rect = ws[i].Rect });
+                                    }
+                                    else if (q.IndexOf(' ') > 0 && i + 1 < ws.Count)
+                                    {
+                                        string gab = ws[i].Text + " " + ws[i + 1].Text;
+                                        if (gab.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                        {
+                                            var rr = Rectangle.Union(ws[i].Rect, ws[i + 1].Rect);
+                                            hits.Add(new LocateHit { Via = "ocr", Text = gab, Type = "words", Rect = rr });
+                                        }
+                                    }
+                                }
+                                if (hits.Count > 0) viaUsed = "ocr";
+                            }
+                            var cand = new List<Dictionary<string, object>>();
+                            foreach (var h in hits)
+                            {
+                                cand.Add(new Dictionary<string, object>
+                                {
+                                    ["via"] = h.Via, ["text"] = h.Text, ["type"] = h.Type,
+                                    ["x"] = h.Rect.X, ["y"] = h.Rect.Y,
+                                    ["w"] = h.Rect.Width, ["h"] = h.Rect.Height,
+                                    ["cx"] = h.Rect.X + h.Rect.Width / 2,
+                                    ["cy"] = h.Rect.Y + h.Rect.Height / 2,
+                                });
+                            }
+                            bool clicked = false;
+                            if (doClick && hits.Count > 0)
+                            {
+                                int cx = hits[0].Rect.X + hits[0].Rect.Width / 2;
+                                int cy = hits[0].Rect.Y + hits[0].Rect.Height / 2;
+                                OnUi(() => { NativeInput.Click(cx, cy, "left"); return true; });
+                                _lastClickX = cx; _lastClickY = cy; _lastClickTick = Environment.TickCount64;
+                                clicked = true;
+                            }
+                            _onActivity();
+                            _log($"locate '{q}': {hits.Count} kandidat" +
+                                 (viaUsed != "" ? " via " + viaUsed : "") +
+                                 (clicked ? " (diklik)" : ""));
+                            var resp = new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["found"] = hits.Count > 0,
+                                ["via"] = viaUsed,
+                                ["count"] = hits.Count,
+                                ["candidates"] = cand,
+                                ["clicked"] = clicked,
+                            };
+                            if (wantMarks && hits.Count > 0)
+                            {
+                                var boundsM = Screen.PrimaryScreen != null
+                                    ? Screen.PrimaryScreen.Bounds
+                                    : new Rectangle(0, 0, 1280, 720);
+                                using (var bmp = CaptureRegionBitmap(boundsM, 1280, out var effM))
+                                {
+                                    DrawMarks(bmp, effM, hits);
+                                    resp["image"] = Convert.ToBase64String(EncodeJpeg(bmp, 80));
+                                    resp["imageW"] = bmp.Width;
+                                    resp["imageH"] = bmp.Height;
+                                }
+                            }
+                            return Response.JsonObject(resp);
                         }
                         case "/uia/find":
                         {
@@ -2708,7 +2917,21 @@ public sealed class AgentServer
                         case "/key":
                         {
                             string keys = GetString(root, "keys", "");
-                            OnUi(() => { NativeInput.PressKey(keys); return true; });
+                            try
+                            {
+                                OnUi(() => { NativeInput.PressKey(keys); return true; });
+                            }
+                            catch (ArgumentException ex)
+                            {
+                                // v3.6.0 (BUG-05): nama tombol tak
+                                // dikenal kini 400 — bukan diketik
+                                // literal ke jendela user.
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = ex.Message,
+                                }, 400);
+                            }
                             _onActivity();
                             _log("tombol: " + keys);
                             return Ok();
@@ -2819,12 +3042,14 @@ public sealed class AgentServer
                             if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             string val = "", nm = "", tp = "";
-                            bool okR = OnUi(() => UiaScan.ReadAtPoint(x, y, out val, out nm, out tp));
+                            bool hasVal = false;
+                            bool okR = OnUi(() => UiaScan.ReadAtPoint(x, y, out val, out nm, out tp, out hasVal));
                             _onActivity();
                             return Response.JsonObject(new Dictionary<string, object>
                             {
                                 ["ok"] = okR,
                                 ["value"] = val,
+                                ["hasValue"] = hasVal,
                                 ["name"] = nm,
                                 ["type"] = tp,
                             });
@@ -3125,7 +3350,28 @@ public sealed class AgentServer
 
         _onActivity();
         _log("buka: " + path);
-        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        var psi = new ProcessStartInfo { FileName = path, UseShellExecute = true };
+        try
+        {
+            // Folder kerja = folder berkasnya (v3.6.0, BUG-03
+            // audit): aplikasi yang membaca berkas data relatif
+            // terhadap folder kerja (OBS: locale/en-US.ini) gagal
+            // total saat dibuka dari folder kerja MuseLink.
+            // "cwd" eksplisit menimpa bawaan; "args" meneruskan
+            // argumen baris perintah.
+            if (File.Exists(path))
+            {
+                string dir = Path.GetDirectoryName(Path.GetFullPath(path));
+                if (!string.IsNullOrEmpty(dir)) psi.WorkingDirectory = dir;
+            }
+            string cwdReq = GetString(root, "cwd", "");
+            if (!string.IsNullOrWhiteSpace(cwdReq) && Directory.Exists(cwdReq))
+                psi.WorkingDirectory = cwdReq;
+            string argsReq = GetString(root, "args", "");
+            if (!string.IsNullOrWhiteSpace(argsReq)) psi.Arguments = argsReq;
+        }
+        catch { /* folder kerja gagal diatur — buka seperti biasa */ }
+        Process.Start(psi);
         // Verifikasi buka (v3.5.0 — Action Verification): caller
         // boleh meminta bukti jendela berjudul tertentu muncul.
         string expect = GetString(root, "expectWindow", "");
@@ -3608,6 +3854,43 @@ public sealed class AgentServer
     /// grid hanya ada di gambar yang dikirim ke Muse, supaya
     /// koordinat klik dibaca dari label, bukan ditebak.
     /// </summary>
+    /// <summary>
+    /// Kotak bernomor di atas kandidat /locate (v3.6.0 —
+    /// Set-of-Marks): nomor pada gambar = urutan kandidat pada
+    /// respons JSON, supaya hasil grounding bisa diverifikasi
+    /// visual sebelum diklik.
+    /// </summary>
+    private static void DrawMarks(Bitmap bmp, Rectangle eff, List<LocateHit> hits)
+    {
+        if (eff.Width <= 0 || eff.Height <= 0) return;
+        double sx = bmp.Width / (double)eff.Width;
+        double sy = bmp.Height / (double)eff.Height;
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+            int fontPx = Math.Max(11, bmp.Width / 90);
+            using (var font = new Font("Consolas", fontPx, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (var pen = new Pen(Color.FromArgb(255, 255, 90, 0), Math.Max(2, bmp.Width / 640)))
+            using (var bg = new SolidBrush(Color.FromArgb(230, 255, 90, 0)))
+            using (var fg = new SolidBrush(Color.Black))
+            {
+                for (int i = 0; i < hits.Count && i < 10; i++)
+                {
+                    var r = hits[i].Rect;
+                    int ix = (int)((r.X - eff.X) * sx), iy = (int)((r.Y - eff.Y) * sy);
+                    int iw = Math.Max(2, (int)(r.Width * sx)), ih = Math.Max(2, (int)(r.Height * sy));
+                    g.DrawRectangle(pen, ix, iy, iw, ih);
+                    string t = (i + 1).ToString();
+                    var sz = g.MeasureString(t, font);
+                    float lx = ix, ly = iy - sz.Height - 4;
+                    if (ly < 0) ly = iy + 2;
+                    g.FillRectangle(bg, lx, ly, sz.Width + 6, sz.Height + 3);
+                    g.DrawString(t, font, fg, lx + 3, ly + 1);
+                }
+            }
+        }
+    }
+
     private static void DrawGrid(Bitmap bmp, Rectangle eff, int step)
     {
         if (eff.Width <= 0 || eff.Height <= 0) return;
@@ -3839,7 +4122,12 @@ public sealed class AgentServer
             ? Screen.PrimaryScreen.Bounds
             : new Rectangle(0, 0, 1280, 720);
         eff = Rectangle.Intersect(bounds, region);
-        if (eff.Width <= 0 || eff.Height <= 0) eff = bounds;
+        if (eff.Width <= 0 || eff.Height <= 0)
+            // v3.6.0 (BUG-17 audit): wilayah sepenuhnya di luar
+            // layar utama TIDAK lagi senyap diganti seluruh layar
+            // utama — caller menerima galat jujur, bukan gambar
+            // layar yang salah berklaim sukses.
+            throw new InvalidOperationException("wilayah tangkapan di luar layar utama");
         Bitmap bmp;
         using (var full = CaptureFullBitmap())
             bmp = full.Clone(new Rectangle(eff.X - bounds.X, eff.Y - bounds.Y, eff.Width, eff.Height), full.PixelFormat);
@@ -4032,7 +4320,11 @@ public sealed class AgentServer
             ? Screen.PrimaryScreen.Bounds
             : new Rectangle(0, 0, 1280, 720);
         eff = Rectangle.Intersect(bounds, new Rectangle(x, y, w, h));
-        if (eff.Width <= 0 || eff.Height <= 0) eff = bounds;
+        if (eff.Width <= 0 || eff.Height <= 0)
+            // v3.6.0 (BUG-17): sama seperti CaptureRegionBitmap —
+            // jangan senyap mengganti wilayah luar-layar dengan
+            // seluruh layar utama.
+            throw new InvalidOperationException("wilayah tangkapan di luar layar utama");
         using (var full = CaptureFullBitmap())
             return full.Clone(new Rectangle(eff.X - bounds.X, eff.Y - bounds.Y, eff.Width, eff.Height), full.PixelFormat);
     }

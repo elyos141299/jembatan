@@ -67,11 +67,26 @@ internal static class Program
     {
         for (int i = 0; i < 50; i++)
         {
-            _instanceMutex = new Mutex(true, "JembatanSingleInstance", out bool createdNew);
+            var m = new Mutex(false, "JembatanSingleInstance", out bool createdNew);
             if (createdNew)
+            {
+                _instanceMutex = m;
                 return true;
-            _instanceMutex.Dispose();
-            _instanceMutex = null;
+            }
+            // Mutex sudah ada: ambil kepemilikan hanya bila pemilik
+            // lama sudah melepas — atau MENINGGALKANNYA mati tanpa
+            // melepas (AbandonedMutexException, BUG-04 audit: dulu
+            // lolos tak tertangkap dari konstruktor initiallyOwned
+            // dan aplikasi gagal mulai sesudah crash/kill paksa).
+            bool owned;
+            try { owned = m.WaitOne(0); }
+            catch (AbandonedMutexException) { owned = true; }
+            if (owned)
+            {
+                _instanceMutex = m;
+                return true;
+            }
+            m.Dispose();
             Thread.Sleep(100);
         }
         return false;

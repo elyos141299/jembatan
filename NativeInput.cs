@@ -685,9 +685,22 @@ public static class NativeInput
         if (string.IsNullOrWhiteSpace(keys)) return;
         string k = keys.Trim();
         if (SpecialKeys.TryGetValue(k, out string token))
+        {
             SendKeys.SendWait(token);
-        else
+            return;
+        }
+        // v3.6.0 (BUG-05 audit): nama tak dikenal TIDAK lagi diketik
+        // literal huruf demi huruf ("ctrl+z" dulu terkirim sebagai
+        // teks c-t-r-l...). Yang diterima hanya sintaks SendKeys
+        // sungguhan: diawali ^ % ~ + { ( atau tepat satu karakter.
+        char c0 = k[0];
+        if (k.Length == 1 || c0 == '^' || c0 == '%' || c0 == '~' ||
+            c0 == '+' || c0 == '{' || c0 == '(')
+        {
             SendKeys.SendWait(k);
+            return;
+        }
+        throw new ArgumentException("nama tombol tidak dikenal: " + keys);
     }
 
     // Nama tombol -> token SendKeys yang harus dikirim.
