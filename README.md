@@ -1,4 +1,16 @@
-# MuseLink v3.3.0 — catatan pengembang
+# MuseLink v3.3.1 — catatan pengembang
+
+## v3.3.1 — Logo final pilihan user
+
+Logo v3.3.0 (huruf M polos) DITOLAK user: salah membaca bentuk
+dari gambar kirimannya. Bentuk asli (ditelusuri per piksel dari
+berkas 61×54): simpul anyaman dua gelung — dua batang sisi,
+lengkung atas, diagonal menyilang di tengah — di atas ubin biru
+baja dengan glif ungu tua. User memilih kandidat 2 dari 4 yang
+ditawarkan: bentuk persis gambarnya, diwarnai ulang ungu terang
+#7C3ADE di atas ubin putih lavendel tema MuseLink, tepinya
+dipoles (naik resolusi bertahap + smoothstep alfa) sampai halus.
+icon.ico digambar dari masker piksel gambar user itu sendiri.
 
 ## v3.3.0 — Delapan koreksi putaran kedua
 
