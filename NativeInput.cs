@@ -863,7 +863,6 @@ public static class NativeInput
 
     // Kode tombol virtual untuk pengurai & pengetik.
     private const ushort VkTab = 0x09;
-    private const ushort VkReturn = 0x0D;
     private const ushort VkShift = 0x10;
     private const ushort VkControl = 0x11;
     private const ushort VkMenu = 0x12;
