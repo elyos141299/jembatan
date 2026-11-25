@@ -920,7 +920,7 @@ public static class NativeInput
         var list = new List<MonitorInfo>();
         try
         {
-            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (hMon, hdc, ref RectNative rect, IntPtr data) =>
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMon, IntPtr hdc, ref RectNative rect, IntPtr data) =>
             {
                 var info = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };
                 if (GetMonitorInfo(hMon, ref info))
