@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Jembatan</AssemblyName>
+    <RootNamespace>Jembatan</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <Version>3.6.0</Version>
+    <AssemblyVersion>3.6.0.0</AssemblyVersion>
+    <FileVersion>3.6.0.0</FileVersion>
+    <!-- WebView2 (panel chat v2.2): loader native-nya harus ikut
+         ter-extract dari berkas tunggal hasil publish, kalau tidak
+         panel chat gagal jalan dari Jembatan.exe single-file. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!-- Audio (v2.5.0): NAudio untuk loopback WASAPI (/listen) dan
+       System.Speech untuk TTS bawaan Windows (/say). -->
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.1" />
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- OCR (v2.4.4): TargetFramework diarahkan ke permukaan SDK
+       Windows 10 19041 agar API WinRT Windows.Media.Ocr (mesin OCR
+       bawaan Windows) bisa dipakai. WinForms/WebView2/FlaUI tidak
+       terpengaruh oleh arahan ini. -->
+
+  <!-- UI Automation (peta elemen jendela, v2.4.0): lewat FlaUI —
+       rujukan rakitan kerangka UIAutomationClient tidak
+       terselesaikan di CI (build #13), FlaUI.UIA3 adalah bungkus
+       NuGet resmi-komunitas untuk COM UI Automation yang sama. -->
+  <ItemGroup>
+    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
+    <!-- v3.0.1: suhu CPU (sensor ring-0) untuk baris rincian panel. -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+  </ItemGroup>
+
+</Project>
