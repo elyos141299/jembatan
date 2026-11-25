@@ -44,6 +44,8 @@ public sealed class MainForm : Form
     private static Color Accent => AppTheme.Accent;
     private static Color AccentAlt => AppTheme.AccentAlt;
     private static Color Green => AppTheme.Green;
+    // v3.3.0: hijau titik status yang lebih hidup/jenuh.
+    private static Color LiveGreen => Color.FromArgb(0x5B, 0xBB, 0x63);
     private static Color Red => AppTheme.Red;
     private static Color RedOnDark => AppTheme.RedOnDark;
     private static Color LightFill => AppTheme.LightFill;
@@ -274,14 +276,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.2.2 dimulai ===");
+            Log("=== MuseLink v3.3.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.2.2 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.3.0 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -538,8 +540,9 @@ public sealed class MainForm : Form
         titleBar.Controls.Add(barTitle);
         _titleDot = new RoundDot
         {
-            Size = new Size(8, 8),
-            Location = new Point(118, 16),
+            Size = new Size(18, 18),
+            Location = new Point(115, 11),
+            GlowPulse = true,
             BackColor = Color.Transparent,
             DotColor = DotWaiting,
         };
@@ -592,7 +595,7 @@ public sealed class MainForm : Form
             ForeColor = Ink,
             Font = new Font("Consolas", 9.5f),
             DetectUrls = false,
-            ScrollBars = RichTextBoxScrollBars.Vertical,
+            ScrollBars = RichTextBoxScrollBars.None,
         };
         var logBody = _logCard = new Panel
         {
@@ -600,6 +603,7 @@ public sealed class MainForm : Form
             BackColor = LogBg,
             Padding = new Padding(12, 8, 12, 8),
         };
+        _logBox.MouseWheel += LogBoxMouseWheel;
         logBody.Controls.Add(_logBox);
         var logHair = _logHair = new Panel
         {
@@ -676,8 +680,8 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Top,
             Height = 184,
-            FillColor = InkCard,
-            BorderColor = RailHover,
+            FillColor = LogBg,
+            BorderColor = LogBg,
             CornerRadius = 8,
             Padding = new Padding(14),
         };
@@ -685,7 +689,7 @@ public sealed class MainForm : Form
         {
             Size = new Size(36, 36),
             Location = new Point(14, 12),
-            BackColor = InkCard,
+            BackColor = LogBg,
             SizeMode = PictureBoxSizeMode.Zoom,
         };
         try
@@ -701,7 +705,7 @@ public sealed class MainForm : Form
             Text = "MuseLink",
             Font = new Font("Segoe UI Semibold", 13.5f),
             ForeColor = InkOnDark,
-            BackColor = InkCard,
+            BackColor = LogBg,
             AutoSize = true,
             Location = new Point(60, 11),
         };
@@ -712,16 +716,17 @@ public sealed class MainForm : Form
             Location = new Point(14, 58),
             Size = new Size(208, 26),
             CornerRadius = 13,
-            FillColor = InkCard,
+            FillColor = LogBg,
             BorderColor = RailHover,
         };
         header.Controls.Add(_statusPill);
 
         _statusDot = new RoundDot
         {
-            Size = new Size(10, 10),
-            Location = new Point(10, 8),
-            BackColor = InkCard,
+            Size = new Size(16, 16),
+            Location = new Point(7, 5),
+            GlowPulse = true,
+            BackColor = LogBg,
             DotColor = DotWaiting,
         };
         _statusPill.Controls.Add(_statusDot);
@@ -731,7 +736,7 @@ public sealed class MainForm : Form
             Text = "Menunggu koneksi",
             Font = new Font("Segoe UI", 9f, FontStyle.Bold),
             ForeColor = InkOnDark,
-            BackColor = InkCard,
+            BackColor = LogBg,
             AutoSize = false,
             AutoEllipsis = true,
             TextAlign = ContentAlignment.MiddleLeft,
@@ -760,8 +765,8 @@ public sealed class MainForm : Form
         var tiles = _tilesCard = new RoundedPanel
         {
             Dock = DockStyle.Fill,
-            FillColor = InkCard,
-            BorderColor = RailHover,
+            FillColor = LogBg,
+            BorderColor = LogBg,
             CornerRadius = 8,
         };
         tilesWrap.Controls.Add(tiles);
@@ -771,7 +776,7 @@ public sealed class MainForm : Form
         MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
         MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
         MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
-        MakeRow(tiles, 6, "VERSI", "3.2.2", out _tileVersionValue);
+        MakeRow(tiles, 6, "VERSI", "3.3.0", out _tileVersionValue);
 
 
         // v3.0.0: tombol Pengaturan PINDAH ke rel ikon (roda gigi
@@ -853,8 +858,9 @@ public sealed class MainForm : Form
         };
         _railStatusDot = new RoundDot
         {
-            Size = new Size(12, 12),
-            Location = new Point(22, 16),
+            Size = new Size(20, 20),
+            Location = new Point(18, 12),
+            GlowPulse = true,
             BackColor = Rail,
             DotColor = DotWaiting,
         };
@@ -1023,7 +1029,7 @@ public sealed class MainForm : Form
             Text = caption,
             Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
             ForeColor = InkFaint,
-            BackColor = InkCard,
+            BackColor = LogBg,
             AutoSize = false,
             Size = new Size(84, 20),
             TextAlign = ContentAlignment.MiddleLeft,
@@ -1036,7 +1042,7 @@ public sealed class MainForm : Form
             Text = value,
             Font = new Font("Segoe UI Semibold", 11.5f),
             ForeColor = InkOnDark,
-            BackColor = InkCard,
+            BackColor = LogBg,
             AutoSize = true,
             Location = new Point(104, y + 1),
         };
@@ -1065,7 +1071,7 @@ public sealed class MainForm : Form
             Text = caption,
             Font = new Font("Segoe UI", 7.5f, FontStyle.Bold),
             ForeColor = InkFaint,
-            BackColor = InkCard,
+            BackColor = LogBg,
             AutoSize = false,
             Size = new Size(84, 20),
             TextAlign = ContentAlignment.MiddleLeft,
@@ -1078,7 +1084,7 @@ public sealed class MainForm : Form
             Text = value,
             Font = new Font("Segoe UI Semibold", 10f),
             ForeColor = InkOnDark,
-            BackColor = InkCard,
+            BackColor = LogBg,
             AutoSize = true,
             Location = new Point(104, y + 2),
         };
@@ -1118,7 +1124,7 @@ public sealed class MainForm : Form
             FillColor = Card,
             BorderColor = Hairline,
             CornerRadius = 8,
-            Padding = new Padding(2),
+            Padding = new Padding(0),
         };
         root.Controls.Add(_chatBody);
 
@@ -1135,12 +1141,12 @@ public sealed class MainForm : Form
             BorderColor = Ink,
             CornerRadius = 8,
             BackColor = Bg,
-            Height = 46,
+            Height = 54,
         };
         var stripCover = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 12,
+            Height = 20,
             BackColor = Ink,
         };
         _chatStrip.Controls.Add(stripCover);
@@ -1163,6 +1169,11 @@ public sealed class MainForm : Form
         {
             BackColor = Ink,
             Size = new Size(334, 36),
+            // v3.3.0 (koreksi user): zoom disembunyikan dan status
+            // Terhubung dihapus dari strip — seluruh gugus kanan
+            // tidak ditampilkan (status tetap ada di panel & bar
+            // judul; zoom terakhir tetap berlaku di WebView2).
+            Visible = false,
         };
         _chatStrip.Controls.Add(_chatStripRight);
         _chatStripStatus = new Label
@@ -1225,9 +1236,9 @@ public sealed class MainForm : Form
             int w = root.ClientSize.Width - 24;
             int h = root.ClientSize.Height - 24;
             if (w <= 0 || h <= 0) return;
-            _chatStrip.SetBounds(12, 12, w, 46);
+            _chatStrip.SetBounds(12, 12, w, 54);
             _chatStripRight?.SetBounds(w - 334 - 6, 0, 334, 36);
-            _chatBody.SetBounds(12, 48, w, Math.Max(60, h - 36));
+            _chatBody.SetBounds(12, 54, w, Math.Max(60, h - 42));
         };
 
         _chatErrorLabel = new Label
@@ -1786,7 +1797,7 @@ public sealed class MainForm : Form
     private void RefreshStatusPill()
     {
         if (_statusPill == null) return;
-        Color dot = _statusState == "connected" ? Green
+        Color dot = _statusState == "connected" ? LiveGreen
                   : _statusState == "stopped" ? DotStopped : DotWaiting;
         Color tint = Blend(dot, LogBg, 0.30);
         _statusPill.FillColor = tint;
@@ -1796,6 +1807,7 @@ public sealed class MainForm : Form
         _statusPill.Invalidate();
         // Titik & teks status yang sama dicerminkan ke bar judul,
         // rel, dan strip chat.
+        if (_statusDot != null) _statusDot.DotColor = dot;
         if (_titleDot != null) _titleDot.DotColor = dot;
         if (_railStatusDot != null) _railStatusDot.DotColor = dot;
         if (_chatStripStatus != null) _chatStripStatus.Text = _statusTextFull;
@@ -1810,13 +1822,18 @@ public sealed class MainForm : Form
     // RefreshStatusPill yang berlaku).
     private void PulseTick(object sender, EventArgs e)
     {
-        if (_statusState != "connected") return;
-        _pulsePhase += 0.10;
-        double f = (Math.Sin(_pulsePhase) + 1.0) / 2.0;
-        Color c = Blend(Color.FromArgb(0xB9, 0xD9, 0x9C), Green, 0.45 + f * 0.55);
-        if (_statusDot != null) _statusDot.DotColor = c;
-        if (_titleDot != null) _titleDot.DotColor = c;
-        if (_railStatusDot != null) _railStatusDot.DotColor = c;
+        // v3.3.0 (koreksi user): denyut lama (campuran warna pelan)
+        // nyaris tak terlihat — diganti halo menyebar yang digambar
+        // RoundDot mode GlowPulse; di sini cukup majukan fasenya.
+        double phase = -1.0;
+        if (_statusState == "connected")
+        {
+            _pulsePhase += 0.10;
+            phase = (Math.Sin(_pulsePhase) + 1.0) / 2.0;
+        }
+        if (_statusDot != null) _statusDot.PulsePhase = phase;
+        if (_titleDot != null) _titleDot.PulsePhase = phase;
+        if (_railStatusDot != null) _railStatusDot.PulsePhase = phase;
     }
 
     // Satu kolom tile: caption mikro + nilai; kolom ke-2 dst
@@ -2009,6 +2026,78 @@ public sealed class MainForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessage")]
     private static extern IntPtr SendMessageDrag(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessage")]
+    private static extern IntPtr SendMessageScroll(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    // v3.3.0 (koreksi user): scrollbar log disembunyikan — gulir
+    // roda mouse digerakkan manual per 3 baris (EM_LINESCROLL).
+    private void LogBoxMouseWheel(object sender, MouseEventArgs e)
+    {
+        if (_logBox == null) return;
+        int lines = e.Delta > 0 ? -3 : 3;
+        SendMessageScroll(_logBox.Handle, 0x00B6, (IntPtr)lines, IntPtr.Zero);
+    }
+
+    // v3.3.0 (koreksi user): klik tombol taskbar harus men-toggle
+    // minimize (WS_MINIMIZEBOX) dan jendela berbingkai ini perlu
+    // bayangan (CS_DROPSHADOW) agar terpisah dari desktop.
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.Style |= 0x20000;      // WS_MINIMIZEBOX
+            cp.ClassStyle |= 0x20000; // CS_DROPSHADOW
+            return cp;
+        }
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        ApplyWindowFrame();
+    }
+
+    private FormWindowState _frameState = (FormWindowState)(-1);
+
+    // v3.3.0 (koreksi user): mode jendela kecil diberi pembatas
+    // tegas terhadap desktop — bingkai 1px + sudut membulat 14px;
+    // mode maksimal tetap penuh tanpa bingkai.
+    private void ApplyWindowFrame()
+    {
+        if (WindowState == _frameState && WindowState != FormWindowState.Normal) return;
+        _frameState = WindowState;
+        if (WindowState == FormWindowState.Maximized)
+        {
+            Padding = Padding.Empty;
+            BackColor = Bg;
+            if (Region != null) { Region.Dispose(); Region = null; }
+        }
+        else if (WindowState == FormWindowState.Normal)
+        {
+            Padding = new Padding(1);
+            BackColor = RailHover;
+            using (var path = RoundedRectPath(new Rectangle(0, 0, Width, Height), 14))
+            {
+                var old = Region;
+                Region = new Region(path);
+                if (old != null) old.Dispose();
+            }
+        }
+    }
+
+    private static GraphicsPath RoundedRectPath(Rectangle r, int radius)
+    {
+        var path = new GraphicsPath();
+        int d = radius * 2;
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
     /// <summary>
     /// Buka / tutup log MELAYANG (v3.0.1): jendela tinta yang
     /// muncul menempel di kanan tombol log rel dengan animasi
@@ -2169,32 +2258,32 @@ public sealed class MainForm : Form
         // latar tinta LogBg, kartu InkCard bertepi RailHover, teks
         // terang. Dicat eksplisit di sini (sesudah PaintThemedChildren).
         if (_leftRoot != null) _leftRoot.BackColor = LogBg;
-        if (_headerCard != null) { _headerCard.FillColor = InkCard; _headerCard.BorderColor = RailHover; _headerCard.BackColor = LogBg; }
-        if (_titleLabel != null) { _titleLabel.ForeColor = InkOnDark; _titleLabel.BackColor = InkCard; }
-        if (_statusLabel != null) { _statusLabel.ForeColor = InkOnDark; _statusLabel.BackColor = InkCard; }
-        if (_statusDot != null) _statusDot.BackColor = InkCard;
-        if (_portValue != null) { _portValue.ForeColor = InkOnDark; _portValue.BackColor = InkCard; }
-        if (_netValue != null) { _netValue.ForeColor = InkOnDark; _netValue.BackColor = InkCard; }
+        if (_headerCard != null) { _headerCard.FillColor = LogBg; _headerCard.BorderColor = LogBg; _headerCard.BackColor = LogBg; }
+        if (_titleLabel != null) { _titleLabel.ForeColor = InkOnDark; _titleLabel.BackColor = LogBg; }
+        if (_statusLabel != null) { _statusLabel.ForeColor = InkOnDark; _statusLabel.BackColor = _statusPill.FillColor; }
+        if (_statusDot != null) _statusDot.BackColor = _statusPill.FillColor;
+        if (_portValue != null) { _portValue.ForeColor = InkOnDark; _portValue.BackColor = LogBg; }
+        if (_netValue != null) { _netValue.ForeColor = InkOnDark; _netValue.BackColor = LogBg; }
         if (_modeValue != null)
         {
             _modeValue.ForeColor = Settings.IsElevated() ? Gold : InkOnDark;
-            _modeValue.BackColor = InkCard;
+            _modeValue.BackColor = LogBg;
         }
         if (_tilesCard != null)
         {
-            _tilesCard.FillColor = InkCard; _tilesCard.BorderColor = RailHover; _tilesCard.BackColor = LogBg;
+            _tilesCard.FillColor = LogBg; _tilesCard.BorderColor = LogBg; _tilesCard.BackColor = LogBg;
             if (_tilesCard.Parent != null) _tilesCard.Parent.BackColor = LogBg;
         }
-        foreach (var c in _tileCaptions) { c.ForeColor = InkFaint; c.BackColor = InkCard; }
+        foreach (var c in _tileCaptions) { c.ForeColor = InkFaint; c.BackColor = LogBg; }
         foreach (var d in _tileDividers) d.BackColor = RailHover;
-        if (_tileRelayValue != null) { _tileRelayValue.ForeColor = InkOnDark; _tileRelayValue.BackColor = InkCard; }
-        if (_tileUptimeValue != null) { _tileUptimeValue.ForeColor = InkOnDark; _tileUptimeValue.BackColor = InkCard; }
-        if (_tileCaptureValue != null) { _tileCaptureValue.ForeColor = InkOnDark; _tileCaptureValue.BackColor = InkCard; }
-        if (_tileVersionValue != null) { _tileVersionValue.ForeColor = InkOnDark; _tileVersionValue.BackColor = InkCard; }
-        if (_tileRamValue != null) { _tileRamValue.ForeColor = InkOnDark; _tileRamValue.BackColor = InkCard; }
-        if (_tileCpuValue != null) { _tileCpuValue.ForeColor = InkOnDark; _tileCpuValue.BackColor = InkCard; }
-        if (_tileGpuValue != null) { _tileGpuValue.ForeColor = InkOnDark; _tileGpuValue.BackColor = InkCard; }
-        if (_logoBox != null) _logoBox.BackColor = InkCard;
+        if (_tileRelayValue != null) { _tileRelayValue.ForeColor = InkOnDark; _tileRelayValue.BackColor = LogBg; }
+        if (_tileUptimeValue != null) { _tileUptimeValue.ForeColor = InkOnDark; _tileUptimeValue.BackColor = LogBg; }
+        if (_tileCaptureValue != null) { _tileCaptureValue.ForeColor = InkOnDark; _tileCaptureValue.BackColor = LogBg; }
+        if (_tileVersionValue != null) { _tileVersionValue.ForeColor = InkOnDark; _tileVersionValue.BackColor = LogBg; }
+        if (_tileRamValue != null) { _tileRamValue.ForeColor = InkOnDark; _tileRamValue.BackColor = LogBg; }
+        if (_tileCpuValue != null) { _tileCpuValue.ForeColor = InkOnDark; _tileCpuValue.BackColor = LogBg; }
+        if (_tileGpuValue != null) { _tileGpuValue.ForeColor = InkOnDark; _tileGpuValue.BackColor = LogBg; }
+        if (_logoBox != null) _logoBox.BackColor = LogBg;
         if (_chatStripRight != null) _chatStripRight.BackColor = Ink;
         RefreshStatusPill();
         if (_logBox != null)
@@ -2312,7 +2401,7 @@ public sealed class MainForm : Form
             BeginInvoke(new Action(OnActivity));
             return;
         }
-        _statusDot.DotColor = Green;
+        _statusDot.DotColor = LiveGreen;
         _statusTextFull = "Terhubung • aktivitas terakhir " + DateTime.Now.ToString("HH:mm:ss");
         _statusLabel.Text = _statusTextFull;
         _statusState = "connected";

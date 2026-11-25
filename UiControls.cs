@@ -323,16 +323,56 @@ public class RoundDot : Control
         }
     }
 
+    // v3.3.0 (koreksi user): mode denyut bercahaya — titik inti
+    // lebih kecil dari kotak kontrol, menyisakan ruang bagi halo
+    // yang menyebar memudar (PulsePhase 0..1; -1 = diam/statis).
+    // Tanpa mode ini titik memenuhi seluruh kotak seperti semula.
+    public bool GlowPulse { get; set; }
+
+    private double _pulsePhase = -1.0;
+    public double PulsePhase
+    {
+        get { return _pulsePhase; }
+        set
+        {
+            _pulsePhase = value;
+            Invalidate();
+        }
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        using (var bg = new SolidBrush(BackColor))
-            g.FillRectangle(bg, ClientRectangle);
-        var r = new RectangleF(0.5f, 0.5f, Math.Max(0f, Width - 1f), Math.Max(0f, Height - 1f));
-        using (var brush = new SolidBrush(_dotColor))
-            g.FillEllipse(brush, r);
+        if (BackColor != Color.Transparent)
+            using (var bg = new SolidBrush(BackColor))
+                g.FillRectangle(bg, ClientRectangle);
+        if (!GlowPulse)
+        {
+            var r = new RectangleF(0.5f, 0.5f, Math.Max(0f, Width - 1f), Math.Max(0f, Height - 1f));
+            using (var brush = new SolidBrush(_dotColor))
+                g.FillEllipse(brush, r);
+            return;
+        }
+        float cx = Width / 2f, cy = Height / 2f;
+        float maxR = Math.Min(Width, Height) / 2f;
+        float coreR = maxR * 0.58f;
+        if (_pulsePhase >= 0.0)
+        {
+            float haloR = coreR + (float)_pulsePhase * (maxR - coreR);
+            int a = (int)((1.0 - _pulsePhase) * 130);
+            if (a > 0 && haloR > coreR)
+                using (var halo = new SolidBrush(Color.FromArgb(a, _dotColor)))
+                    g.FillEllipse(halo, cx - haloR, cy - haloR, haloR * 2, haloR * 2);
+        }
+        using (var core = new SolidBrush(_dotColor))
+            g.FillEllipse(core, cx - coreR, cy - coreR, coreR * 2, coreR * 2);
+        // Sorotan kecil kiri-atas — kesan permukaan hidup, bukan
+        // lingkaran datar tempelan.
+        float hr = coreR * 0.52f;
+        using (var hi = new SolidBrush(Color.FromArgb(150, Color.White)))
+            g.FillEllipse(hi, cx - coreR * 0.60f, cy - coreR * 0.70f, hr, hr * 0.8f);
     }
 
 }

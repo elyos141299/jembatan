@@ -1,4 +1,29 @@
-# MuseLink v3.2.2 — catatan pengembang
+# MuseLink v3.3.0 — catatan pengembang
+
+## v3.3.0 — Delapan koreksi putaran kedua
+
+Dari sesi bedah user atas v3.2.2 (semua dari screenshot):
+(1) Panel kendali diratakan seperti Log Aktivitas — kartu
+InkCard dihapus, semua isi panel menempel langsung di permukaan
+LogBg dengan garis pemisah tipis. (2) Scrollbar putih log
+disembunyikan (ScrollBars None) — gulir roda mouse digerakkan
+manual via EM_LINESCROLL per 3 baris. (3) Strip chat: gugus
+zoom disembunyikan dan status "Terhubung • aktivitas terakhir"
+dihapus dari strip (status tetap di pill panel + titik bar
+judul; zoom terakhir tetap berlaku). (4) Logo diganti logo
+pilihan user: ubin putih lavendel + glif M ungu (icon.ico
+digambar ulang penuh; panah kecil di kiriman user = panah
+shortcut Windows, tidak ikut digambar). (5) Klik tombol
+taskbar kini men-toggle minimize (WS_MINIMIZEBOX di
+CreateParams). (6) Indikator status dibuat hidup: RoundDot
+mode GlowPulse — inti lebih kecil + sorotan + halo menyebar
+memudar, warna hijau lebih jenuh (LiveGreen), titik diperbesar
+(bar judul 18, pill 16, rel 20). (7) Jendela mode restore
+diberi pembatas tegas: bingkai 1px RailHover (Padding 1 +
+BackColor form) + sudut membulat 14px (Region) + CS_DROPSHADOW;
+mode maksimal tetap penuh. (8) Celah strip↔isi chat ditutup:
+strip 46→54, badan mulai y=54, penutup strip 12→20, Padding
+badan chat 2→0.
 
 ## v3.2.2 — Flyout bar kiri saling eksklusif
 
