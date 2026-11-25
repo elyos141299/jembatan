@@ -1,4 +1,28 @@
-# MuseLink v3.3.1 — catatan pengembang
+# MuseLink v3.3.2 — catatan pengembang
+
+## v3.3.2 — Empat temuan full test dibereskan
+
+Sesudah v3.3.1 terpasang user meminta FULL TEST oleh agent;
+empat temuan dibereskan dalam satu build ini:
+
+1. **Titik status koneksi bar judul jadi KOTAK gelap** (yang
+   difoto user: "ini aneh" / "untuk notif koneknya"). RoundDot
+   ber-BackColor Transparan di atas gradasi bar judul tampil
+   sebagai kotak tinta berisi lingkaran hijau. Kini memakai
+   `TitleDotBg` — sampel warna gradasi di posisi titik — sama
+   seperti titik rel yang berlatar opak. Kotak hilang.
+2. **Rel <-> panel tanpa pembatas + warna sama.** Token `Rail`
+   digelapkan satu tingkat dari `LogBg` (gradasi: rel lebih
+   gelap, panel lebih terang) + garis pembatas 1px
+   `DividerInk` di tepi kiri Panel1. Flyout log/pengaturan
+   (LogBg) kini juga terbedakan dari rel.
+3. **Logo 16px agak tipis.** icon.ico kini berkas multi-ukuran
+   rakitan manual: ukuran <=32px memakai varian glif DITEBALkan
+   (alfa didilasi + kotak glif diperbesar), >=48px tetap varian
+   halus pilihan user.
+4. **Panel separuh bawah kosong.** Diisi pratinjau AKTIVITAS
+   TERAKHIR: 7 baris log terbaru (diperbarui di `Log()`),
+   mengisi sisa ruang di bawah tile dengan dok Fill.
 
 ## v3.3.1 — Logo final pilihan user
 

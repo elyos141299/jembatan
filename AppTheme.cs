@@ -75,8 +75,17 @@ public static class AppTheme
     public static Color Sage => Color.FromArgb(156, 175, 136);
     /// <summary>Emas pucat #F2D492 — permukaan aksen saja.</summary>
     public static Color Gold => Color.FromArgb(242, 212, 146);
-    /// <summary>Rel ikon = tinta #3D3461.</summary>
-    public static Color Rail => Color.FromArgb(61, 52, 97);
+    /// <summary>Rel ikon — v3.3.2 (koreksi user): satu tingkat
+    /// LEBIH GELAP dari LogBg #3D3461 agar rel dan panel/tab yang
+    /// kebuka terbedakan oleh gradasi warna, bukan menyatu.</summary>
+    public static Color Rail => Color.FromArgb(48, 41, 76);
+    /// <summary>Garis pembatas rel &lt;-&gt; panel (v3.3.2): ungu
+    /// menengah, lebih terang dari kedua tinta di sisinya.</summary>
+    public static Color DividerInk => Color.FromArgb(101, 90, 150);
+    /// <summary>Latar titik status bar judul (v3.3.2): sampel
+    /// gradasi bar judul (#DDD6F5 -&gt; Bg) di posisi titik —
+    /// menggantikan Transparan yang tampil sebagai kotak gelap.</summary>
+    public static Color TitleDotBg => Color.FromArgb(222, 216, 246);
     /// <summary>Hover/aktif di atas rel tinta #54497A.</summary>
     public static Color RailHover => Color.FromArgb(84, 73, 122);
     /// <summary>Teks pucat di atas tinta #E9E6FA.</summary>

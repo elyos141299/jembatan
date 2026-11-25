@@ -54,6 +54,8 @@ public sealed class MainForm : Form
     private static Color ErrorBg => AppTheme.ErrorBg;
     private static Color ErrorInk => AppTheme.ErrorInk;
     private static Color Rail => AppTheme.Rail;
+    private static Color DividerInk => AppTheme.DividerInk;
+    private static Color TitleDotBg => AppTheme.TitleDotBg;
     private static Color RailHover => AppTheme.RailHover;
     private static Color InkOnDark => AppTheme.InkOnDark;
     private static Color Sage => AppTheme.Sage;
@@ -63,6 +65,7 @@ public sealed class MainForm : Form
     private RoundDot _statusDot;
     private Label _statusLabel;
     private RichTextBox _logBox;
+    private RichTextBox _panelLog;
     private RoundedPanel _headerCard;
     private Panel _logCard;
     private Label _titleLabel;
@@ -276,14 +279,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.3.1 dimulai ===");
+            Log("=== MuseLink v3.3.2 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.3.1 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.3.2 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -543,7 +546,10 @@ public sealed class MainForm : Form
             Size = new Size(18, 18),
             Location = new Point(115, 11),
             GlowPulse = true,
-            BackColor = Color.Transparent,
+            // v3.3.2: BUKAN Transparan — di atas gradasi bar judul
+            // transparan tampil sebagai KOTAK gelap (temuan full
+            // test). Pakai sampel warna gradasi di posisi titik.
+            BackColor = TitleDotBg,
             DotColor = DotWaiting,
         };
         titleBar.Controls.Add(_titleDot);
@@ -674,6 +680,16 @@ public sealed class MainForm : Form
             Tag = "inkbg",
         };
         _split.Panel1.Controls.Add(leftRoot);
+        // v3.3.2 (koreksi user): garis pembatas rel <-> panel —
+        // ditambah SESUDAH leftRoot agar terdok lebih dulu, persis
+        // di tepi kiri Panel1 yang menempel ke rel.
+        var railDivider = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 1,
+            BackColor = DividerInk,
+        };
+        _split.Panel1.Controls.Add(railDivider);
 
         // Kartu kepala: logo + judul + pill status + alamat + mode.
         var header = _headerCard = new RoundedPanel
@@ -776,7 +792,7 @@ public sealed class MainForm : Form
         MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
         MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
         MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
-        MakeRow(tiles, 6, "VERSI", "3.3.1", out _tileVersionValue);
+        MakeRow(tiles, 6, "VERSI", "3.3.2", out _tileVersionValue);
 
 
         // v3.0.0: tombol Pengaturan PINDAH ke rel ikon (roda gigi
@@ -784,6 +800,43 @@ public sealed class MainForm : Form
 
         // v3.2.0 (koreksi #2): grup AKSES di panel DIHAPUS —
         // putus/sambung akses kini hanya di Pengaturan.
+        // v3.3.2 (koreksi user): separuh bawah panel yang kosong
+        // diisi pratinjau AKTIVITAS TERAKHIR — baris log terbaru,
+        // diperbarui di Log(). Ditambah PERTAMA agar terdok
+        // terakhir (mengisi sisa ruang di bawah tile).
+        var miniWrap = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = LogBg,
+            Tag = "inkbg",
+            Padding = new Padding(0, 10, 0, 0),
+        };
+        var miniHair = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Hairline };
+        var miniTitle = new Label
+        {
+            Text = "AKTIVITAS TERAKHIR",
+            Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+            ForeColor = InkFaint,
+            BackColor = LogBg,
+            Dock = DockStyle.Top,
+            Height = 22,
+            Padding = new Padding(0, 6, 0, 0),
+        };
+        _panelLog = new RichTextBox
+        {
+            Dock = DockStyle.Fill,
+            ReadOnly = true,
+            BorderStyle = BorderStyle.None,
+            BackColor = LogBg,
+            ForeColor = InkFaint,
+            Font = new Font("Consolas", 8.5f),
+            DetectUrls = false,
+            ScrollBars = RichTextBoxScrollBars.None,
+        };
+        miniWrap.Controls.Add(_panelLog);
+        miniWrap.Controls.Add(miniTitle);
+        miniWrap.Controls.Add(miniHair);
+        leftRoot.Controls.Add(miniWrap);
         // Urutan tambah menentukan urutan dok (terbalik).
         leftRoot.Controls.Add(tilesWrap);
         leftRoot.Controls.Add(header);
@@ -2305,7 +2358,7 @@ public sealed class MainForm : Form
         if (_titleBar != null) { _titleBar.BackColor = Bg; _titleBar.Invalidate(); }
         if (_barTitle != null) { _barTitle.ForeColor = Ink; _barTitle.BackColor = Color.Transparent; }
         if (_titleLogo != null) _titleLogo.BackColor = Color.Transparent;
-        if (_titleDot != null) _titleDot.BackColor = Color.Transparent;
+        if (_titleDot != null) _titleDot.BackColor = TitleDotBg;
         if (_rail != null) _rail.BackColor = Rail;
         if (_railLogo != null) _railLogo.BackColor = Rail;
         if (_railStatusDot != null) _railStatusDot.BackColor = Rail;
@@ -2443,6 +2496,16 @@ public sealed class MainForm : Form
             var lines = _logBox.Lines;
             _logBox.Lines = lines.Skip(lines.Length - 400).ToArray();
             _logSpacingApplied = false; // teks diganti total — terapkan ulang di Log berikutnya
+        }
+        // v3.3.2: pratinjau panel mengikuti log — 7 baris
+        // terakhir yang tak kosong.
+        if (_panelLog != null)
+        {
+            var ll = _logBox.Lines.Where(s => s.Length > 0).ToArray();
+            int take = Math.Min(7, ll.Length);
+            _panelLog.Text = take > 0
+                ? string.Join(Environment.NewLine, ll.Skip(ll.Length - take))
+                : "";
         }
         _logBox.SelectionStart = _logBox.TextLength;
         _logBox.ScrollToCaret();
