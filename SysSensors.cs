@@ -14,9 +14,11 @@ namespace Jembatan;
 /// GPU lewat nvidia-smi milik driver NVIDIA (terbukti di PC user:
 /// 37°C saat diam). Suhu CPU tidak punya jalur bawaan Windows di
 /// motherboard desktop (WMI ACPI ThermalZone = "Not supported",
-/// terverifikasi di PC user), jadi memakai LibreHardwareMonitor
-/// yang membaca sensor lewat driver ring-0 — bila Windows
-/// memblokir driver itu, Read() mengembalikan null dan baris CPU
+/// terverifikasi di PC user), jadi memakai LibreHardwareMonitor.
+/// LHM 0.9.6 membaca sensor lewat driver PawnIO (penerus
+/// WinRing0, bertanda tangan resmi, terpasang terpisah di
+/// sistem — terpasang di PC user 25 Nov 2026). Bila PawnIO
+/// absen, sensor terhitung tapi nilainya kosong dan baris CPU
 /// menampilkan "—" (degradasi anggun, tidak pernah crash).
 /// Semua pembacaan boleh gagal dengan aman.
 /// </summary>
@@ -105,12 +107,15 @@ internal static class SysSensors
                 }
                 string output = readTask.Result ?? "";
                 var parts = output.Trim().Split(',');
+                // nvidia-smi di PC ini mengembalikan suhu sebagai
+                // DESIMAL ("38.00") — parse double lalu bulatkan
+                // (v3.0.2 gagal total di sini: int.TryParse gugur).
                 if (parts.Length >= 2
-                    && int.TryParse(parts[0].Trim(), out int temp)
-                    && int.TryParse(parts[1].Trim(), out int util))
+                    && double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double tempD)
+                    && double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double utilD))
                 {
                     LastDiag = "ok";
-                    return temp + "°C · " + util + "%";
+                    return (int)Math.Round(tempD) + "°C · " + (int)Math.Round(utilD) + "%";
                 }
                 string flat = output.Trim().Replace("\n", " ");
                 LastDiag = "keluaran tak dikenal: " + (flat.Length > 60 ? flat.Substring(0, 60) : flat);

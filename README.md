@@ -1,4 +1,21 @@
-# MuseLink v3.0.2 — catatan pengembang
+# MuseLink v3.0.3 — catatan pengembang
+
+## v3.0.3 — Sensor CPU/GPU tuntas: PawnIO + parse desimal GPU
+
+- **Akar masalah CPU ketemu dari diagnostik v3.0.2:** log
+  menunjukkan LHM 0.9.6 menemukan CPU (i3-12100F, 11 sensor
+  suhu) tapi semua nilai kosong. Ternyata LHM 0.9.6 SUDAH
+  pindah dari WinRing0 ke **driver PawnIO** yang terpasang
+  terpisah — tanpa dia, sensor terhitung tapi tak terbaca.
+  PawnIO resmi (bertanda tangan, oleh pembuat LHM) DIPASANG di
+  PC user 25 Nov 2026 lewat alur bawaan LHM dan terverifikasi:
+  GUI LHM membaca suhu CPU 47°C & sensor motherboard penuh.
+  MuseLink cukup mulai ulang (init LHM segar) untuk ikut
+  membaca — tidak ada perubahan kode CPU di versi ini.
+- **GPU:** nvidia-smi PC ini mengembalikan suhu DESIMAL
+  ("38.00") sehingga int.TryParse v3.0.2 gugur total; kini
+  parse double + bulatkan. Diagnostik log v3.0.2 yang
+  menangkap keluaran mentahnya yang membuat ini ketahuan.
 
 ## v3.0.2 — Perbaikan penjaga sensor (diagnostik v3.0.1)
 
