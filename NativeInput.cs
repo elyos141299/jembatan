@@ -80,6 +80,15 @@ public static class NativeInput
         // Kotak batas jendela (v2.4.4) — Muse bisa mengarahkan
         // klik tanpa screenshot dulu.
         public Rectangle Rect;
+        // Keadaan jendela (v3.8.0 — DSA-04): "normal" | "minimized"
+        // | "maximized".
+        public string State = "normal";
+        // True bila jendela dialog (v3.8.0 — DSA-03): kelas #32770
+        // atau gaya WS_EX_DLGMODALFRAME.
+        public bool IsDialog;
+        // Jendela pemilik (GW_OWNER) — dialog menunjuk induknya
+        // (v3.8.0 — DSA-03). IntPtr.Zero bila tidak ada.
+        public IntPtr OwnerHandle;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -91,6 +100,24 @@ public static class NativeInput
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
+    // v3.8.0 — keadaan & identitas jendela: maximized, nama kelas,
+    // jendela pemilik, gaya extended (deteksi dialog).
+    [DllImport("user32.dll")]
+    private static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    private const uint GwOwner = 4;
+    private const int GwlExStyle = -20;
+    private const int WsExDlgModalFrame = 0x00000001;
+
     /// <summary>Daftar semua jendela tingkat atas yang terlihat & berjudul non-kosong.</summary>
     public static List<WindowInfo> ListWindows()
     {
@@ -101,7 +128,21 @@ public static class NativeInput
             var sb = new StringBuilder(512);
             GetWindowText(hWnd, sb, sb.Capacity);
             string title = sb.ToString();
-            if (string.IsNullOrWhiteSpace(title)) return true;
+            // Deteksi dialog (v3.8.0 — DSA-03): kelas #32770 atau
+            // gaya modal. Dialog TANPA judul tetap dicatat (titik
+            // buta paling berbahaya); jendela biasa tanpa judul
+            // tetap dibuang seperti sebelumnya.
+            string cls = "";
+            try
+            {
+                var cb = new StringBuilder(256);
+                if (GetClassName(hWnd, cb, cb.Capacity) > 0) cls = cb.ToString();
+            }
+            catch { /* nama kelas hanya keterangan */ }
+            int exStyle = 0;
+            try { exStyle = GetWindowLong(hWnd, GwlExStyle); } catch { }
+            bool isDialog = cls == "#32770" || (exStyle & WsExDlgModalFrame) != 0;
+            if (string.IsNullOrWhiteSpace(title) && !isDialog) return true;
             string proc = "";
             uint pidSafe = 0;
             try
@@ -118,7 +159,20 @@ public static class NativeInput
                     rect = new Rectangle(rr.Left, rr.Top, rr.Right - rr.Left, rr.Bottom - rr.Top);
             }
             catch { /* kotak batas hanya keterangan tambahan */ }
-            result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = proc, Pid = (int)pidSafe, Rect = rect });
+            string wstate = "normal";
+            IntPtr owner = IntPtr.Zero;
+            try
+            {
+                if (IsIconic(hWnd)) wstate = "minimized";
+                else if (IsZoomed(hWnd)) wstate = "maximized";
+                owner = GetWindow(hWnd, GwOwner);
+            }
+            catch { /* keadaan hanya keterangan tambahan */ }
+            result.Add(new WindowInfo
+            {
+                Handle = hWnd, Title = title, Process = proc, Pid = (int)pidSafe, Rect = rect,
+                State = wstate, IsDialog = isDialog, OwnerHandle = owner,
+            });
             return true;
         }, IntPtr.Zero);
         return result;

@@ -3,6 +3,33 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 3.8.0 — 2026-11-25
+
+"Mata Jendela" — Desktop State Awareness tahap 1 (audit DSA
+DSA-01/03/04/05/08).
+
+### Ditambahkan
+- **Skema jendela tunggal** untuk /state, /windows, /context
+  (builder WindowJson bersama): setiap jendela kini membawa
+  `hwnd` (identitas stabil), `pid`, `foreground`, `hung`,
+  `state` ("normal" | "minimized" | "maximized"), `dialog`
+  (kelas #32770 atau gaya WS_EX_DLGMODALFRAME), dan `ownerHwnd`
+  (dialog menunjuk jendela induknya). /windows dan /context naik
+  kelas — sebelumnya hanya /state yang punya pid & hung.
+- **Dialog tanpa judul kini terlihat**: jendela dialog visible
+  tanpa judul tetap masuk daftar (bertanda `dialog:true`);
+  jendela biasa tanpa judul tetap disaring seperti sebelumnya.
+- **Penargetan hwnd**: POST /focus dan POST /window menerima
+  field opsional `hwnd` — identitas stabil menggantikan tebak
+  substring judul untuk jendela berjudul kembar; judul tetap
+  menjadi cadangan dan perilaku lama tidak berubah. Respons
+  keduanya kini menyertakan `hwnd` jendela yang kena.
+
+### Diubah
+- **/state lebih ringan**: potret desktop kini diambil dalam
+  SATU panggilan thread UI gabungan (sebelumnya 1 + 1 + N —
+  IsHung dihitung per jendela lewat panggilan terpisah).
+
 ## 3.7.1 — 2026-11-25
 
 Perbaikan dari uji penerimaan 3.7.0.

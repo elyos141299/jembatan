@@ -241,7 +241,7 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `GET /screenshot` | — | PNG layar utama (binary `image/png`); wilayah potong opsional `?x=&y=&w=&h=` (v2.4.0) |
 | `GET /sysinfo` | — | `{ok, version:"2.3.5", admin, pc, windows, screen:"1920x1080", uptimeSec, jembatanPort:8765}` |
 | `GET /clipboard` | — | `{ok:true, text}` — teks clipboard saat ini ("" bila kosong/bukan teks) |
-| `GET /windows` | — | `{ok:true, windows:[{title, process, x, y, w, h}]}` — jendela tingkat atas yang terlihat & berjudul + kotak batasnya (x/y/w/h sejak v2.4.4) |
+| `GET /windows` | — | `{ok:true, windows:[{hwnd, title, process, pid, x, y, w, h, foreground, hung, state, dialog, ownerHwnd}]}` — skema jendela tunggal (v3.8.0): hwnd = identitas stabil, state = normal/minimized/maximized, dialog + ownerHwnd untuk dialog/modal (termasuk dialog tanpa judul) |
 | `GET /file?path=<urlencoded>` | — | Binary mentah berkas (`application/octet-stream`, `Content-Disposition: attachment`); 404 JSON bila berkas tidak ada |
 | `GET /stream?w=&q=&fps=` | — | MJPEG `multipart/x-mixed-replace; boundary=frame` — lebar maks `w` (bawaan 1280, 320–1920), kualitas JPEG `q` (bawaan 60, 30–90), target `fps` (bawaan 10, 1–15); frame yang tidak berubah tidak dikirim (keepalive ±1 detik) |
 | `POST /move` | `{x, y}` | `{ok:true}` |
@@ -273,7 +273,7 @@ Panduan untuk user ada di `../README-INSTAL.md`.
 | `POST /batch` | `{actions:[{do, ...}], stopOnError?}` | `{ok, count, results}` — rangkaian aksi dijalankan berurutan di sisi PC dalam SATU panggilan (v2.4.1, "mode ngebut"); `do` = nama endpoint POST tanpa garis miring (`uia_click` = `/uia/click`) atau `sleep` {ms}; maks 100 aksi; berhenti pada galat pertama kecuali `stopOnError:false` |
 | `POST /open` | `{path}` | `{ok:true}` — `Process.Start` dengan shell |
 | `POST /upload?path=<urlencoded>` | badan mentah (bukan JSON) | `{ok:true, bytes}` — badan ditulis jadi berkas di `path`; folder induk dibuat bila belum ada |
-| `GET /state` | — | `{ok, foreground:{title,pid,process,rect,minimized,responding}, mouse, lastClick, idleSec, screen}` — snapshot keadaan desktop (v3.5.0); `responding:false` = jendela depan terdeteksi macet |
+| `GET /state` | — | `{ok, monitors, dpiScale, foreground:"<judul>", windows:[skema tunggal v3.8.0], mouse, userIdleSec}` — snapshot keadaan desktop satu panggilan UI gabungan (v3.5.0; disatukan v3.8.0); `hung:true` per jendela = terdeteksi tidak merespons. POST /focus & /window menerima `hwnd` opsional untuk penargetan stabil (v3.8.0) |
 | `GET /diag` | — | `{ok, version, uptimeSec, process:{ramMB, cpuSec, threads}, endpoints:[{endpoint, count, avgMs, maxMs, fails}]}` — telemetri latensi per endpoint (v3.5.0) |
 | `POST /waitfor` | `{kind: text\|uia\|window\|stable\|process, text?, process?, gone?, timeoutMs?, stableMs?, x/y/w/h?, fuzzy?}` | `{ok, met, kind, fuzzy, matchedVia, waitedMs}` — tunggu cerdas sisi server (v3.5.0); `fuzzy:true` = cocok kabur OCR opt-in khusus query berdigit (v3.7.0) |
 | `POST /setvalue` | `{name?, automationId?, value}` | `{ok, name, value}` — isi nilai elemen UIA (ValuePattern/TextPattern/legacy) tanpa mengetik (v3.5.0) |

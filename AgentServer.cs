@@ -619,20 +619,13 @@ public sealed class AgentServer
             if (req.Method == "GET" && req.Path == "/windows")
             {
                 _onActivity();
-                var wins = OnUi(NativeInput.ListWindows);
+                // Skema tunggal v3.8.0 (WindowJson) — /windows kini
+                // sekaya /state: hwnd, pid, foreground, hung, state,
+                // dialog, ownerHwnd.
+                var snapW = OnUi(() => (NativeInput.ForegroundHandle(), NativeInput.ListWindows()));
                 var list = new List<Dictionary<string, object>>();
-                foreach (var w in wins)
-                {
-                    list.Add(new Dictionary<string, object>
-                    {
-                        ["title"] = w.Title,
-                        ["process"] = w.Process,
-                        ["x"] = w.Rect.X,
-                        ["y"] = w.Rect.Y,
-                        ["w"] = w.Rect.Width,
-                        ["h"] = w.Rect.Height,
-                    });
-                }
+                foreach (var w in snapW.Item2)
+                    list.Add(WindowJson(w, snapW.Item1));
                 _log($"daftar jendela diminta ({list.Count} jendela)");
                 return Response.JsonObject(new Dictionary<string, object>
                 {
@@ -699,32 +692,19 @@ public sealed class AgentServer
                     int clipLen = -1;
                     try { clipLen = Clipboard.ContainsText() ? Clipboard.GetText().Length : 0; }
                     catch { /* clipboard terkunci sesaat */ }
-                    return (wins, fg, clipLen);
+                    return (wins, fg, clipLen, fgHandle);
                 });
                 var met = NativeInput.SystemMetrics();
+                // Skema tunggal v3.8.0 (WindowJson).
                 var winList = new List<Dictionary<string, object>>();
                 foreach (var w in snap.wins)
                 {
                     if (winList.Count >= 25) break;
-                    winList.Add(new Dictionary<string, object>
-                    {
-                        ["title"] = w.Title,
-                        ["process"] = w.Process,
-                        ["x"] = w.Rect.X, ["y"] = w.Rect.Y,
-                        ["w"] = w.Rect.Width, ["h"] = w.Rect.Height,
-                    });
+                    winList.Add(WindowJson(w, snap.fgHandle));
                 }
                 Dictionary<string, object> fgDict = null;
                 if (snap.fg != null)
-                {
-                    fgDict = new Dictionary<string, object>
-                    {
-                        ["title"] = snap.fg.Title,
-                        ["process"] = snap.fg.Process,
-                        ["x"] = snap.fg.Rect.X, ["y"] = snap.fg.Rect.Y,
-                        ["w"] = snap.fg.Rect.Width, ["h"] = snap.fg.Rect.Height,
-                    };
-                }
+                    fgDict = WindowJson(snap.fg, snap.fgHandle);
                 string spotifyTitle = null;
                 bool spotifyRun = false;
                 try
@@ -1057,26 +1037,15 @@ public sealed class AgentServer
                 // (posisi + status hang), jendela depan, mouse,
                 // dan idle user — satu panggilan menggantikan
                 // tebak-tebakan dari screenshot.
-                var fgH = OnUi(NativeInput.ForegroundHandle);
-                var wins = OnUi(NativeInput.ListWindows);
+                // Satu snapshot OnUi gabungan (v3.8.0 — DSA-08):
+                // dulu 1 + 1 + N panggilan UI (IsHung per jendela),
+                // kini tepat satu; skema lewat WindowJson.
+                var snapS = OnUi(() => (NativeInput.ForegroundHandle(), NativeInput.ListWindows()));
+                var fgH = snapS.Item1;
+                var wins = snapS.Item2;
                 var wlist = new List<Dictionary<string, object>>();
                 foreach (var w in wins)
-                {
-                    bool hung = false;
-                    try { var hh = w.Handle; hung = OnUi(() => NativeInput.IsHung(hh)); } catch { }
-                    wlist.Add(new Dictionary<string, object>
-                    {
-                        ["title"] = w.Title,
-                        ["process"] = w.Process,
-                        ["pid"] = w.Pid,
-                        ["x"] = w.Rect.X,
-                        ["y"] = w.Rect.Y,
-                        ["w"] = w.Rect.Width,
-                        ["h"] = w.Rect.Height,
-                        ["foreground"] = w.Handle == fgH,
-                        ["hung"] = hung,
-                    });
-                }
+                    wlist.Add(WindowJson(w, fgH));
                 var mons = new List<Dictionary<string, object>>();
                 foreach (var s in Screen.AllScreens)
                 {
@@ -3070,15 +3039,24 @@ public sealed class AgentServer
                             // action = close/minimize/maximize/restore.
                             string query = GetString(root, "title", "");
                             string action = GetString(root, "action", "");
-                            if (string.IsNullOrWhiteSpace(query))
-                                return Response.Json("{\"ok\":false,\"error\":\"title kosong\"}", 400);
+                            // Penargetan hwnd (v3.8.0 — DSA-01): bila
+                            // "hwnd" dikirim, identitas itu yang
+                            // dipakai (judul jadi cadangan) — jendela
+                            // berjudul kembar tak lagi ambigu.
+                            long hwndVal = GetLong(root, "hwnd", 0);
+                            if (string.IsNullOrWhiteSpace(query) && hwndVal == 0)
+                                return Response.Json("{\"ok\":false,\"error\":\"title kosong (atau kirim hwnd)\"}", 400);
                             if (action != "close" && action != "minimize" && action != "maximize" && action != "restore" && action != "rect")
                                 return Response.Json("{\"ok\":false,\"error\":\"action harus close/minimize/maximize/restore/rect\"}", 400);
                             var wins = OnUi(NativeInput.ListWindows);
                             NativeInput.WindowInfo match = null;
                             foreach (var w in wins)
                             {
-                                if (w.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                                if (hwndVal != 0)
+                                {
+                                    if (w.Handle == (IntPtr)hwndVal) { match = w; break; }
+                                }
+                                else if (w.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
                                 {
                                     match = w;
                                     break;
@@ -3114,6 +3092,7 @@ public sealed class AgentServer
                             {
                                 ["ok"] = sent,
                                 ["window"] = m.Title,
+                                ["hwnd"] = m.Handle.ToInt64(),
                                 ["action"] = action,
                             });
                         }
@@ -3470,13 +3449,20 @@ public sealed class AgentServer
                         case "/focus":
                         {
                             string query = GetString(root, "title", "");
-                            if (string.IsNullOrWhiteSpace(query))
-                                return Response.Json("{\"ok\":false,\"error\":\"title kosong\"}", 400);
+                            // Penargetan hwnd (v3.8.0 — DSA-01),
+                            // sama seperti /window.
+                            long hwndVal = GetLong(root, "hwnd", 0);
+                            if (string.IsNullOrWhiteSpace(query) && hwndVal == 0)
+                                return Response.Json("{\"ok\":false,\"error\":\"title kosong (atau kirim hwnd)\"}", 400);
                             var wins = OnUi(NativeInput.ListWindows);
                             NativeInput.WindowInfo match = null;
                             foreach (var w in wins)
                             {
-                                if (w.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                                if (hwndVal != 0)
+                                {
+                                    if (w.Handle == (IntPtr)hwndVal) { match = w; break; }
+                                }
+                                else if (w.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
                                 {
                                     match = w;
                                     break;
@@ -3492,6 +3478,7 @@ public sealed class AgentServer
                             {
                                 ["ok"] = true,
                                 ["focused"] = m.Title,
+                                ["hwnd"] = m.Handle.ToInt64(),
                             });
                         }
                         case "/shell":
@@ -4348,6 +4335,34 @@ public sealed class AgentServer
 
 
     /// <summary>
+    /// Skema jendela TUNGGAL (v3.8.0 — DSA-01/03/04/05): dipakai
+    /// /state, /windows, dan /context agar ketiganya selalu
+    /// melaporkan jendela dengan field yang sama — hwnd (identitas
+    /// stabil), pid, rect, foreground, hung, state
+    /// (normal/minimized/maximized), dialog, ownerHwnd. Field lama
+    /// tidak ada yang dihapus; ini murni penambahan.
+    /// </summary>
+    private static Dictionary<string, object> WindowJson(NativeInput.WindowInfo w, IntPtr fgH)
+    {
+        bool hung = false;
+        try { hung = NativeInput.IsHung(w.Handle); } catch { }
+        return new Dictionary<string, object>
+        {
+            ["hwnd"] = w.Handle.ToInt64(),
+            ["title"] = w.Title,
+            ["process"] = w.Process,
+            ["pid"] = w.Pid,
+            ["x"] = w.Rect.X, ["y"] = w.Rect.Y,
+            ["w"] = w.Rect.Width, ["h"] = w.Rect.Height,
+            ["foreground"] = w.Handle == fgH,
+            ["hung"] = hung,
+            ["state"] = w.State ?? "normal",
+            ["dialog"] = w.IsDialog,
+            ["ownerHwnd"] = w.OwnerHandle.ToInt64(),
+        };
+    }
+
+    /// <summary>
     /// Cari jendela berdasarkan potongan judul (v2.6.3) —
     /// untuk mode koordinat relatif. Jendela pertama yang
     /// judulnya mengandung teks itu (abaikan huruf besar).
@@ -4951,6 +4966,18 @@ public sealed class AgentServer
             v.ValueKind == JsonValueKind.Number &&
             v.TryGetInt32(out int i))
             return i;
+        return fallback;
+    }
+
+    /// <summary>Seperti GetInt tetapi 64-bit (v3.8.0 — untuk hwnd,
+    /// yang nilainya tidak dijamin muat di int32).</summary>
+    private static long GetLong(JsonElement root, string name, long fallback)
+    {
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var v) &&
+            v.ValueKind == JsonValueKind.Number &&
+            v.TryGetInt64(out long l))
+            return l;
         return fallback;
     }
 
