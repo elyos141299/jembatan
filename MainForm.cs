@@ -108,8 +108,12 @@ public sealed class MainForm : Form
         {
             try
             {
-                string fv = System.Diagnostics.FileVersionInfo.GetVersionInfo(
-                    typeof(MainForm).Assembly.Location).FileVersion;
+                // v3.8.0: ProcessPath, bukan Assembly.Location
+                // (kosong pada single-file) — lihat AgentServer.
+                string exePath = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(exePath))
+                    exePath = typeof(MainForm).Assembly.Location;
+                string fv = System.Diagnostics.FileVersionInfo.GetVersionInfo(exePath).FileVersion;
                 if (!string.IsNullOrEmpty(fv))
                 {
                     var p = fv.Split('.');
@@ -118,7 +122,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "3.7.1";
+            return "3.8.0";
         }
     }
     private Label _tileRamValue;

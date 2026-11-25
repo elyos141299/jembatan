@@ -55,8 +55,15 @@ public sealed class AgentServer
     {
         try
         {
-            string fv = FileVersionInfo.GetVersionInfo(
-                typeof(AgentServer).Assembly.Location).FileVersion;
+            // v3.8.0: Assembly.Location KOSONG pada aplikasi
+            // single-file sehingga bacaan lama selalu jatuh ke
+            // string bawaan (itulah sebabnya label versi bisa
+            // tertinggal satu rilis). Environment.ProcessPath
+            // menunjuk exe yang benar-benar berjalan.
+            string exePath = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exePath))
+                exePath = typeof(AgentServer).Assembly.Location;
+            string fv = FileVersionInfo.GetVersionInfo(exePath).FileVersion;
             if (!string.IsNullOrEmpty(fv))
             {
                 var parts = fv.Split('.');
@@ -65,7 +72,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.7.1";
+        return "3.8.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
