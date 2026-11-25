@@ -1,4 +1,32 @@
-# MuseLink v3.1.0 — catatan pengembang
+# MuseLink v3.2.0 — catatan pengembang
+
+## v3.2.0 — Bedah & koreksi user atas v3.1.0 (9 koreksi, satu build)
+
+Semua dari sesi bedah user 25 Nov 2026 (screenshot per bagian):
+
+- **Panel kendali = tema Log Aktivitas:** latar LogBg, kartu
+  InkCard (token baru) bertepi RailHover, teks InkOnDark/InkFaint,
+  pill status ditint ke tinta — panel, log, dan Pengaturan kini
+  satu keluarga gelap; yang terang tinggal kartu chat.
+- **Putuskan Akses hanya di Pengaturan:** grup AKSES + tombol di
+  panel dihapus (duplikat); flyout Pengaturan jadi satu-satunya
+  tempat putus/sambung.
+- **Strip kepala chat dirapikan:** status + zoom dikurung dalam
+  wadah kanan setinggi pita tampak 36px. Cara lama (status
+  Dock=Right setinggi 46px) membuat blok status menjorok keluar
+  strip menimpa kartu chat.
+- **Bar atas bergradasi:** gradasi lavender horizontal (Panel-ish
+  → Bg) + garis rambut bawah; anak-anak bar berlatar transparan
+  (RoundDot kini mendukung BackColor transparan), ujung kanan
+  persis Bg agar isian diam tombol jendela menyatu.
+- **Strip status bawah dihapus:** isinya duplikat semua (status
+  ada di strip chat + pill, relay/uptime di baris panel, Log di
+  rel, versi di baris VERSI) — jendela dapat ±28px ruang isi.
+- **Titik Terhubung beranimasi:** denyut napas ±3 detik (timer
+  60ms, hijau ↔ hijau muda) di titik pill, bar judul, dan rel.
+- **Pengaturan = flyout tinta:** bukan jendela terpisah lagi —
+  menempel pada tombol roda gigi rel, geser + pudar seperti
+  flyout log, tema tinta yang sama, Esc/✕/klik gigi lagi menutup.
 
 ## v3.1.0 — WebView2: wadah + perilaku, dan perbaikan warna log
 

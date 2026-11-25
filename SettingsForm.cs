@@ -1,31 +1,29 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace Jembatan;
 
 /// <summary>
-/// Jendela Pengaturan MuseLink (v2.5.0, tata letak atas permintaan
-/// user): semua saklar yang dulu berjejer di kartu kepala jendela
-/// utama pindah ke sini — Jalan otomatis, Mode Administrator,
-/// Jangan tidur — dan tombol besar PUTUSKAN / Sambung lagi yang
-/// dulu
-/// memenuhi kiri bawah jendela utama.
+/// Pengaturan MuseLink. v3.2.0 (koreksi user atas v3.1.0): bukan
+/// lagi jendela terpisah — kini FLYOUT tinta yang menempel pada
+/// tombol roda gigi di rel dan muncul dengan geser + pudar, persis
+/// seperti Log Aktivitas (tema tinta yang sama: latar LogBg, kartu
+/// InkCard, teks InkOnDark/InkFaint). Isi tetap sama: saklar Jalan
+/// otomatis / Mode Administrator / Jangan tidur, dan kartu KONEKSI
+/// dengan tombol PUTUSKAN — sejak v3.2.0 tombol putus/sambung
+/// akses HANYA ada di sini (grup AKSES di panel dihapus user
+/// karena duplikat).
 ///
 /// Jendela ini hanya WAJAH: keadaan &amp; logika tetap milik
 /// MainForm (ApplyAutoStart / ApplyAdminMode / ApplyKeepAwake /
-/// SetTheme / ToggleServer), jendela utama yang menampung
-/// servernya. Dibuka dari tombol roda gigi di pojok kanan atas
-/// kartu kepala; satu instans saja, non-modal.
+/// ToggleServer). Satu instans, non-modal; Esc / klik roda gigi
+/// lagi / tombol ✕ menutupnya dengan animasi.
 /// </summary>
 public sealed class SettingsForm : Form
 {
-    // v2.9.1: bar judul jendela dipaksa mengikuti tema (DWM
-    // immersive dark mode) agar tidak belang putih di tema gelap.
-    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
-
     private readonly MainForm _owner;
 
     private RoundedPanel _cardUmum;
@@ -38,18 +36,27 @@ public sealed class SettingsForm : Form
     private RoundedButton _serverButton;
     private Label _serverNote;
 
+    // Mekanik flyout (pola yang sama dengan LogFlyoutForm).
+    private readonly System.Windows.Forms.Timer _anim;
+    private int _animTargetX;
+    private int _animStartX;
+    private long _animStartTick;
+    private bool _animHide;
+
     public SettingsForm(MainForm owner)
     {
         _owner = owner;
         Text = "Pengaturan — MuseLink";
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
-        MinimizeBox = false;
+        FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
-        StartPosition = FormStartPosition.CenterParent;
+        StartPosition = FormStartPosition.Manual;
         ClientSize = new Size(400, 452);
         Font = new Font("Segoe UI", 10f);
+        KeyPreview = true;
         if (owner.Icon != null) Icon = owner.Icon;
+
+        _anim = new System.Windows.Forms.Timer { Interval = 15 };
+        _anim.Tick += AnimTick;
 
         BuildUi();
 
@@ -65,20 +72,103 @@ public sealed class SettingsForm : Form
 
         RefreshServerButton();
         ApplyTheme();
+    }
 
-        // v3.0.1: muncul dengan pudar masuk singkat — tidak polos
-        // muncul tiba-tiba (permintaan user, sejalan flyout log).
-        Opacity = 0;
-        Shown += (s, e) =>
+    // Bayangan jatuh kelas jendela (pola LogFlyoutForm).
+    protected override CreateParams CreateParams
+    {
+        get
         {
-            var fade = new System.Windows.Forms.Timer { Interval = 15 };
-            fade.Tick += (s2, e2) =>
-            {
-                Opacity = Math.Min(1.0, Opacity + 0.16);
-                if (Opacity >= 1.0) fade.Stop();
-            };
-            fade.Start();
-        };
+            var cp = base.CreateParams;
+            cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW
+            return cp;
+        }
+    }
+
+    // Sudut bundar 16px + bingkai RailHover — persis flyout log.
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (Width < 2 || Height < 2) return;
+        using (var path = new GraphicsPath())
+        {
+            int r = 16, w = Width, h = Height;
+            path.AddArc(0, 0, r, r, 180, 90);
+            path.AddArc(w - r, 0, r, r, 270, 90);
+            path.AddArc(w - r, h - r, r, r, 0, 90);
+            path.AddArc(0, h - r, r, r, 90, 90);
+            path.CloseFigure();
+            Region = new Region(path);
+        }
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        using (var pen = new Pen(AppTheme.RailHover, 1f))
+            e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        if (e.KeyCode == Keys.Escape) HideAnimated();
+    }
+
+    /// <summary>
+    /// Tampilkan sebagai flyout menempel di tepi kanan tombol
+    /// jangkar (roda gigi rel), bergeser masuk + memudar — pola
+    /// ShowAnchored yang sama dengan flyout log.
+    /// </summary>
+    public void ShowAnchored(Rectangle anchorScreen, Form owner)
+    {
+        var wa = Screen.FromRectangle(anchorScreen).WorkingArea;
+        int targetX = anchorScreen.Right + 10;
+        int y = anchorScreen.Top - 8;
+        if (y + Height > wa.Bottom - 8) y = wa.Bottom - Height - 8;
+        if (y < wa.Top + 8) y = wa.Top + 8;
+        if (targetX + Width > wa.Right - 8) targetX = wa.Right - Width - 8;
+        _anim.Stop();
+        _animHide = false;
+        _animTargetX = targetX;
+        _animStartX = targetX - 14;
+        Location = new Point(_animStartX, y);
+        Opacity = 0;
+        Show(owner);
+        _animStartTick = Environment.TickCount64;
+        _anim.Start();
+    }
+
+    /// <summary>Tutup dengan geser keluar + pudar, lalu sembunyi.</summary>
+    public void HideAnimated()
+    {
+        if (!Visible) return;
+        _anim.Stop();
+        _animHide = true;
+        _animStartX = Left;
+        _animTargetX = Left - 14;
+        _animStartTick = Environment.TickCount64;
+        _anim.Start();
+    }
+
+    public void HideImmediate()
+    {
+        _anim.Stop();
+        Hide();
+    }
+
+    private void AnimTick(object sender, EventArgs e)
+    {
+        double t = Math.Min(1.0, (Environment.TickCount64 - _animStartTick) / 135.0);
+        double ease = 1 - Math.Pow(1 - t, 3);
+        int x = _animStartX + (int)((_animTargetX - _animStartX) * ease);
+        Location = new Point(x, Top);
+        Opacity = _animHide ? 1.0 - ease : ease;
+        if (t >= 1)
+        {
+            _anim.Stop();
+            if (_animHide) { Hide(); Opacity = 1.0; }
+        }
     }
 
     private Label MakeLabel(string text, int x, int y, float size, bool bold, bool dim)
@@ -114,6 +204,19 @@ public sealed class SettingsForm : Form
     private void BuildUi()
     {
         MakeLabel("Pengaturan", 20, 14, 15f, true, false);
+        var close = new Label
+        {
+            Text = "\uE711",
+            Font = new Font("Segoe MDL2 Assets", 11f),
+            ForeColor = AppTheme.InkOnDark,
+            BackColor = AppTheme.LogBg,
+            Size = new Size(38, 32),
+            Location = new Point(354, 8),
+            TextAlign = ContentAlignment.MiddleCenter,
+            Cursor = Cursors.Hand,
+        };
+        close.Click += (s, e) => HideAnimated();
+        Controls.Add(close);
 
         MakeLabel("UMUM", 20, 56, 9f, true, true);
         _cardUmum = new RoundedPanel
@@ -159,7 +262,7 @@ public sealed class SettingsForm : Form
         _serverButton.Click += (s, e) => { _owner.ToggleServer(); RefreshServerButton(); };
         _cardKoneksi.Controls.Add(_serverButton);
 
-        MakeLabel("MuseLink v3.1.0", 20, 372, 8.5f, false, true);
+        MakeLabel("MuseLink v3.2.0", 20, 372, 8.5f, false, true);
     }
 
     /// <summary>Teks &amp; warna tombol server mengikuti keadaan listener.</summary>
@@ -178,31 +281,28 @@ public sealed class SettingsForm : Form
         }
     }
 
-    /// <summary>Cat ulang seluruh jendela mengikuti tema efektif.</summary>
+    /// <summary>
+    /// Cat ulang mengikuti tema tinta Log Aktivitas (v3.2.0) —
+    /// latar LogBg, kartu InkCard bertepi RailHover, teks terang.
+    /// </summary>
     public void ApplyTheme()
     {
-        BackColor = AppTheme.Bg;
+        BackColor = AppTheme.LogBg;
         foreach (var card in new[] { _cardUmum, _cardKoneksi })
         {
             if (card == null) continue;
-            card.FillColor = AppTheme.Card;
-            card.BorderColor = AppTheme.Hairline;
-            card.BackColor = AppTheme.Bg;
+            card.FillColor = AppTheme.InkCard;
+            card.BorderColor = AppTheme.RailHover;
+            card.BackColor = AppTheme.LogBg;
         }
-        foreach (var l in _labelsInk) { l.ForeColor = AppTheme.Ink; l.BackColor = AppTheme.Bg; }
-        foreach (var l in _labelsDim) { l.ForeColor = AppTheme.InkDim; l.BackColor = AppTheme.Bg; }
+        foreach (var l in _labelsInk) { l.ForeColor = AppTheme.InkOnDark; l.BackColor = AppTheme.LogBg; }
+        foreach (var l in _labelsDim) { l.ForeColor = AppTheme.InkFaint; l.BackColor = AppTheme.LogBg; }
         foreach (var t in new[] { _autoStartCheck, _adminCheck, _awakeCheck })
-            if (t != null) t.BackColor = AppTheme.Card;
+            if (t != null) t.BackColor = AppTheme.InkCard;
         // Label di dalam kartu berlatar kartu, bukan latar form.
-        foreach (Control c in _cardUmum.Controls) if (c is Label l1) l1.BackColor = AppTheme.Card;
-        foreach (Control c in _cardKoneksi.Controls) if (c is Label l3) l3.BackColor = AppTheme.Card;
+        foreach (Control c in _cardUmum.Controls) if (c is Label l1) l1.BackColor = AppTheme.InkCard;
+        foreach (Control c in _cardKoneksi.Controls) if (c is Label l3) l3.BackColor = AppTheme.InkCard;
         RefreshServerButton();
-        try
-        {
-            int dark = AppTheme.IsDark ? 1 : 0;
-            DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
-        }
-        catch { /* OS lama tanpa DWM: abaikan */ }
         Invalidate(true);
     }
 }

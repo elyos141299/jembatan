@@ -53,6 +53,10 @@ public static class AppTheme
     public static Color Card => Color.FromArgb(255, 255, 255);
     /// <summary>Panel log = sumur tinta #3D3461.</summary>
     public static Color LogBg => Color.FromArgb(61, 52, 97);
+    /// <summary>Kartu di atas permukaan tinta (panel kendali gelap +
+    /// Pengaturan, v3.2.0): tinta yang terangkat sedikit dari LogBg,
+    /// tepinya memakai RailHover — keluarga yang sama dengan log.</summary>
+    public static Color InkCard => Color.FromArgb(73, 62, 119);
     /// <summary>Tinta violet pekat #3D3461 (teks + rel + strip kepala chat).</summary>
     public static Color Ink => Color.FromArgb(61, 52, 97);
     /// <summary>Teks sekunder violet #6B59A0.</summary>

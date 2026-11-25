@@ -299,9 +299,18 @@ public class RoundDot : Control
     public RoundDot()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                 ControlStyles.SupportsTransparentBackColor, true);
         Size = new Size(10, 10);
         BackColor = Color.White;
+    }
+
+    // v3.2.0: BackColor Transparan berarti latar pemilik (mis.
+    // gradasi bar judul) dibiarkan terlihat — jangan dicat apa pun.
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (BackColor == Color.Transparent) return;
+        base.OnPaintBackground(e);
     }
 
     public Color DotColor
