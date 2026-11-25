@@ -3389,11 +3389,6 @@ public sealed class AgentServer
                                 return Response.Json("{\"ok\":false,\"error\":\"choice harus device, light, atau dark\"}", 400);
                             _onActivity();
                             _ui.SetTheme(choice);
-                            else
-                            {
-                                try { Settings.Theme = choice; } catch { }
-                                _log("tema diganti: " + choice);
-                            }
                             return Response.JsonObject(new Dictionary<string, object>
                             {
                                 ["ok"] = true,
@@ -3408,12 +3403,6 @@ public sealed class AgentServer
                             bool on = GetBool(root, "on", false);
                             _onActivity();
                             _ui.ApplyKeepAwake(on);
-                            else
-                            {
-                                try { Settings.KeepAwake = on; } catch { }
-                                NativeInput.SetKeepAwake(on);
-                                _log("jangan tidur: " + (on ? "AKTIF" : "MATI"));
-                            }
                             return Response.JsonObject(new Dictionary<string, object>
                             {
                                 ["ok"] = true,
