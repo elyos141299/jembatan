@@ -34,6 +34,9 @@ public sealed class RoomShell : Panel
     private readonly CommandPage _command;
     private readonly DesktopPage _desktop;
     private readonly LogsPage _logs;
+    private readonly AutomationPage _automation;
+    private readonly ConnectionsPage _connections;
+    private readonly SecurityPage _security;
     private string _currentPage = "";
     private DateTime _lastActivity = DateTime.MinValue;
 
@@ -247,16 +250,16 @@ public sealed class RoomShell : Panel
         _command = new CommandPage(server);
         _desktop = new DesktopPage();
         _logs = new LogsPage(owner, server);
+        _automation = new AutomationPage();
+        _connections = new ConnectionsPage(owner, server);
+        _security = new SecurityPage(server);
         RegisterPage("overview", _overview);
         RegisterPage("activity", _activity);
         RegisterPage("command", _command);
         RegisterPage("desktop", _desktop);
-        RegisterPage("automation", new PlaceholderPage("Automation",
-            "Tahap v4.2.0 — rutinitas & perilaku otomatis dibangun di tahap berikutnya."));
-        RegisterPage("security", new PlaceholderPage("Permissions & Security",
-            "Tahap v4.2.0 — panel izin & keamanan dibangun di tahap berikutnya."));
-        RegisterPage("connections", new PlaceholderPage("Connections",
-            "Tahap v4.2.0 — status koneksi bridge/Tailscale dibangun di tahap berikutnya."));
+        RegisterPage("automation", _automation);
+        RegisterPage("security", _security);
+        RegisterPage("connections", _connections);
         RegisterPage("logs", _logs);
         ShowPage("overview");
 
@@ -356,6 +359,9 @@ public sealed class RoomShell : Panel
         if (key == "activity") _activity.RefreshList();
         if (key == "desktop") _desktop.RefreshAll();
         if (key == "logs") _logs.RefreshList();
+        if (key == "automation") _automation.RefreshList();
+        if (key == "connections") _connections.RefreshData();
+        if (key == "security") _security.RefreshData();
     }
 
     private void OnStopClicked()
@@ -403,6 +409,8 @@ public sealed class RoomShell : Panel
             if (_currentPage == "activity" && _activity.Visible) _activity.RefreshIfAuto();
             if (_currentPage == "desktop" && _desktop.Visible) _desktop.RefreshIfVisible();
             if (_currentPage == "logs" && _logs.Visible) _logs.RefreshIfAuto();
+            if (_currentPage == "connections" && _connections.Visible) _connections.RefreshIfVisible();
+            if (_currentPage == "security" && _security.Visible) _security.RefreshIfVisible();
         }
         catch { /* penyegaran kerangka tidak boleh menjatuhkan aplikasi */ }
     }

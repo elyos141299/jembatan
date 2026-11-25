@@ -72,7 +72,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "4.1.1";
+        return "4.2.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
