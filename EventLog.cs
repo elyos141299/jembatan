@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
+using System.Windows.Forms;
 
 namespace Jembatan;
 
@@ -32,6 +34,10 @@ public static class EventLog
         public string Time = "";
         public string Kind = "";
         public string Detail = "";
+        // Identitas jendela terkait (v3.9.0 — kejadian hook WinEvent
+        // membawa hwnd & pid; kejadian polling lama mengisi 0).
+        public long Hwnd;
+        public int Pid;
     }
 
     private const int Kapasitas = 200;
@@ -48,6 +54,13 @@ public static class EventLog
     /// <summary>Catat satu kejadian (aman dari thread mana pun).</summary>
     public static void Add(string kind, string detail)
     {
+        Add(kind, detail, 0, 0);
+    }
+
+    /// <summary>Catat satu kejadian dengan identitas jendela
+    /// (v3.9.0). Setiap Add membangunkan penunggu long-poll.</summary>
+    public static void Add(string kind, string detail, long hwnd, int pid)
+    {
         lock (_lock)
         {
             _seq++;
@@ -57,9 +70,38 @@ public static class EventLog
                 Time = DateTime.Now.ToString("HH:mm:ss"),
                 Kind = kind,
                 Detail = detail ?? "",
+                Hwnd = hwnd,
+                Pid = pid,
             });
             if (_items.Count > Kapasitas)
                 _items.RemoveRange(0, _items.Count - Kapasitas);
+            Monitor.PulseAll(_lock);
+        }
+    }
+
+    /// <summary>Nomor urut kejadian tertua yang masih tersimpan
+    /// (0 bila kosong) — dasar bendera truncated di /events
+    /// (v3.9.0, DSA-06).</summary>
+    public static long FirstSeq
+    {
+        get { lock (_lock) { return _items.Count > 0 ? _items[0].Seq : 0; } }
+    }
+
+    /// <summary>Tunggu sampai ada kejadian sesudah sinceSeq atau
+    /// waktu habis (long-poll /events?wait=, v3.9.0 — DSA-07).
+    /// True bila ada kejadian baru.</summary>
+    public static bool WaitForNew(long sinceSeq, int timeoutMs)
+    {
+        lock (_lock)
+        {
+            long deadline = Environment.TickCount64 + timeoutMs;
+            while (_seq <= sinceSeq)
+            {
+                long sisa = deadline - Environment.TickCount64;
+                if (sisa <= 0) return false;
+                Monitor.Wait(_lock, (int)Math.Min(sisa, int.MaxValue));
+            }
+            return true;
         }
     }
 
@@ -156,6 +198,15 @@ public static class EventLog
                     if (!nowW.ContainsKey(kv.Key)) Add("window-close", kv.Value);
                 wins = nowW;
 
+                // Segarkan peta judul bersama untuk hook
+                // NAMECHANGE (v3.9.0): hanya jendela yang ada di
+                // peta ini yang perubahan judulnya dicatat hook.
+                lock (_winLock)
+                {
+                    _winTitles.Clear();
+                    foreach (var kv in nowW) _winTitles[kv.Key] = kv.Value;
+                }
+
                 // Menganggur: ambang 5 menit tanpa masukan.
                 bool nowIdle = NativeInput.IdleSeconds() >= 300;
                 if (nowIdle && !idle) Add("idle-start", "tidak ada masukan selama 5 menit");
@@ -164,5 +215,88 @@ public static class EventLog
             }
             catch { /* pemantau tidak boleh mati karena satu galat */ }
         }
+    }
+
+    // ---------- WinEventHook (v3.9.0 — EventHub, DSA-02) ----------
+    // Event OS sungguhan untuk dua sinyal yang tidak bisa diberikan
+    // polling 2 detik: perubahan jendela depan (focus) dan perubahan
+    // judul jendela (window-title). Hook dipasang di thread UI
+    // (ber-message-loop) lewat StartHooks; callback dibuat sangat
+    // ringan — baca judul/pid lalu Add, tidak ada kerja berat.
+
+    private delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+
+    private const uint EventSystemForeground = 0x0003;
+    private const uint EventObjectNameChange = 0x800C;
+    private const uint WineventOutOfContext = 0x0000;
+    private const int ObjidWindow = 0;
+
+    private static WinEventDelegate _hookProc; // disimpan agar tidak di-GC
+    private static IntPtr _hookFocus;
+    private static IntPtr _hookName;
+    private static readonly Dictionary<IntPtr, string> _winTitles = new Dictionary<IntPtr, string>();
+    private static readonly object _winLock = new object();
+    private static IntPtr _lastFocusHwnd;
+    private static long _lastFocusTick;
+
+    /// <summary>Pasang hook di thread UI (dipanggil AgentServer.Start).</summary>
+    public static void StartHooks(Control ui)
+    {
+        if (ui == null) return;
+        try
+        {
+            ui.BeginInvoke((Action)(() =>
+            {
+                if (_hookProc == null) _hookProc = OnWinEvent;
+                if (_hookFocus == IntPtr.Zero)
+                    _hookFocus = SetWinEventHook(EventSystemForeground, EventSystemForeground, IntPtr.Zero, _hookProc, 0, 0, WineventOutOfContext);
+                if (_hookName == IntPtr.Zero)
+                    _hookName = SetWinEventHook(EventObjectNameChange, EventObjectNameChange, IntPtr.Zero, _hookProc, 0, 0, WineventOutOfContext);
+            }));
+        }
+        catch { /* hook pelengkap — pemantau polling tetap jalan */ }
+    }
+
+    /// <summary>Lepas hook (dipanggil AgentServer.Stop).</summary>
+    public static void StopHooks()
+    {
+        try { if (_hookFocus != IntPtr.Zero) { UnhookWinEvent(_hookFocus); _hookFocus = IntPtr.Zero; } } catch { }
+        try { if (_hookName != IntPtr.Zero) { UnhookWinEvent(_hookName); _hookName = IntPtr.Zero; } } catch { }
+    }
+
+    private static void OnWinEvent(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint eventThread, uint eventTime)
+    {
+        try
+        {
+            if (hwnd == IntPtr.Zero) return;
+            if (eventType == EventSystemForeground)
+            {
+                long now = Environment.TickCount64;
+                if (hwnd == _lastFocusHwnd && now - _lastFocusTick < 400) return;
+                _lastFocusHwnd = hwnd;
+                _lastFocusTick = now;
+                Add("focus", NativeInput.TitleOf(hwnd), hwnd.ToInt64(), NativeInput.PidOf(hwnd));
+            }
+            else if (eventType == EventObjectNameChange && idObject == ObjidWindow && idChild == 0)
+            {
+                string baru = NativeInput.TitleOf(hwnd);
+                string lama = null;
+                lock (_winLock)
+                {
+                    if (!_winTitles.TryGetValue(hwnd, out var lamaDalam)) return; // hanya jendela terlacak
+                    if (lamaDalam == baru) return;
+                    _winTitles[hwnd] = baru;
+                    lama = lamaDalam;
+                }
+                Add("window-title", lama + " \u2192 " + baru, hwnd.ToInt64(), NativeInput.PidOf(hwnd));
+            }
+        }
+        catch { /* callback hook tidak boleh meledak */ }
     }
 }

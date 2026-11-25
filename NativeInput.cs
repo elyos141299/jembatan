@@ -210,6 +210,32 @@ public static class NativeInput
         return GetForegroundWindow();
     }
 
+    /// <summary>Judul jendela dari handle (v3.9.0 — untuk callback
+    /// WinEventHook di EventLog; ringan, tanpa enumerasi).</summary>
+    public static string TitleOf(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero) return "";
+        try
+        {
+            var sb = new StringBuilder(512);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            return sb.ToString();
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>PID pemilik jendela dari handle (v3.9.0).</summary>
+    public static int PidOf(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero) return 0;
+        try
+        {
+            GetWindowThreadProcessId(hWnd, out uint pid);
+            return (int)pid;
+        }
+        catch { return 0; }
+    }
+
     /// <summary>
     /// Aksi ke jendela tertentu (v2.4.0): "close" (WM_CLOSE, jalan
     /// keluar yang sopan — aplikasi masih bisa bertanya simpan),

@@ -3,6 +3,32 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 3.9.0 — 2026-11-25
+
+"Telinga & Ingatan" — Desktop State Awareness tahap 2 (audit
+DSA-02/06/07/09/10).
+
+### Ditambahkan
+- **Event fokus & judul sungguhan (WinEventHook)**: EventLog kini
+  memasang SetWinEventHook di thread UI — perubahan jendela depan
+  tercatat sebagai kind `focus` (dengan hwnd & pid, debounce
+  400ms) dan perubahan judul jendela tingkat atas sebagai
+  `window-title` ("lama → baru"). Polling 2 detik tetap jalan
+  untuk proses/jendela/idle seperti sebelumnya.
+- **Long-poll /events**: `?wait=<ms>` (maks 30000) menahan respons
+  sampai ada kejadian baru — Muse tidak perlu lagi polling.
+- **Bendera `truncated`** di /events: menyala bila `since`
+  tertinggal lebih jauh dari isi cincin 200 — kehilangan
+  kejadian tidak lagi senyap.
+- **TaskJournal**: POST apa pun boleh membawa `"taskId"` —
+  operasi tercatat dengan korelasi tugas, hwnd jendela depan
+  saat diterima, dan ringkasan hasil (pesan error). Sub-aksi
+  /batch mewarisi taskId induknya. `GET /task?id=` membaca satu
+  rangkaian tugas; operasi bertugas juga ditulis ke jurnal
+  persisten `task-journal.jsonl` (rotasi 2MB) sehingga tetap
+  bisa dibaca sesudah aplikasi restart. /lastops, /op, /ops
+  kini menampilkan taskId.
+
 ## 3.8.0 — 2026-11-25
 
 "Mata Jendela" — Desktop State Awareness tahap 1 (audit DSA

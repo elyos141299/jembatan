@@ -72,7 +72,7 @@ public sealed class AgentServer
             }
         }
         catch { /* abaikan — pakai bawaan di bawah */ }
-        return "3.8.0";
+        return "3.9.0";
     }
 
     private readonly Control _ui;               // jendela utama, untuk Invoke ke thread UI
@@ -120,6 +120,10 @@ public sealed class AgentServer
         // Pemantau kejadian /events (v2.5.0): proses & jendela
         // dipantau thread latar EventLog sejak listener jalan.
         EventLog.StartMonitor();
+        // EventHub (v3.9.0): hook WinEvent di thread UI untuk
+        // kejadian fokus & perubahan judul secara real-time.
+        EventLog.StartHooks(_ui);
+        RotateJournalIfNeeded();
         // Penghangat cache relay Tailscale (v2.5.5): /sysinfo
         // pertama sesudah aplikasi mulai dulu lambat (query
         // `tailscale status` dingin). Thread ini mengisi cache
@@ -140,6 +144,7 @@ public sealed class AgentServer
     public void Stop()
     {
         _warmerOn = false;
+        EventLog.StopHooks(); // v3.9.0: lepas WinEventHook
         ReleaseHeldKeys(); // v3.6.0: jangan tinggalkan tombol tertahan
         try { _cts?.Cancel(); } catch { /* abaikan */ }
         try { _listener?.Stop(); } catch { /* abaikan */ }
@@ -266,13 +271,21 @@ public sealed class AgentServer
                 }
 
                 string body = ReadBody(stream, head.ContentLength);
+                // TaskJournal (v3.9.0): kosongkan korelasi tugas di
+                // thread ini, lalu Route mengisinya dari body bila
+                // ada "taskId"; hwnd depan ditangkap SEBELUM Route
+                // (keadaan saat operasi diterima).
+                _opTaskTls = null;
+                long fgHwnd = 0;
+                try { fgHwnd = NativeInput.ForegroundHandle().ToInt64(); } catch { }
                 var sw = Stopwatch.StartNew();
                 var resp = Route(new Request { Method = head.Method, Path = head.Path, Query = head.Query ?? "", Body = body });
                 sw.Stop();
                 // Catat operasi SETELAH Route selesai tetapi SEBELUM
                 // respons ditulis — bila koneksi putus saat menulis,
                 // catatannya sudah ada untuk dicek lewat /lastops.
-                RecordOp(head.Method, head.Path, resp.Status, (int)sw.ElapsedMilliseconds);
+                RecordOp(head.Method, head.Path, resp.Status, (int)sw.ElapsedMilliseconds,
+                    _opTaskTls, fgHwnd, SummarizeResponse(resp));
                 WriteResponse(stream, resp);
             }
             catch
@@ -397,6 +410,12 @@ public sealed class AgentServer
         public string Path;
         public int Status;
         public int Ms;
+        // TaskJournal (v3.9.0 — DSA-09/10): korelasi tugas dari
+        // body "taskId", hwnd jendela depan saat operasi diterima,
+        // dan ringkasan hasil (pesan error bila ada).
+        public string TaskId;
+        public long FgHwnd;
+        public string Summary;
     }
 
     private readonly List<OpRecord> _ops = new List<OpRecord>();
@@ -418,7 +437,7 @@ public sealed class AgentServer
     private readonly Dictionary<string, DiagStat> _diag = new Dictionary<string, DiagStat>();
     private readonly long _startTick = Environment.TickCount64;
 
-    private void RecordOp(string method, string path, int status, int ms)
+    private void RecordOp(string method, string path, int status, int ms, string taskId = null, long fgHwnd = 0, string summary = "")
     {
         // Telemetri (v3.5.0): SEMUA operasi masuk agregat /diag —
         // termasuk /ping & /frame, karena latensi merekalah yang
@@ -436,6 +455,7 @@ public sealed class AgentServer
         // tidak dicatat — keduanya panggilan latar yang sering dan
         // hanya menggeser operasi penting keluar dari cincin 50.
         if (path == "/ping" || path == "/frame") return;
+        OpRecord rec = null;
         lock (_opsLock)
         {
             _ops.Add(new OpRecord
@@ -446,9 +466,90 @@ public sealed class AgentServer
                 Path = path,
                 Status = status,
                 Ms = ms,
+                TaskId = taskId,
+                FgHwnd = fgHwnd,
+                Summary = summary ?? "",
             });
             if (_ops.Count > 50) _ops.RemoveRange(0, _ops.Count - 50);
+            rec = _ops[_ops.Count - 1];
         }
+        // Jurnal persisten (v3.9.0): hanya operasi bertanda tugas —
+        // cukup untuk merekonstruksi satu tugas sesudah restart.
+        if (rec != null && !string.IsNullOrEmpty(taskId))
+            AppendJournal(rec);
+    }
+
+    // ---------- TaskJournal persisten (v3.9.0) ----------
+
+    private static string JournalPath()
+    {
+        string dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Jembatan");
+        return Path.Combine(dir, "task-journal.jsonl");
+    }
+
+    private static void RotateJournalIfNeeded()
+    {
+        try
+        {
+            string p = JournalPath();
+            var fi = new FileInfo(p);
+            if (fi.Exists && fi.Length > 2 * 1024 * 1024)
+            {
+                string old = p + ".old";
+                if (File.Exists(old)) File.Delete(old);
+                File.Move(p, old);
+            }
+        }
+        catch { /* jurnal tidak boleh menjatuhkan start */ }
+    }
+
+    private void AppendJournal(OpRecord rec)
+    {
+        try
+        {
+            var line = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["seq"] = rec.Seq,
+                ["time"] = rec.Time,
+                ["taskId"] = rec.TaskId,
+                ["method"] = rec.Method,
+                ["path"] = rec.Path,
+                ["status"] = rec.Status,
+                ["ms"] = rec.Ms,
+                ["fgHwnd"] = rec.FgHwnd,
+                ["summary"] = rec.Summary ?? "",
+            });
+            lock (_opsLock)
+            {
+                File.AppendAllText(JournalPath(), line + "\n");
+            }
+        }
+        catch { /* jurnal gagal tulis tidak boleh menjatuhkan operasi */ }
+    }
+
+    /// <summary>Ringkasan hasil dari badan respons (v3.9.0):
+    /// pesan "error" bila respons JSON memuatnya; selain itu
+    /// kosong. Dipotong 160 karakter.</summary>
+    private static string SummarizeResponse(Response resp)
+    {
+        try
+        {
+            if (resp == null || resp.BodyBytes == null || resp.BodyBytes.Length == 0 || resp.BodyBytes.Length > 16384)
+                return "";
+            using (var doc = JsonDocument.Parse(resp.BodyBytes))
+            {
+                if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                    doc.RootElement.TryGetProperty("error", out var err) &&
+                    err.ValueKind == JsonValueKind.String)
+                {
+                    string s = err.GetString() ?? "";
+                    return s.Length > 160 ? s.Substring(0, 160) : s;
+                }
+            }
+        }
+        catch { /* ringkasan hanya keterangan */ }
+        return "";
     }
 
     // ---------- Routing ----------
@@ -488,6 +589,12 @@ public sealed class AgentServer
     private Response Route(Request req)
     {
         _opNameTls = req.Method + " " + req.Path; // nama operasi UI (v3.7.0)
+        // TaskJournal (v3.9.0): tangkap "taskId" dari body POST.
+        // Hanya menimpa bila benar-benar ada — sub-aksi /batch
+        // (Route rekursif di thread yang sama, badannya tanpa
+        // taskId) mewarisi tanda tugas panggilan induknya.
+        string taskFromBody = ExtractTaskId(req);
+        if (taskFromBody != null) _opTaskTls = taskFromBody;
         try
         {
             if (req.Method == "GET" && req.Path == "/ping")
@@ -1139,6 +1246,7 @@ public sealed class AgentServer
                     ["ok"] = true,
                     ["id"] = uop.Id,
                     ["name"] = uop.Name,
+                    ["taskId"] = uop.TaskId,
                     ["state"] = uop.State,
                     ["durationMs"] = (uop.FinishedTick > 0 ? uop.FinishedTick : nowT) - uop.StartedTick,
                     ["error"] = uop.Error,
@@ -1160,6 +1268,7 @@ public sealed class AgentServer
                     {
                         ["id"] = uop.Id,
                         ["name"] = uop.Name,
+                        ["taskId"] = uop.TaskId,
                         ["state"] = uop.State,
                         ["durationMs"] = (uop.FinishedTick > 0 ? uop.FinishedTick : nowT) - uop.StartedTick,
                     });
@@ -1168,6 +1277,89 @@ public sealed class AgentServer
                 {
                     ["ok"] = true,
                     ["ops"] = list,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/task")
+            {
+                // TaskJournal (v3.9.0 — DSA-09/10): seluruh operasi
+                // satu tugas (yang membawa "taskId" di body POST)
+                // sebagai satu rangkaian — dari cincin memori;
+                // bila tidak ada (mis. aplikasi sempat restart),
+                // dari jurnal berkas task-journal.jsonl.
+                string taskId = GetQueryParam(req.Query, "id") ?? "";
+                if (string.IsNullOrWhiteSpace(taskId))
+                    return Response.Json("{\"ok\":false,\"error\":\"parameter id (taskId) wajib\"}", 400);
+                var opsList = new List<Dictionary<string, object>>();
+                lock (_opsLock)
+                {
+                    foreach (var op in _ops)
+                    {
+                        if (op.TaskId != taskId) continue;
+                        opsList.Add(new Dictionary<string, object>
+                        {
+                            ["seq"] = op.Seq, ["time"] = op.Time, ["method"] = op.Method,
+                            ["path"] = op.Path, ["status"] = op.Status, ["ms"] = op.Ms,
+                            ["fgHwnd"] = op.FgHwnd, ["summary"] = op.Summary ?? "",
+                        });
+                    }
+                }
+                string source = "memory";
+                if (opsList.Count == 0)
+                {
+                    // Pindai jurnal berkas (maks ~4MB ekor berkas).
+                    try
+                    {
+                        string jp = JournalPath();
+                        if (File.Exists(jp))
+                        {
+                            string[] lines = File.ReadAllLines(jp);
+                            foreach (var line in lines)
+                            {
+                                if (!line.Contains(taskId)) continue;
+                                try
+                                {
+                                    using (var doc = JsonDocument.Parse(line))
+                                    {
+                                        var r = doc.RootElement;
+                                        if (GetString(r, "taskId", "") != taskId) continue;
+                                        opsList.Add(new Dictionary<string, object>
+                                        {
+                                            ["seq"] = GetLong(r, "seq", 0), ["time"] = GetString(r, "time", ""),
+                                            ["method"] = GetString(r, "method", ""), ["path"] = GetString(r, "path", ""),
+                                            ["status"] = GetInt(r, "status", 0), ["ms"] = GetInt(r, "ms", 0),
+                                            ["fgHwnd"] = GetLong(r, "fgHwnd", 0), ["summary"] = GetString(r, "summary", ""),
+                                        });
+                                    }
+                                }
+                                catch { /* baris rusak — lewati */ }
+                            }
+                            if (opsList.Count > 0) source = "journal";
+                        }
+                    }
+                    catch { /* jurnal tak terbaca — anggap tidak ada */ }
+                }
+                var uiList = new List<Dictionary<string, object>>();
+                long nowT2 = Environment.TickCount64;
+                foreach (var uop in _uiOps.Values)
+                {
+                    if (uop.TaskId != taskId) continue;
+                    uiList.Add(new Dictionary<string, object>
+                    {
+                        ["id"] = uop.Id, ["name"] = uop.Name, ["state"] = uop.State,
+                        ["durationMs"] = (uop.FinishedTick > 0 ? uop.FinishedTick : nowT2) - uop.StartedTick,
+                        ["error"] = uop.Error,
+                    });
+                }
+                uiList.Sort((a, b) => ((long)a["id"]).CompareTo((long)b["id"]));
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["taskId"] = taskId,
+                    ["found"] = opsList.Count > 0 || uiList.Count > 0,
+                    ["source"] = source,
+                    ["ops"] = opsList,
+                    ["uiOps"] = uiList,
                 });
             }
 
@@ -1189,6 +1381,9 @@ public sealed class AgentServer
                         ["path"] = op.Path,
                         ["status"] = op.Status,
                         ["ms"] = op.Ms,
+                        ["taskId"] = op.TaskId,
+                        ["fgHwnd"] = op.FgHwnd,
+                        ["summary"] = op.Summary ?? "",
                     });
                 }
                 return Response.JsonObject(new Dictionary<string, object>
@@ -1432,6 +1627,11 @@ public sealed class AgentServer
                 long since = 0;
                 long.TryParse(GetQueryParam(req.Query, "since"), out since);
                 int emax = ParseClamp(GetQueryParam(req.Query, "max"), 100, 1, 200);
+                // Long-poll (v3.9.0 — DSA-07): ?wait=<ms> menahan
+                // respons sampai ada kejadian baru (maks 30 dtk).
+                int waitMs = ParseClamp(GetQueryParam(req.Query, "wait"), 0, 0, 30000);
+                if (waitMs > 0 && EventLog.LastSeq <= since)
+                    EventLog.WaitForNew(since, waitMs);
                 var evs = EventLog.Since(since, emax);
                 var elist = new List<Dictionary<string, object>>();
                 foreach (var ev in evs)
@@ -1442,13 +1642,21 @@ public sealed class AgentServer
                         ["time"] = ev.Time,
                         ["kind"] = ev.Kind,
                         ["detail"] = ev.Detail,
+                        ["hwnd"] = ev.Hwnd,
+                        ["pid"] = ev.Pid,
                     });
                 }
+                // Bendera terpotong (v3.9.0 — DSA-06): since
+                // tertinggal lebih jauh dari isi cincin — kejadian
+                // di antaranya hilang dan pemanggil harus tahu.
+                long firstSeq = EventLog.FirstSeq;
+                bool truncated = since > 0 && firstSeq > 0 && firstSeq > since + 1;
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
                     ["events"] = elist,
                     ["lastSeq"] = EventLog.LastSeq,
+                    ["truncated"] = truncated,
                 });
             }
 
@@ -4835,6 +5043,7 @@ public sealed class AgentServer
         public string State = "running"; // running|done|error|timeout|done-late
         public string Error = "";
         public bool TimedOut;
+        public string TaskId; // korelasi tugas (v3.9.0)
     }
 
     private sealed class UiTimeoutException : Exception
@@ -4854,6 +5063,29 @@ public sealed class AgentServer
     private readonly Queue<long> _uiOpOrder = new Queue<long>();
     private readonly object _uiOpOrderLock = new object();
     [ThreadStatic] private static string _opNameTls;
+
+    // Korelasi tugas operasi berjalan (v3.9.0 — TaskJournal):
+    // diisi Route dari body "taskId", dibaca RecordOp & OnUi di
+    // thread yang sama; dikosongkan HandleClient tiap request.
+    [ThreadStatic] private static string _opTaskTls;
+
+    /// <summary>Ambil "taskId" dari body JSON request (POST);
+    /// null bila tidak ada/rusak. Dipotong 64 karakter.</summary>
+    private static string ExtractTaskId(Request req)
+    {
+        if (req == null || req.Method != "POST" || string.IsNullOrEmpty(req.Body)) return null;
+        try
+        {
+            using (var doc = JsonDocument.Parse(req.Body))
+            {
+                string t = GetString(doc.RootElement, "taskId", null);
+                if (string.IsNullOrWhiteSpace(t)) return null;
+                t = t.Trim();
+                return t.Length > 64 ? t.Substring(0, 64) : t;
+            }
+        }
+        catch { return null; }
+    }
     private int _uiTimeoutCache;
     private long _uiTimeoutCacheTick;
 
@@ -4888,6 +5120,7 @@ public sealed class AgentServer
         {
             Id = id,
             Name = string.IsNullOrEmpty(_opNameTls) ? "ui" : _opNameTls,
+            TaskId = _opTaskTls,
             StartedTick = Environment.TickCount64,
         };
         RegisterUiOp(op);
