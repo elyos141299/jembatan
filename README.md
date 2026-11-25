@@ -1,4 +1,14 @@
-# MuseLink v3.2.0 — catatan pengembang
+# MuseLink v3.2.1 — catatan pengembang
+
+## v3.2.1 — Perbaikan P/Invoke seretan bar judul
+
+Temuan verifikasi v3.2.0: `SendMessageDrag` dideklarasikan tanpa
+EntryPoint, jadi runtime mencari ekspor bernama persis itu di
+user32.dll (tidak ada — ekspor aslinya "SendMessage") dan setiap
+seretan bar judul melempar EntryPointNotFoundException. Bug lama,
+tak pernah terpicu karena jendela hampir selalu termaksimalkan.
+`SendMessagePara` (format paragraf log) cacat sama, tertelan
+try/catch. Keduanya kini EntryPoint = "SendMessage".
 
 ## v3.2.0 — Bedah & koreksi user atas v3.1.0 (9 koreksi, satu build)
 
