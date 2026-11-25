@@ -261,14 +261,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.4.1 dimulai ===");
+            Log("=== MuseLink v3.5.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.4.1 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.5.0 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -823,7 +823,7 @@ public sealed class MainForm : Form
         MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
         MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
         MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
-        MakeRow(tiles, 6, "VERSI", "3.4.1", out _tileVersionValue);
+        MakeRow(tiles, 6, "VERSI", "3.5.0", out _tileVersionValue);
 
 
         // v3.4.1: kartu AKSES (mockup Figma) menempel di BAWAH
@@ -2782,6 +2782,11 @@ public sealed class MainForm : Form
             _panelLog.Text = take > 0
                 ? string.Join(Environment.NewLine, ll.Skip(ll.Length - take))
                 : "";
+            // v3.5.0: panel AKTIVITAS TERAKHIR selalu mengikuti
+            // baris terbaru (auto-follow) — karet diparkir di akhir
+            // teks lalu digulir ke sana setiap baris baru masuk.
+            _panelLog.SelectionStart = _panelLog.TextLength;
+            _panelLog.ScrollToCaret();
         }
         _logBox.SelectionStart = _logBox.TextLength;
         _logBox.ScrollToCaret();

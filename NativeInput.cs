@@ -76,6 +76,7 @@ public static class NativeInput
         public IntPtr Handle;
         public string Title;
         public string Process;
+        public int Pid;
         // Kotak batas jendela (v2.4.4) — Muse bisa mengarahkan
         // klik tanpa screenshot dulu.
         public Rectangle Rect;
@@ -102,9 +103,11 @@ public static class NativeInput
             string title = sb.ToString();
             if (string.IsNullOrWhiteSpace(title)) return true;
             string proc = "";
+            uint pidSafe = 0;
             try
             {
                 GetWindowThreadProcessId(hWnd, out uint pid);
+                pidSafe = pid;
                 proc = Process.GetProcessById((int)pid).ProcessName;
             }
             catch { /* proses sudah mati dsb. — nama proses dikosongkan */ }
@@ -115,7 +118,7 @@ public static class NativeInput
                     rect = new Rectangle(rr.Left, rr.Top, rr.Right - rr.Left, rr.Bottom - rr.Top);
             }
             catch { /* kotak batas hanya keterangan tambahan */ }
-            result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = proc, Rect = rect });
+            result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = proc, Pid = (int)pidSafe, Rect = rect });
             return true;
         }, IntPtr.Zero);
         return result;
@@ -173,6 +176,27 @@ public static class NativeInput
             default:
                 return false;
         }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsHungAppWindow(IntPtr hWnd);
+
+    /// <summary>Atur posisi & ukuran jendela persis angka (v3.5.0 —
+    /// Window Manager). Tanpa mengaktifkan jendelanya.</summary>
+    public static bool MoveWindowRect(IntPtr hWnd, int x, int y, int w, int h)
+    {
+        const uint SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+        return SetWindowPos(hWnd, IntPtr.Zero, x, y, w, h, SwpNoZOrder | SwpNoActivate);
+    }
+
+    /// <summary>True bila Windows menilai jendela tidak merespons
+    /// (hang) (v3.5.0 — Desktop State Awareness).</summary>
+    public static bool IsHung(IntPtr hWnd)
+    {
+        try { return IsHungAppWindow(hWnd); } catch { return false; }
     }
 
     public static void Move(int x, int y)

@@ -329,8 +329,35 @@ public sealed class AgentServer
     private readonly object _opsLock = new object();
     private long _opSeq;
 
+    // Telemetri per endpoint (v3.5.0 — Diagnostics & Telemetry):
+    // agregat jumlah/durasi/kegagalan dari operasi yang sama
+    // dengan yang dicatat RecordOp (termasuk /ping & /frame),
+    // dibaca lewat GET /diag.
+    private sealed class DiagStat
+    {
+        public long Count;
+        public long TotalMs;
+        public long MaxMs;
+        public long Fails;
+    }
+
+    private readonly Dictionary<string, DiagStat> _diag = new Dictionary<string, DiagStat>();
+    private readonly long _startTick = Environment.TickCount64;
+
     private void RecordOp(string method, string path, int status, int ms)
     {
+        // Telemetri (v3.5.0): SEMUA operasi masuk agregat /diag —
+        // termasuk /ping & /frame, karena latensi merekalah yang
+        // paling sering diukur audit kecepatan.
+        lock (_opsLock)
+        {
+            string key = method + " " + path;
+            if (!_diag.TryGetValue(key, out var ds)) { ds = new DiagStat(); _diag[key] = ds; }
+            ds.Count++;
+            ds.TotalMs += ms;
+            if (ms > ds.MaxMs) ds.MaxMs = ms;
+            if (status >= 400) ds.Fails++;
+        }
         // v2.4.2: cek kesehatan (/ping) dan cek gambar cepat (/frame)
         // tidak dicatat — keduanya panggilan latar yang sering dan
         // hanya menggeser operasi penting keluar dari cincin 50.
@@ -479,6 +506,11 @@ public sealed class AgentServer
                         ["w"] = it.Rect.Width,
                         ["h"] = it.Rect.Height,
                         ["enabled"] = it.Enabled,
+                        ["value"] = it.Value,
+                        ["state"] = it.State,
+                        ["patterns"] = it.Patterns,
+                        ["automationId"] = it.AutomationId,
+                        ["class"] = it.ClassName,
                     });
                 }
                 var fgTitle = "";
@@ -554,7 +586,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "3.4.1",
+                    ["version"] = "3.5.0",
                     ["admin"] = Settings.IsElevated(),
                     ["pc"] = Environment.MachineName,
                     ["windows"] = Environment.OSVersion.VersionString,
@@ -653,7 +685,7 @@ public sealed class AgentServer
                 return Response.JsonObject(new Dictionary<string, object>
                 {
                     ["ok"] = true,
-                    ["version"] = "3.4.1",
+                    ["version"] = "3.5.0",
                     ["admin"] = Settings.IsElevated(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
@@ -949,6 +981,106 @@ public sealed class AgentServer
                 });
             }
 
+            if (req.Method == "GET" && req.Path == "/state")
+            {
+                _onActivity();
+                // Potret kondisi desktop menyeluruh (v3.5.0 —
+                // Desktop State Awareness): monitor, semua jendela
+                // (posisi + status hang), jendela depan, mouse,
+                // dan idle user — satu panggilan menggantikan
+                // tebak-tebakan dari screenshot.
+                var fgH = OnUi(NativeInput.ForegroundHandle);
+                var wins = OnUi(NativeInput.ListWindows);
+                var wlist = new List<Dictionary<string, object>>();
+                foreach (var w in wins)
+                {
+                    bool hung = false;
+                    try { var hh = w.Handle; hung = OnUi(() => NativeInput.IsHung(hh)); } catch { }
+                    wlist.Add(new Dictionary<string, object>
+                    {
+                        ["title"] = w.Title,
+                        ["process"] = w.Process,
+                        ["pid"] = w.Pid,
+                        ["x"] = w.Rect.X,
+                        ["y"] = w.Rect.Y,
+                        ["w"] = w.Rect.Width,
+                        ["h"] = w.Rect.Height,
+                        ["foreground"] = w.Handle == fgH,
+                        ["hung"] = hung,
+                    });
+                }
+                var mons = new List<Dictionary<string, object>>();
+                foreach (var s in Screen.AllScreens)
+                {
+                    mons.Add(new Dictionary<string, object>
+                    {
+                        ["device"] = s.DeviceName,
+                        ["x"] = s.Bounds.X,
+                        ["y"] = s.Bounds.Y,
+                        ["w"] = s.Bounds.Width,
+                        ["h"] = s.Bounds.Height,
+                        ["primary"] = s.Primary,
+                    });
+                }
+                double dpiScale = 1.0;
+                try { using (var g = Graphics.FromHwnd(IntPtr.Zero)) dpiScale = Math.Round(g.DpiX / 96.0, 3); } catch { }
+                var mouse = Cursor.Position;
+                int idleSec = -1;
+                try { idleSec = NativeInput.IdleSeconds(); } catch { }
+                string fgTitle = "";
+                foreach (var w in wins) if (w.Handle == fgH) { fgTitle = w.Title; break; }
+                _log($"potret kondisi desktop diminta ({wlist.Count} jendela)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["monitors"] = mons,
+                    ["dpiScale"] = dpiScale,
+                    ["foreground"] = fgTitle,
+                    ["windows"] = wlist,
+                    ["mouse"] = new Dictionary<string, object> { ["x"] = mouse.X, ["y"] = mouse.Y },
+                    ["userIdleSec"] = idleSec,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/diag")
+            {
+                _onActivity();
+                // Telemetri (v3.5.0 — Diagnostics & Telemetry):
+                // agregat latensi & kegagalan per endpoint sejak
+                // aplikasi mulai + resource proses MuseLink.
+                var eps = new List<Dictionary<string, object>>();
+                lock (_opsLock)
+                {
+                    foreach (var kv in _diag)
+                    {
+                        var d = kv.Value;
+                        eps.Add(new Dictionary<string, object>
+                        {
+                            ["endpoint"] = kv.Key,
+                            ["count"] = d.Count,
+                            ["avgMs"] = d.Count > 0 ? d.TotalMs / d.Count : 0,
+                            ["maxMs"] = d.MaxMs,
+                            ["fails"] = d.Fails,
+                        });
+                    }
+                }
+                eps.Sort((a, b) => ((long)b["count"]).CompareTo((long)a["count"]));
+                var proc = Process.GetCurrentProcess();
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["version"] = "3.5.0",
+                    ["uptimeSec"] = (Environment.TickCount64 - _startTick) / 1000,
+                    ["process"] = new Dictionary<string, object>
+                    {
+                        ["ramMB"] = proc.WorkingSet64 / 1048576,
+                        ["cpuSec"] = Math.Round(proc.TotalProcessorTime.TotalSeconds, 1),
+                        ["threads"] = proc.Threads.Count,
+                    },
+                    ["endpoints"] = eps,
+                });
+            }
+
             if (req.Method == "GET" && req.Path == "/lastops")
             {
                 // Tanpa _onActivity/_log berlebihan: ini jalur cek
@@ -986,6 +1118,10 @@ public sealed class AgentServer
                 // (pelajaran dari /stream v2.1).
                 int fw = ParseClamp(GetQueryParam(req.Query, "w"), 1280, 320, 1920);
                 int fq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
+                // Format PNG tanpa hilang (v3.5.0): ?fmt=png — teks
+                // kecil (panel Figma dsb.) terbaca tajam, tidak blur
+                // JPEG. Muatan lebih besar; pakai untuk wilayah.
+                bool pngFmt = GetQueryParam(req.Query, "fmt") == "png";
                 // Wilayah (v2.4.4): rx/ry/rw/rh membatasi tangkapan ke
                 // satu wilayah — muatan jauh lebih kecil daripada
                 // bingkai layar penuh (kurva audit #1: ukuran muatan
@@ -1008,7 +1144,7 @@ public sealed class AgentServer
                     {
                         if (gridOn) DrawGrid(bmp, effR, gridStep);
                         if (markOn) DrawClickMark(bmp, effR);
-                        jpeg = EncodeJpeg(bmp, fq);
+                        jpeg = pngFmt ? EncodePng(bmp) : EncodeJpeg(bmp, fq);
                     }
                     _log($"bingkai wilayah diambil ({rx},{ry} {rw}x{rh} -> {fw}px, q{fq})" + (gridOn ? " +grid" : ""));
                 }
@@ -1023,7 +1159,7 @@ public sealed class AgentServer
                         {
                             if (gridOn) DrawGrid(bmp, scrB, gridStep);
                             if (markOn) DrawClickMark(bmp, scrB);
-                            jpeg = EncodeJpeg(bmp, fq);
+                            jpeg = pngFmt ? EncodePng(bmp) : EncodeJpeg(bmp, fq);
                         }
                     }
                     catch
@@ -1032,12 +1168,12 @@ public sealed class AgentServer
                         {
                             if (gridOn) DrawGrid(bmp, scrB, gridStep);
                             if (markOn) DrawClickMark(bmp, scrB);
-                            jpeg = EncodeJpeg(bmp, fq);
+                            jpeg = pngFmt ? EncodePng(bmp) : EncodeJpeg(bmp, fq);
                         }
                     }
                     _log($"bingkai instan diambil ({fw}px, q{fq})" + (gridOn ? " +grid" : ""));
                 }
-                return new Response { ContentType = "image/jpeg", BodyBytes = jpeg };
+                return new Response { ContentType = pngFmt ? "image/png" : "image/jpeg", BodyBytes = jpeg };
             }
 
             if (req.Method == "GET" && req.Path == "/burst")
@@ -2463,8 +2599,8 @@ public sealed class AgentServer
                             string action = GetString(root, "action", "");
                             if (string.IsNullOrWhiteSpace(query))
                                 return Response.Json("{\"ok\":false,\"error\":\"title kosong\"}", 400);
-                            if (action != "close" && action != "minimize" && action != "maximize" && action != "restore")
-                                return Response.Json("{\"ok\":false,\"error\":\"action harus close/minimize/maximize/restore\"}", 400);
+                            if (action != "close" && action != "minimize" && action != "maximize" && action != "restore" && action != "rect")
+                                return Response.Json("{\"ok\":false,\"error\":\"action harus close/minimize/maximize/restore/rect\"}", 400);
                             var wins = OnUi(NativeInput.ListWindows);
                             NativeInput.WindowInfo match = null;
                             foreach (var w in wins)
@@ -2478,7 +2614,27 @@ public sealed class AgentServer
                             if (match == null)
                                 return Response.Json("{\"ok\":false,\"error\":\"jendela tidak ditemukan\"}", 404);
                             var m = match;
-                            bool sent = OnUi(() => NativeInput.WindowAction(m.Handle, action));
+                            bool sent;
+                            if (action == "rect")
+                            {
+                                // Atur posisi & ukuran persis angka
+                                // (v3.5.0 — Window Manager): jendela
+                                // dipulihkan dulu dari maximize agar
+                                // ukuran baru berlaku.
+                                if (!HasInt(root, "x") || !HasInt(root, "y") || !HasInt(root, "w") || !HasInt(root, "h"))
+                                    return MissingField("x/y/w/h");
+                                int wx = GetInt(root, "x", 0), wy = GetInt(root, "y", 0);
+                                int ww = GetInt(root, "w", 0), wh = GetInt(root, "h", 0);
+                                sent = OnUi(() =>
+                                {
+                                    NativeInput.WindowAction(m.Handle, "restore");
+                                    return NativeInput.MoveWindowRect(m.Handle, wx, wy, ww, wh);
+                                });
+                            }
+                            else
+                            {
+                                sent = OnUi(() => NativeInput.WindowAction(m.Handle, action));
+                            }
                             _onActivity();
                             _log($"jendela '{m.Title}': {action}");
                             return Response.JsonObject(new Dictionary<string, object>
@@ -2514,6 +2670,27 @@ public sealed class AgentServer
                             });
                             _onActivity();
                             _log($"drag {x1},{y1} -> {x2},{y2} ({button}{(mods.Count > 0 ? ", +penahan" : "")})");
+                            // Verifikasi hasil drag (v3.5.0 — Action
+                            // Verification): {expectText} -> server
+                            // menunggu teks itu muncul di sekitar
+                            // titik TUJUAN drag (pola /click v2.6.4).
+                            string expectD = GetString(root, "expectText", "");
+                            if (!string.IsNullOrWhiteSpace(expectD))
+                            {
+                                int expTimeout = GetInt(root, "expectTimeoutMs", 3000);
+                                if (expTimeout < 250) expTimeout = 250;
+                                if (expTimeout > 10000) expTimeout = 10000;
+                                int expRadius = GetInt(root, "expectRadius", 400);
+                                bool verified = WaitTextNear(x2, y2, expectD, expTimeout, expRadius, out int waitedD);
+                                _log($"drag verifikasi '{expectD}': {(verified ? "KETEMU" : "tidak ketemu")} ({waitedD}ms)");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true,
+                                    ["verified"] = verified,
+                                    ["expectText"] = expectD,
+                                    ["waitedMs"] = waitedD,
+                                });
+                            }
                             return Ok();
                         }
                         case "/type":
@@ -2557,6 +2734,228 @@ public sealed class AgentServer
                             _onActivity();
                             _log($"tempel teks ({text.Length} karakter)");
                             return Ok();
+                        }
+                        case "/setvalue":
+                        {
+                            // Isi kolom TERVERIFIKASI (v3.5.0): jalur
+                            // utama LATAR lewat ValuePattern UIA —
+                            // tanpa klik, tanpa fokus, tanpa mouse
+                            // (Background Interaction). Cadangan fisik
+                            // bila UIA tidak mendukung: klik -> Ctrl+A
+                            // -> tempel -> baca balik isi kolom lewat
+                            // Ctrl+A + Ctrl+C -> bandingkan -> Enter
+                            // (opsional). Lahir dari pahitnya mengisi
+                            // kolom angka Figma (Electron): /type
+                            // tidak selalu masuk dan dulu verifikasi
+                            // butuh OCR berkali-kali.
+                            if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
+                            int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
+                            string text = GetString(root, "text", "");
+                            bool enter = GetBool(root, "enter", true);
+                            int clicks = GetInt(root, "clicks", 1);
+                            if (clicks < 1) clicks = 1;
+                            if (clicks > 2) clicks = 2;
+                            string via = "uia";
+                            string readback = OnUi(() =>
+                            {
+                                if (UiaScan.TrySetValueAtPoint(x, y, text, out var rb1, out var _en)) return rb1;
+                                return null;
+                            });
+                            if (readback == null)
+                            {
+                                via = "fisik";
+                                int nClick = clicks;
+                                readback = OnUi(() =>
+                                {
+                                    NativeInput.ClickTimes(x, y, "left", nClick);
+                                    System.Threading.Thread.Sleep(80);
+                                    NativeInput.PressKey("^a");
+                                    SetClipboardText(text);
+                                    NativeInput.PressKey("^v");
+                                    System.Threading.Thread.Sleep(120);
+                                    // Baca balik: pilih semua isi kolom
+                                    // lalu salin — clipboard kini
+                                    // memegang isi kolom yang SEBENARNYA.
+                                    NativeInput.PressKey("^a");
+                                    NativeInput.PressKey("^c");
+                                    System.Threading.Thread.Sleep(60);
+                                    try { return Clipboard.ContainsText() ? Clipboard.GetText() : ""; }
+                                    catch { return ""; }
+                                });
+                            }
+                            bool entered = false;
+                            if (enter)
+                            {
+                                OnUi(() =>
+                                {
+                                    // Jalur UIA tidak memindahkan fokus;
+                                    // fokuskan elemennya agar Enter
+                                    // sampai ke kolom yang benar.
+                                    if (via == "uia") { try { UiaScan.FocusAtPoint(x, y); } catch { } }
+                                    NativeInput.PressKey("ENTER");
+                                    return true;
+                                });
+                                entered = true;
+                            }
+                            _onActivity();
+                            _lastClickX = x; _lastClickY = y; _lastClickTick = Environment.TickCount64;
+                            string rb = (readback ?? "").Trim();
+                            bool match = string.Equals(rb, text.Trim(), StringComparison.Ordinal);
+                            _log($"setvalue {x},{y} via {via}: '{(text.Length > 20 ? text.Substring(0, 20) + "…" : text)}' -> baca balik {(match ? "COCOK" : "BEDA '" + (rb.Length > 20 ? rb.Substring(0, 20) + "…" : rb) + "'")}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["via"] = via,
+                                ["readback"] = rb,
+                                ["match"] = match,
+                                ["entered"] = entered,
+                            });
+                        }
+                        case "/readvalue":
+                        {
+                            // Baca nilai elemen di titik layar tanpa
+                            // menyentuhnya (v3.5.0) — pasangan
+                            // /setvalue untuk cek sebelum/sesudah.
+                            if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
+                            int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
+                            string val = "", nm = "", tp = "";
+                            bool okR = OnUi(() => UiaScan.ReadAtPoint(x, y, out val, out nm, out tp));
+                            _onActivity();
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = okR,
+                                ["value"] = val,
+                                ["name"] = nm,
+                                ["type"] = tp,
+                            });
+                        }
+                        case "/uia/act":
+                        {
+                            // Operasi LATAR via pola UIA (v3.5.0 —
+                            // Background Interaction): invoke/toggle/
+                            // expand/collapse/select/setvalue/focus
+                            // tanpa mouse & keyboard fisik. Sasaran:
+                            // titik {x,y}, atau {automationId}, atau
+                            // {name}, atau {index} pindai jendela depan.
+                            string action = GetString(root, "action", "invoke");
+                            string text = GetString(root, "text", "");
+                            string name = GetString(root, "name", "");
+                            string aid = GetString(root, "automationId", "");
+                            int index = GetInt(root, "index", -1);
+                            int? px = HasInt(root, "x") ? GetInt(root, "x", 0) : (int?)null;
+                            int? py = HasInt(root, "y") ? GetInt(root, "y", 0) : (int?)null;
+                            var oc = OnUi(() => UiaScan.Act(px, py, aid, name, index, action, text));
+                            _onActivity();
+                            _log($"uia/act {action} '{oc.ElementName}' {(oc.Ok ? "ok" : "gagal: " + oc.Error)}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = oc.Ok,
+                                ["action"] = action,
+                                ["element"] = oc.ElementName,
+                                ["type"] = oc.ElementType,
+                                ["value"] = oc.Value,
+                                ["error"] = oc.Error,
+                            });
+                        }
+                        case "/waitfor":
+                        {
+                            // Tunggu CERDAS sisi server (v3.5.0 —
+                            // Smart Waiting): berhenti saat kondisi
+                            // terpenuhi, bukan durasi tetap. kind:
+                            // text (teks muncul di wilayah, OCR),
+                            // uia (elemen bernama muncul di jendela
+                            // depan), window (jendela berjudul
+                            // muncul), stable (wilayah layar berhenti
+                            // berubah), process (proses muncul/hilang).
+                            string kind = GetString(root, "kind", "");
+                            if (kind != "text" && kind != "uia" && kind != "window" && kind != "stable" && kind != "process")
+                                return Response.Json("{\"ok\":false,\"error\":\"kind harus text/uia/window/stable/process\"}", 400);
+                            string text = GetString(root, "text", "");
+                            string pname = GetString(root, "process", "");
+                            bool gone = GetBool(root, "gone", false);
+                            int timeoutMs = GetInt(root, "timeoutMs", 10000);
+                            if (timeoutMs < 250) timeoutMs = 250;
+                            if (timeoutMs > 120000) timeoutMs = 120000;
+                            int stableMs = GetInt(root, "stableMs", 800);
+                            int rx = GetInt(root, "x", 0), ry = GetInt(root, "y", 0);
+                            int rw = GetInt(root, "w", 0), rh = GetInt(root, "h", 0);
+                            var wil = (rw > 0 && rh > 0)
+                                ? new Rectangle(rx, ry, rw, rh)
+                                : (Screen.PrimaryScreen != null ? Screen.PrimaryScreen.Bounds : new Rectangle(0, 0, 1280, 720));
+                            var swW = System.Diagnostics.Stopwatch.StartNew();
+                            bool met = false;
+                            string lastHash = null;
+                            long stableSince = -1;
+                            while (swW.ElapsedMilliseconds < timeoutMs)
+                            {
+                                try
+                                {
+                                    switch (kind)
+                                    {
+                                        case "text":
+                                        {
+                                            using (var bmp = CaptureRegionBitmap(wil, 0, out var eff))
+                                            {
+                                                var rr = OcrReader.Read(bmp, eff.X, eff.Y);
+                                                if (rr.Text != null && rr.Text.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0) met = true;
+                                            }
+                                            break;
+                                        }
+                                        case "uia":
+                                        {
+                                            var items = OnUi(() => UiaScan.ScanForeground(200));
+                                            foreach (var it in items)
+                                                if (it.Name.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0) { met = true; break; }
+                                            break;
+                                        }
+                                        case "window":
+                                        {
+                                            var wins = OnUi(NativeInput.ListWindows);
+                                            foreach (var w in wins)
+                                                if (w.Title.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0) { met = true; break; }
+                                            break;
+                                        }
+                                        case "stable":
+                                        {
+                                            string h;
+                                            using (var bmp = CaptureRegionBitmap(wil, 320, out var eff2))
+                                            using (var ms = new MemoryStream())
+                                            {
+                                                bmp.Save(ms, ImageFormat.Jpeg);
+                                                var bytes = ms.ToArray();
+                                                using (var md5 = System.Security.Cryptography.MD5.Create())
+                                                    h = Convert.ToBase64String(md5.ComputeHash(bytes));
+                                            }
+                                            if (h == lastHash)
+                                            {
+                                                if (stableSince < 0) stableSince = swW.ElapsedMilliseconds;
+                                                if (swW.ElapsedMilliseconds - stableSince >= stableMs) met = true;
+                                            }
+                                            else { lastHash = h; stableSince = -1; }
+                                            break;
+                                        }
+                                        case "process":
+                                        {
+                                            bool exists = false;
+                                            try { exists = Process.GetProcessesByName(pname).Length > 0; } catch { }
+                                            met = gone ? !exists : exists;
+                                            break;
+                                        }
+                                    }
+                                }
+                                catch { /* kondisi belum bisa dibaca — lanjut polling */ }
+                                if (met) break;
+                                System.Threading.Thread.Sleep(250);
+                            }
+                            _onActivity();
+                            _log($"waitfor {kind} '{text}{pname}': {(met ? "TERPENUHI" : "timeout")} ({swW.ElapsedMilliseconds}ms)");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["met"] = met,
+                                ["kind"] = kind,
+                                ["waitedMs"] = (int)swW.ElapsedMilliseconds,
+                            });
                         }
                         case "/focus":
                         {
@@ -2727,6 +3126,37 @@ public sealed class AgentServer
         _onActivity();
         _log("buka: " + path);
         Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        // Verifikasi buka (v3.5.0 — Action Verification): caller
+        // boleh meminta bukti jendela berjudul tertentu muncul.
+        string expect = GetString(root, "expectWindow", "");
+        if (!string.IsNullOrWhiteSpace(expect))
+        {
+            int timeoutMs = GetInt(root, "expectTimeoutMs", 8000);
+            if (timeoutMs < 250) timeoutMs = 250;
+            if (timeoutMs > 30000) timeoutMs = 30000;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            bool found = false;
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                try
+                {
+                    var wins = OnUi(NativeInput.ListWindows);
+                    foreach (var w in wins)
+                        if (w.Title.IndexOf(expect, StringComparison.OrdinalIgnoreCase) >= 0) { found = true; break; }
+                }
+                catch { /* daftar jendela belum bisa dibaca — coba lagi */ }
+                if (found) break;
+                System.Threading.Thread.Sleep(250);
+            }
+            _log($"buka verifikasi jendela '{expect}': {(found ? "MUNCUL" : "tidak muncul")} ({sw.ElapsedMilliseconds}ms)");
+            return Response.JsonObject(new Dictionary<string, object>
+            {
+                ["ok"] = true,
+                ["verified"] = found,
+                ["expectWindow"] = expect,
+                ["waitedMs"] = (int)sw.ElapsedMilliseconds,
+            });
+        }
         return Ok();
     }
 
@@ -3489,6 +3919,44 @@ public sealed class AgentServer
         {
             bmp.UnlockBits(data);
         }
+    }
+
+    // PNG tanpa kompresi hilang (v3.5.0): untuk /frame?fmt=png —
+    // teks kecil di panel aplikasi terbaca tajam, tidak blur JPEG.
+    private static byte[] EncodePng(Bitmap bmp)
+    {
+        using (var ms = new MemoryStream())
+        {
+            bmp.Save(ms, ImageFormat.Png);
+            return ms.ToArray();
+        }
+    }
+
+    // Tunggu teks muncul di sekitar titik (OCR wilayah, polling
+    // 250ms) — dipakai verifikasi aksi (v3.5.0, Action
+    // Verification). Pola sama dengan verifikasi /click v2.6.4.
+    private bool WaitTextNear(int cx, int cy, string text, int timeoutMs, int radius, out int waitedMs)
+    {
+        if (radius < 100) radius = 100;
+        if (radius > 1000) radius = 1000;
+        var wil = new Rectangle(cx - radius, cy - radius, radius * 2, radius * 2);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        bool found = false;
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            try
+            {
+                using (var bmp = CaptureRegionBitmap(wil, 0, out var eff))
+                {
+                    var rr = OcrReader.Read(bmp, eff.X, eff.Y);
+                    if (rr.Text != null && rr.Text.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0) { found = true; break; }
+                }
+            }
+            catch { /* wilayah belum bisa dibaca — coba lagi */ }
+            System.Threading.Thread.Sleep(250);
+        }
+        waitedMs = (int)sw.ElapsedMilliseconds;
+        return found;
     }
 
     private static byte[] EncodeJpeg(Bitmap bmp, long quality)
