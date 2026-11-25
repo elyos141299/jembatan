@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     };
 
     private string _currentPage = "";
+    private readonly Dictionary<string, UserControl> _pages = new Dictionary<string, UserControl>();
+    private IRoomPage _currentRoomPage;
 
     public MainWindow()
     {
@@ -54,9 +56,29 @@ public partial class MainWindow : Window
     private void ShowPage(string key)
     {
         if (key == _currentPage) return;
+        _currentRoomPage?.OnHidden();
         _currentPage = key;
         PageTitle.Text = _titles.TryGetValue(key, out var t) ? t : key;
-        PageHost.Content = new PagePlaceholder(PageTitle.Text);
+        if (!_pages.TryGetValue(key, out var page))
+        {
+            page = key switch
+            {
+                "overview" => new OverviewPage(),
+                "command" => new CommandPage(),
+                "activity" => new ActivityPage(),
+                "desktop" => new DesktopPage(),
+                "automation" => new AutomationPage(),
+                "security" => new SecurityPage(),
+                "connections" => new ConnectionsPage(),
+                "logs" => new LogsPage(),
+                "settings" => new SettingsPage(),
+                _ => new OverviewPage(),
+            };
+            _pages[key] = page;
+        }
+        PageHost.Content = page;
+        _currentRoomPage = page as IRoomPage;
+        _currentRoomPage?.OnShown();
     }
 
     private void RefreshStatus()
