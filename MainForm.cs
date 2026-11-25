@@ -98,18 +98,14 @@ public sealed class MainForm : Form
     // bawah; sensor sistem untuk baris RAM/CPU/GPU; animasi
     // lipat panel & penunda lipat-otomatis.
     private LogFlyoutForm _logFlyout;
+    private ChatFlyoutForm _chatFlyout;
     private long _lastLogToggleTick;
+    private long _lastChatToggleTick;
     private volatile string _cpuText = "…";
     private volatile string _gpuText = "…";
     private CpuTempSensor _cpuSensor;
     private volatile bool _sensorPollBusy;
     private bool _captureSettled;
-    private System.Windows.Forms.Timer _panelAnimTimer;
-    private int _panelAnimFrom;
-    private int _panelAnimTo;
-    private bool _panelAnimHideAtEnd;
-    private long _panelAnimStartTick;
-    private System.Windows.Forms.Timer _collapseDebounce;
     private Panel _titleBar;
     private Label _barTitle;
     private PictureBox _titleLogo;
@@ -130,6 +126,8 @@ public sealed class MainForm : Form
     private RailGlyphButton _railLogBtn;
     private Panel _railLogBar;
     private RoundDot _railLogDot;
+    private RailGlyphButton _railChatBtn;
+    private Panel _railChatBar;
     private Panel _railSettingsBtn;
     private Label _railSettingsGlyph;
     private RoundedPanel _chatStrip;
@@ -148,8 +146,6 @@ public sealed class MainForm : Form
     private System.Windows.Forms.Timer _chatWatch;
     private bool _wasGenerating;
     private int _watchFailures;
-    private bool _panelAutoCollapsed;
-    private bool _logSetupDone;
     private bool _autoStartEnabled;
 
     /// <summary>Keadaan jalan otomatis saat ini (untuk jendela Pengaturan).</summary>
@@ -158,12 +154,11 @@ public sealed class MainForm : Form
     /// <summary>True bila listener sedang berjalan (untuk jendela Pengaturan).</summary>
     internal bool ServerRunning => _server.IsRunning;
 
-    // Panel chat Muse: SplitContainer membagi jendela — Panel1
-    // (kiri) = panel kendali, Panel2 (kanan) = chat WebView2.
-    // Sejak v2.4.1 chat MENYATU permanen (permintaan pengguna):
-    // tidak ada tombol buka/tutup — jendela selalu tampil lebar
-    // dengan chat langsung di sebelah panel kendali.
-    private SplitContainer _split;
+    // v3.4.0 (blueprint user): tata letak DIBALIK — panel kendali
+    // kini penghuni utama jendela (lebar, mengisi seluruh sisa
+    // jendela), dan chat WebView2 jadi jendela MELAYANG dari rel
+    // (ChatFlyoutForm, mekanisme persis Log Aktivitas). Pemisah
+    // SplitContainer pensiun.
     private RoundedPanel _chatBody;
     private Label _chatErrorLabel;
     private Label _chatLoadingLabel;
@@ -213,45 +208,13 @@ public sealed class MainForm : Form
                 _capMax.Maximized = WindowState == FormWindowState.Maximized;
                 _capMax.Invalidate();
             }
-            // v3.0.0 (blueprint): jendela menyempit di bawah 1080px
-            // -> panel kendali melipat sendiri ke rel (sekali per
-            // penyempitan; membuka lagi urusan klik logo di rel dan
-            // TIDAK menimpa pilihan tersimpan user).
+            // v3.4.0: lipat panel pensiun (panel = penghuni utama
+            // jendela, tidak bisa dilipat). Jendela terminimalkan
+            // -> semua flyout rel ikut sembunyi seketika.
             if (WindowState == FormWindowState.Minimized)
             {
                 _logFlyout?.HideImmediate();
-            }
-            // v3.0.1: lipat-otomatis kini DITUNDA ±450ms — lebar
-            // sesaat di bawah 1080px saat jendela dipulihkan dari
-            // termaksimalkan tidak lagi melipat panel secara
-            // permanen; hanya penyempitan yang menetap yang melipat.
-            if (_split != null && _logSetupDone && !_split.Panel1Collapsed
-                && WindowState != FormWindowState.Minimized)
-            {
-                if (ClientSize.Width < 1080)
-                {
-                    if (_collapseDebounce == null)
-                    {
-                        _collapseDebounce = new System.Windows.Forms.Timer { Interval = 450 };
-                        _collapseDebounce.Tick += (s3, e3) =>
-                        {
-                            _collapseDebounce.Stop();
-                            if (_split != null && !_split.Panel1Collapsed
-                                && WindowState != FormWindowState.Minimized
-                                && ClientSize.Width < 1080)
-                            {
-                                _split.Panel1Collapsed = true;
-                                _panelAutoCollapsed = true;
-                            }
-                        };
-                    }
-                    _collapseDebounce.Stop();
-                    _collapseDebounce.Start();
-                }
-                else if (_collapseDebounce != null)
-                {
-                    _collapseDebounce.Stop();
-                }
+                _chatFlyout?.HideImmediate();
             }
         };
         InitTrayIcon();
@@ -259,6 +222,7 @@ public sealed class MainForm : Form
         FormClosed += (s, e) =>
         {
             try { _logFlyout?.Dispose(); } catch { /* abaikan */ }
+            try { _chatFlyout?.Dispose(); } catch { /* abaikan */ }
             try { _cpuSensor?.Dispose(); } catch { /* abaikan */ }
         };
 
@@ -279,14 +243,14 @@ public sealed class MainForm : Form
         Load += (s, e) =>
         {
             RotateLogFileIfNeeded();
-            Log("=== MuseLink v3.3.2 dimulai ===");
+            Log("=== MuseLink v3.4.0 dimulai ===");
             InitStartOptions();
             if (Settings.KeepAwake)
             {
                 NativeInput.SetKeepAwake(true);
                 Log("Jangan tidur: AKTIF (dari pengaturan tersimpan).");
             }
-            EventLog.Add("app-start", "MuseLink v3.3.2 dimulai");
+            EventLog.Add("app-start", "MuseLink v3.4.0 dimulai");
             // v2.8.0: roda gigi melayang di bar judul PENSIUN —
             // Pengaturan kini tombol tetap di bawah panel kiri.
             try { MaximizedBounds = Screen.FromHandle(Handle).WorkingArea; } catch { /* abaikan */ }
@@ -300,17 +264,14 @@ public sealed class MainForm : Form
             _pulseTimer = new System.Windows.Forms.Timer { Interval = 60 };
             _pulseTimer.Tick += PulseTick;
             _pulseTimer.Start();
-            // v2.4.1 (permintaan pengguna): chat Muse MENYATU —
-            // panel kanan selalu tampil di sebelah panel kendali
-            // sejak aplikasi mulai, tanpa tombol buka/tutup.
-            // Lebar panel kiri dikunci ±380px, lalu WebView2 chat
-            // langsung dibuat & dibuka ke muse.ai. InitChatAsync
-            // menelan semua galatnya sendiri (panel menampilkan
-            // pesan galat; jembatan utama tidak terganggu).
-            if (!Settings.PanelOpen) _split.Panel1Collapsed = true;
-            else if (_split.Width > 480) _split.SplitterDistance = 264;
+            // v3.4.0: panel kendali penghuni utama jendela;
+            // WebView2 chat dibuat sejak awal di dalam flyout
+            // chat (tersembunyi) & dibuka ke muse.ai — sesi chat
+            // sudah hangat saat user pertama membuka flyout-nya.
+            // InitChatAsync menelan semua galatnya sendiri
+            // (flyout menampilkan pesan galat; jembatan utama
+            // tidak terganggu).
             RefreshRail();
-            _logSetupDone = true;
             // v3.0.1: panaskan mesin tangkap DXGI sejak awal (di
             // utas latar) agar baris CAPTURE langsung membaca mode
             // aslinya, bukan "gdi" bawaan sebelum bingkai pertama.
@@ -568,18 +529,11 @@ public sealed class MainForm : Form
         _titleDot.MouseDown += TitleBarMouseDown;
 
 
-        // ---------- Pemisah: panel kiri + chat ----------
-        // v3.0.1: pemisah luar (dock log bawah) PENSIUN — log
-        // kini jendela melayang; _split langsung mengisi tengah.
-        _split = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Vertical,
-            FixedPanel = FixedPanel.Panel1,
-            IsSplitterFixed = true,
-            Panel2Collapsed = false,
-            BackColor = Bg,
-        };
+        // ---------- Tengah jendela (v3.4.0) ----------
+        // Pemisah SplitContainer PENSIUN: panel kendali kini
+        // mengisi seluruh tengah jendela (dirakit di bagian
+        // "Panel kendali utama" di bawah), chat pindah ke
+        // flyout rel seperti log & Pengaturan.
 
         // ---------- Log melayang (v3.0.1) ----------
         // Dock bawah pensiun: log kini jendela melayang berwarna
@@ -588,6 +542,15 @@ public sealed class MainForm : Form
         // + badan log yang sama seperti dulu dipindah ke dalamnya.
         var flyout = _logFlyout = new LogFlyoutForm();
         flyout.VisibleChanged += (s, e) =>
+        {
+            RefreshRail();
+        };
+
+        // ---------- Chat melayang (v3.4.0) ----------
+        // Kembaran log: jendela melayang dari rel berisi kartu
+        // chat WebView2 (dibangun BuildChatPane ke Host-nya).
+        var chatFlyout = _chatFlyout = new ChatFlyoutForm();
+        chatFlyout.VisibleChanged += (s, e) =>
         {
             RefreshRail();
         };
@@ -671,7 +634,13 @@ public sealed class MainForm : Form
         flyout.BodyHost.Controls.Add(logBody);
         flyout.BodyHost.Controls.Add(logHair);
 
-        // ---------- Panel kiri ----------
+        // ---------- Panel kendali utama (v3.4.0) ----------
+        // Dulu panel sempit 264px di Panel1 pemisah; kini panel
+        // kendali mengisi SELURUH tengah jendela (didok Fill ke
+        // wadah tengah di akhir BuildLayout, di kanan rel +
+        // garis pembatas DividerInk). Isinya disebar dua kolom:
+        // kolom kiri tetap (kartu kepala + baris status) dan
+        // kolom kanan AKTIVITAS TERAKHIR mengisi sisa ruang.
         var leftRoot = _leftRoot = new Panel
         {
             Dock = DockStyle.Fill,
@@ -679,17 +648,6 @@ public sealed class MainForm : Form
             Padding = new Padding(14),
             Tag = "inkbg",
         };
-        _split.Panel1.Controls.Add(leftRoot);
-        // v3.3.2 (koreksi user): garis pembatas rel <-> panel —
-        // ditambah SESUDAH leftRoot agar terdok lebih dulu, persis
-        // di tepi kiri Panel1 yang menempel ke rel.
-        var railDivider = new Panel
-        {
-            Dock = DockStyle.Left,
-            Width = 1,
-            BackColor = DividerInk,
-        };
-        _split.Panel1.Controls.Add(railDivider);
 
         // Kartu kepala: logo + judul + pill status + alamat + mode.
         var header = _headerCard = new RoundedPanel
@@ -792,7 +750,7 @@ public sealed class MainForm : Form
         MakeRow(tiles, 3, "RAM", "…", out _tileRamValue);
         MakeRow(tiles, 4, "CPU", "…", out _tileCpuValue);
         MakeRow(tiles, 5, "GPU", "…", out _tileGpuValue);
-        MakeRow(tiles, 6, "VERSI", "3.3.2", out _tileVersionValue);
+        MakeRow(tiles, 6, "VERSI", "3.4.0", out _tileVersionValue);
 
 
         // v3.0.0: tombol Pengaturan PINDAH ke rel ikon (roda gigi
@@ -809,7 +767,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             BackColor = LogBg,
             Tag = "inkbg",
-            Padding = new Padding(0, 10, 0, 0),
+            Padding = new Padding(14, 10, 0, 0),
         };
         var miniHair = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Hairline };
         var miniTitle = new Label
@@ -836,20 +794,55 @@ public sealed class MainForm : Form
         miniWrap.Controls.Add(_panelLog);
         miniWrap.Controls.Add(miniTitle);
         miniWrap.Controls.Add(miniHair);
+        // v3.4.0: garis tegak pemisah dua kolom — ditambah PALING
+        // AKHIR agar terdok pertama (tepi kiri kolom aktivitas).
+        var miniDivider = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 1,
+            BackColor = RailHover,
+        };
+        miniWrap.Controls.Add(miniDivider);
+        // Kolom kiri panel (v3.4.0): lebar sama persis dengan isi
+        // panel lama (235px) agar kartu kepala & baris status —
+        // yang digambar dengan koordinat tetap — tidak bergeser
+        // sedikit pun. Kolom kanan (miniWrap) mengisi sisanya.
+        var leftCol = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 235,
+            BackColor = LogBg,
+            Tag = "inkbg",
+        };
+        leftCol.Controls.Add(tilesWrap);
+        leftCol.Controls.Add(header);
         leftRoot.Controls.Add(miniWrap);
         // Urutan tambah menentukan urutan dok (terbalik).
-        leftRoot.Controls.Add(tilesWrap);
-        leftRoot.Controls.Add(header);
+        leftRoot.Controls.Add(leftCol);
 
         BuildChatPane();
+        // v3.4.0: paksa gagang jendela flyout chat tercipta sejak
+        // awal (tanpa menampilkannya) agar WebView2 bisa dibuat &
+        // dimuat di latar sebelum flyout pertama kali dibuka.
+        try { var chatHandle = _chatFlyout.Handle; } catch { /* abaikan */ }
 
         BuildRail();
 
-        // Susunan dok form: tengah (rel + isi), lalu bawah, lalu
-        // atas. Rel menempel di tuan rumah yang sama dengan pemisah
-        // luar agar tingginya penuh sebadan jendela.
+        // Susunan dok form: tengah (rel + pembatas + panel utama),
+        // lalu atas. Rel menempel di tuan rumah yang sama agar
+        // tingginya penuh sebadan jendela.
         var mid = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
-        mid.Controls.Add(_split);
+        mid.Controls.Add(leftRoot);
+        // v3.3.2 (koreksi user): garis pembatas rel <-> panel —
+        // ditambah SESUDAH leftRoot agar terdok lebih dulu, persis
+        // di tepi kanan rel.
+        var railDivider = new Panel
+        {
+            Dock = DockStyle.Left,
+            Width = 1,
+            BackColor = DividerInk,
+        };
+        mid.Controls.Add(railDivider);
         mid.Controls.Add(_rail);
         Controls.Add(mid);
         Controls.Add(titleBar);
@@ -872,10 +865,11 @@ public sealed class MainForm : Form
     }
 
     // ---------- Rel ikon 56px (v3.0.0, blueprint final) ----------
-    // Rel tinta di tepi kiri sebadan jendela: logo (klik = lipat /
-    // buka panel kendali), titik status (klik sama), tombol log
-    // (garis sage saat log terbuka + titik merah saat ada error),
-    // roda gigi Pengaturan menempel di bawah.
+    // Rel tinta di tepi kiri sebadan jendela: logo + titik status
+    // (penanda; sejak v3.4.0 pasif karena panel tidak dilipat),
+    // tombol log (garis sage saat log terbuka + titik merah saat
+    // ada error), tombol chat (v3.4.0 — garis sage saat flyout
+    // chat terbuka), roda gigi Pengaturan menempel di bawah.
     private void BuildRail()
     {
         var rail = _rail = new Panel
@@ -890,7 +884,6 @@ public sealed class MainForm : Form
             Location = new Point(12, 12),
             BackColor = Rail,
             SizeMode = PictureBoxSizeMode.Zoom,
-            Cursor = Cursors.Hand,
         };
         try
         {
@@ -898,7 +891,9 @@ public sealed class MainForm : Form
                 if (ic != null) _railLogo.Image = ic.ToBitmap();
         }
         catch { /* tanpa logo pun rel tetap utuh */ }
-        _railLogo.Click += (s, e) => TogglePanel();
+        // v3.4.0: klik logo & titik status DULU melipat panel —
+        // panel kini penghuni utama yang tidak dilipat, jadi
+        // keduanya pasif (murni penanda).
         rail.Controls.Add(_railLogo);
 
         var statusZone = new Panel
@@ -907,7 +902,6 @@ public sealed class MainForm : Form
             Size = new Size(56, 44),
             BackColor = Rail,
             Tag = "inkbg",
-            Cursor = Cursors.Hand,
         };
         _railStatusDot = new RoundDot
         {
@@ -918,8 +912,6 @@ public sealed class MainForm : Form
             DotColor = DotWaiting,
         };
         statusZone.Controls.Add(_railStatusDot);
-        statusZone.Click += (s, e) => TogglePanel();
-        _railStatusDot.Click += (s, e) => TogglePanel();
         rail.Controls.Add(statusZone);
 
         // v3.0.1: tombol log kini RailGlyphButton — glif digambar
@@ -962,6 +954,36 @@ public sealed class MainForm : Form
         logBtn.MouseLeave += (s, e) => RefreshRail();
         rail.Controls.Add(logBtn);
 
+        // v3.4.0: tombol CHAT di rel — membuka flyout chat
+        // (WebView2) dengan mekanisme persis tombol log: glif
+        // gelembung percakapan, bar sage saat flyout terbuka,
+        // pasangan Click+MouseDown dengan penjaga pemicu ganda
+        // di ToggleChatPanel.
+        var chatBtn = _railChatBtn = new RailGlyphButton
+        {
+            Location = new Point(0, 152),
+            Size = new Size(56, 48),
+            BackColor = Rail,
+            Tag = "inkbg",
+            Cursor = Cursors.Hand,
+            Glyph = "\uE8BD",
+            GlyphColor = InkOnDark,
+            GlyphSize = 15f,
+        };
+        _railChatBar = new Panel
+        {
+            Location = new Point(0, 10),
+            Size = new Size(3, 28),
+            BackColor = Sage,
+            Visible = false,
+        };
+        chatBtn.Controls.Add(_railChatBar);
+        chatBtn.Click += (s, e) => ToggleChatPanel();
+        chatBtn.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) ToggleChatPanel(); };
+        chatBtn.MouseEnter += (s, e) => PaintChatButton(true);
+        chatBtn.MouseLeave += (s, e) => RefreshRail();
+        rail.Controls.Add(chatBtn);
+
         var setBtn = _railSettingsBtn = new Panel
         {
             Dock = DockStyle.Bottom,
@@ -999,66 +1021,24 @@ public sealed class MainForm : Form
         if (_railLogBar != null) _railLogBar.Visible = open;
     }
 
+    private void PaintChatButton(bool hover)
+    {
+        if (_railChatBtn == null) return;
+        bool open = _chatFlyout != null && _chatFlyout.Visible;
+        _railChatBtn.BackColor = open || hover ? RailHover : Rail;
+        if (_railChatBar != null) _railChatBar.Visible = open;
+    }
+
     /// <summary>Warna tombol log di rel mengikuti keadaan panel log &amp; error.</summary>
     internal void RefreshRail()
     {
         PaintRailButton(false);
+        PaintChatButton(false);
         if (_railLogDot != null) _railLogDot.Visible = _errorCount > 0;
     }
 
-    /// <summary>
-    /// Lipat / buka panel kendali dari rel; pilihan user disimpan.
-    /// v3.0.1: BERANIMASI — jarak pemisah bergeser halus ±170ms
-    /// (ease-out kubik), bukan muncul/hilang tiba-tiba.
-    /// </summary>
-    private void TogglePanel()
-    {
-        if (_split == null) return;
-        bool opening = _split.Panel1Collapsed;
-        _panelAutoCollapsed = false;
-        try { Settings.PanelOpen = opening; } catch { /* abaikan */ }
-        if (opening) AnimatePanelTo(264, false);
-        else AnimatePanelTo(25, true);
-    }
-
-    private void AnimatePanelTo(int target, bool hideAtEnd)
-    {
-        if (_panelAnimTimer == null)
-        {
-            _panelAnimTimer = new System.Windows.Forms.Timer { Interval = 15 };
-            _panelAnimTimer.Tick += PanelAnimTick;
-        }
-        _panelAnimTimer.Stop();
-        if (_split.Panel1Collapsed)
-        {
-            _split.Panel1Collapsed = false;
-            try { _split.SplitterDistance = 25; } catch { /* abaikan */ }
-        }
-        _panelAnimFrom = _split.SplitterDistance;
-        _panelAnimTo = target;
-        _panelAnimHideAtEnd = hideAtEnd;
-        _panelAnimStartTick = Environment.TickCount64;
-        _panelAnimTimer.Start();
-    }
-
-    private void PanelAnimTick(object sender, EventArgs e)
-    {
-        if (_split == null) { _panelAnimTimer.Stop(); return; }
-        double t = Math.Min(1.0, (Environment.TickCount64 - _panelAnimStartTick) / 170.0);
-        double ease = 1 - Math.Pow(1 - t, 3);
-        int v = _panelAnimFrom + (int)((_panelAnimTo - _panelAnimFrom) * ease);
-        try
-        {
-            if (_split.Width > 480) _split.SplitterDistance = Math.Max(25, v);
-        }
-        catch { /* abaikan */ }
-        if (t >= 1)
-        {
-            _panelAnimTimer.Stop();
-            if (_panelAnimHideAtEnd) _split.Panel1Collapsed = true;
-            else { try { _split.SplitterDistance = 264; } catch { /* abaikan */ } }
-        }
-    }
+    // v3.4.0: TogglePanel + animasi lipat PENSIUN — panel kendali
+    // tidak lagi bisa dilipat karena ia penghuni utama jendela.
 
     // Satu baris rincian status (v3.0.0 — pengganti tile 2x2):
     // keterangan mikro di kiri, nilai semibold di sebelahnya,
@@ -1145,12 +1125,13 @@ public sealed class MainForm : Form
     }
 
     // ---------- Panel chat Muse ----------
-    // Panel kanan berisi situs muse.ai yang ditanam lewat WebView2 —
+    // Kartu chat berisi situs muse.ai yang ditanam lewat WebView2 —
     // isinya website Muse yang sama persis seperti di browser; user
     // login dengan akunnya SENDIRI di panel ini, aplikasi tidak pernah
-    // menyentuh kredensial. Sejak v2.4.1 panel ini MENYATU permanen
-    // (dibuat saat Load) — jembatan tetap jalan penuh walau WebView2
-    // gagal/runtimenya tidak ada (panel hanya menampilkan galat).
+    // menyentuh kredensial. Sejak v3.4.0 kartu ini tinggal di flyout
+    // chat rel (dibuat saat Load, flyout tersembunyi) — jembatan tetap
+    // jalan penuh walau WebView2 gagal/runtimenya tidak ada (flyout
+    // hanya menampilkan galat).
 
     // UA Chrome desktop terkini — tanpa ini sebagian penyedia login
     // menolak browser tertanam.
@@ -1327,7 +1308,9 @@ public sealed class MainForm : Form
         };
         _chatBody.Controls.Add(_chatLoadingLabel);
 
-        _split.Panel2.Controls.Add(root);
+        // v3.4.0: kartu chat tinggal di dalam flyout chat rel —
+        // bukan lagi penghuni tetap jendela utama.
+        _chatFlyout.Host.Controls.Add(root);
     }
 
     private async Task InitChatAsync()
@@ -2152,6 +2135,40 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
+    /// Buka / tutup chat MELAYANG (v3.4.0 — blueprint user: "chat
+    /// buat seperti log aktivitas"): flyout WebView2 yang muncul
+    /// menempel di kanan tombol chat rel dengan animasi geser +
+    /// pudar, setinggi area konten jendela. Penjaga 350ms
+    /// mencegah pemicu ganda dari pasangan MouseDown+Click.
+    /// Saling eksklusif dengan log & Pengaturan (pola v3.2.2
+    /// diperluas): membuka chat menutup keduanya.
+    /// </summary>
+    private void ToggleChatPanel()
+    {
+        if (_chatFlyout == null || _railChatBtn == null) return;
+        long now = Environment.TickCount64;
+        if (now - _lastChatToggleTick < 350) return;
+        _lastChatToggleTick = now;
+        if (_chatFlyout.Visible)
+        {
+            _chatFlyout.HideAnimated();
+        }
+        else
+        {
+            if (_logFlyout != null && _logFlyout.Visible)
+                _logFlyout.HideImmediate();
+            if (_settingsForm != null && !_settingsForm.IsDisposed && _settingsForm.Visible)
+                _settingsForm.HideImmediate();
+            var anchor = _railChatBtn.RectangleToScreen(_railChatBtn.ClientRectangle);
+            int titleH = _titleBar != null ? _titleBar.Height : 40;
+            int topY = PointToScreen(new Point(0, titleH)).Y;
+            int height = Math.Max(200, ClientSize.Height - titleH);
+            _chatFlyout.ShowAnchored(anchor, this, height, topY);
+        }
+        RefreshRail();
+    }
+
+    /// <summary>
     /// Buka / tutup log MELAYANG (v3.0.1): jendela tinta yang
     /// muncul menempel di kanan tombol log rel dengan animasi
     /// geser + pudar. Penjaga 350ms mencegah pemicu ganda dari
@@ -2172,9 +2189,11 @@ public sealed class MainForm : Form
         {
             // v3.2.2 (koreksi user): flyout bar kiri SALING EKSKLUSIF
             // — membuka log menutup Pengaturan yang sedang terbuka,
-            // tidak boleh menumpuk.
+            // tidak boleh menumpuk. v3.4.0: flyout chat ikut ditutup.
             if (_settingsForm != null && !_settingsForm.IsDisposed && _settingsForm.Visible)
                 _settingsForm.HideImmediate();
+            if (_chatFlyout != null && _chatFlyout.Visible)
+                _chatFlyout.HideImmediate();
             var anchor = _railLogBtn.RectangleToScreen(_railLogBtn.ClientRectangle);
             _logFlyout.ShowAnchored(anchor, this);
         }
@@ -2232,8 +2251,11 @@ public sealed class MainForm : Form
         }
         // v3.2.2 (koreksi user): flyout bar kiri SALING EKSKLUSIF —
         // membuka Pengaturan menutup log yang sedang terbuka.
+        // v3.4.0: flyout chat ikut ditutup.
         if (_logFlyout != null && _logFlyout.Visible)
             _logFlyout.HideImmediate();
+        if (_chatFlyout != null && _chatFlyout.Visible)
+            _chatFlyout.HideImmediate();
         var anchor = _railSettingsBtn != null
             ? _railSettingsBtn.RectangleToScreen(_railSettingsBtn.ClientRectangle)
             : RectangleToScreen(ClientRectangle);
@@ -2279,11 +2301,10 @@ public sealed class MainForm : Form
         }
         BackColor = Bg;
         if (_leftRoot != null) _leftRoot.BackColor = Panel;
-        if (_split != null)
+        if (_chatFlyout != null)
         {
-            _split.BackColor = Bg;
-            _split.Panel1.BackColor = Bg;
-            _split.Panel2.BackColor = Bg;
+            _chatFlyout.BackColor = Bg;
+            _chatFlyout.Host.BackColor = Bg;
         }
         if (_headerCard != null)
         {
@@ -2497,12 +2518,14 @@ public sealed class MainForm : Form
             _logBox.Lines = lines.Skip(lines.Length - 400).ToArray();
             _logSpacingApplied = false; // teks diganti total — terapkan ulang di Log berikutnya
         }
-        // v3.3.2: pratinjau panel mengikuti log — 7 baris
-        // terakhir yang tak kosong.
+        // v3.3.2: pratinjau panel mengikuti log — baris-baris
+        // terakhir yang tak kosong. v3.4.0: kolom AKTIVITAS
+        // TERAKHIR kini lebar & tinggi (kolom kanan panel utama),
+        // jadi pratinjau diisi sampai 60 baris agar kolom terisi.
         if (_panelLog != null)
         {
             var ll = _logBox.Lines.Where(s => s.Length > 0).ToArray();
-            int take = Math.Min(7, ll.Length);
+            int take = Math.Min(60, ll.Length);
             _panelLog.Text = take > 0
                 ? string.Join(Environment.NewLine, ll.Skip(ll.Length - take))
                 : "";

@@ -10,9 +10,9 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>3.3.2</Version>
-    <AssemblyVersion>3.3.2.0</AssemblyVersion>
-    <FileVersion>3.3.2.0</FileVersion>
+    <Version>3.4.0</Version>
+    <AssemblyVersion>3.4.0.0</AssemblyVersion>
+    <FileVersion>3.4.0.0</FileVersion>
     <!-- WebView2 (panel chat v2.2): loader native-nya harus ikut
          ter-extract dari berkas tunggal hasil publish, kalau tidak
          panel chat gagal jalan dari Jembatan.exe single-file. -->
