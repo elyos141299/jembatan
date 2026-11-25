@@ -249,43 +249,80 @@ public sealed class DesktopPage : UserControl
     {
         BackColor = RoomTheme.Bg;
 
-        var top = new FlowLayoutPanel
+        // v4.1.1: tata letak diganti TableLayoutPanel murni (pola
+        // Command Center yang terbukti rapi) — versi FlowLayout +
+        // Dock sebelumnya membuat tombol bilah alat tergeser &
+        // teksnya terpotong.
+        var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            Height = 46,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
             BackColor = RoomTheme.Bg,
-            Padding = new Padding(18, 10, 18, 0),
+            Padding = new Padding(0),
+            Margin = new Padding(0),
         };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        Controls.Add(root);
+
+        var top = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
+            BackColor = RoomTheme.Bg,
+            Padding = new Padding(18, 10, 18, 6),
+            Margin = new Padding(0),
+        };
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104f));
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88f));
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88f));
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        top.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+
         var refreshBtn = RoomUi.Btn("Segarkan");
-        refreshBtn.Width = 96; refreshBtn.Height = 30;
+        refreshBtn.Margin = new Padding(0, 0, 8, 0);
         refreshBtn.Click += (s, e) => RefreshAll();
+        top.Controls.Add(refreshBtn, 0, 0);
         var focusBtn = RoomUi.Btn("Fokus");
-        focusBtn.Width = 80; focusBtn.Height = 30;
+        focusBtn.Margin = new Padding(0, 0, 8, 0);
         focusBtn.Click += (s, e) => FocusSelected();
+        top.Controls.Add(focusBtn, 1, 0);
         var closeBtn = RoomUi.Btn("Tutup");
-        closeBtn.Width = 80; closeBtn.Height = 30;
+        closeBtn.Margin = new Padding(0, 0, 8, 0);
         closeBtn.Click += (s, e) => CloseSelected();
+        top.Controls.Add(closeBtn, 2, 0);
         _note = new Label
         {
+            Dock = DockStyle.Fill,
             ForeColor = RoomTheme.Faint,
             Font = new Font("Segoe UI", 9f),
-            AutoSize = true,
-            Margin = new Padding(14, 8, 0, 0),
+            TextAlign = ContentAlignment.MiddleLeft,
             BackColor = RoomTheme.Bg,
             Text = "Pratinjau diperbarui otomatis saat halaman terbuka.",
         };
-        top.Controls.Add(refreshBtn);
-        top.Controls.Add(focusBtn);
-        top.Controls.Add(closeBtn);
-        top.Controls.Add(_note);
-        Controls.Add(top);
+        top.Controls.Add(_note, 3, 0);
+        root.Controls.Add(top, 0, 0);
+
+        var body = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            BackColor = RoomTheme.Bg,
+            Padding = new Padding(0),
+            Margin = new Padding(0),
+        };
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 470f));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        root.Controls.Add(body, 0, 1);
 
         _list = new ListView
         {
-            Dock = DockStyle.Left,
-            Width = 470,
+            Dock = DockStyle.Fill,
             View = View.Details,
             FullRowSelect = true,
             HeaderStyle = ColumnHeaderStyle.Nonclickable,
@@ -293,24 +330,23 @@ public sealed class DesktopPage : UserControl
             ForeColor = RoomTheme.Text,
             BorderStyle = BorderStyle.None,
             Font = new Font("Segoe UI", 9.5f),
+            Margin = new Padding(0),
         };
         _list.Columns.Add("Jendela", 240);
         _list.Columns.Add("Proses", 110);
         _list.Columns.Add("PID", 56);
         _list.Columns.Add("Keadaan", 60);
         _list.DoubleClick += (s, e) => FocusSelected();
-        Controls.Add(_list);
+        body.Controls.Add(_list, 0, 0);
 
         _preview = new PictureBox
         {
             Dock = DockStyle.Fill,
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = RoomTheme.Panel,
+            Margin = new Padding(0),
         };
-        Controls.Add(_preview);
-        _preview.BringToFront();
-        _list.BringToFront();
-        top.BringToFront();
+        body.Controls.Add(_preview, 1, 0);
     }
 
     public void RefreshAll()
