@@ -71,7 +71,7 @@ public sealed class SettingsForm : Form
         Opacity = 0;
         Shown += (s, e) =>
         {
-            var fade = new Timer { Interval = 15 };
+            var fade = new System.Windows.Forms.Timer { Interval = 15 };
             fade.Tick += (s2, e2) =>
             {
                 Opacity = Math.Min(1.0, Opacity + 0.16);
