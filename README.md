@@ -1,4 +1,13 @@
-# MuseLink v3.2.1 — catatan pengembang
+# MuseLink v3.2.2 — catatan pengembang
+
+## v3.2.2 — Flyout bar kiri saling eksklusif
+
+Koreksi user (25 Nov, 4 screenshot): flyout Log Aktivitas dan
+flyout Pengaturan bisa terbuka bersamaan dan menumpuk saat tombol
+rel diklik bergantian. Kini membuka salah satu langsung menutup
+yang lain (HideImmediate di jalur buka ToggleLogPanel dan
+OpenSettings — dua-duanya jalur masuk satu-satunya ke flyout
+masing-masing, termasuk menu tray).
 
 ## v3.2.1 — Perbaikan P/Invoke seretan bar judul
 
