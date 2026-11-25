@@ -101,7 +101,7 @@ public static class UiKit
         return new ListBox
         {
             Style = (Style)Application.Current.FindResource("CrListBox"),
-            FontFamily = new FontFamily("Consolas"),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
         };
     }
 
@@ -115,7 +115,7 @@ public static class UiKit
         IntPtr h = bmp.GetHbitmap();
         try
         {
-            return Imaging.CreateBitmapSourceFromHBitmap(
+            return System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
                 h, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
         }
         finally { DeleteObject(h); }

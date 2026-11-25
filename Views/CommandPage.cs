@@ -26,7 +26,7 @@ public sealed class CommandPage : UserControl, IRoomPage
     {
         var root = new Grid();
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        root.ColumnDefinitions.Add(new ColumnDefinition { Width = 280 });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
 
         var left = new Grid();
         left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });

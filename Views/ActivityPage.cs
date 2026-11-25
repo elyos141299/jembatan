@@ -30,7 +30,7 @@ public sealed class ActivityPage : UserControl, IRoomPage
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        root.RowDefinitions.Add(new RowDefinition { Height = 92 });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(92) });
 
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
         _filter = UiKit.Input();

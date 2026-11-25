@@ -22,7 +22,7 @@ public sealed class AutomationPage : UserControl, IRoomPage
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var body = new Grid();
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = 380 });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(380) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         _list = UiKit.List();

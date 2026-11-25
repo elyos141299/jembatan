@@ -42,7 +42,7 @@ public sealed class DesktopPage : UserControl, IRoomPage
         root.Children.Add(bar);
 
         var body = new Grid();
-        body.ColumnDefinitions.Add(new ColumnDefinition { Width = 470 });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(470) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         _list = UiKit.List();
