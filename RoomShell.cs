@@ -60,6 +60,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(16, 0, 0, 0),
+            BackColor = RoomTheme.RedBanner,
         };
         _haltBanner.Controls.Add(haltText);
 
@@ -73,6 +74,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 14f, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(20, 15),
+            BackColor = RoomTheme.Bg,
         };
         _activityLabel = new Label
         {
@@ -81,6 +83,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 9f),
             AutoSize = true,
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            BackColor = RoomTheme.Bg,
         };
         _stopBtn = new Button
         {
@@ -136,7 +139,7 @@ public sealed class RoomShell : Panel
             BorderColor = RoomTheme.CardEdge,
             BackColor = RoomTheme.Sidebar,
         };
-        _bridgeDot = new RoundDot { Size = new Size(10, 10), Location = new Point(12, 12), DotColor = AppTheme.DotWaiting };
+        _bridgeDot = new RoundDot { Size = new Size(10, 10), Location = new Point(12, 12), DotColor = AppTheme.DotWaiting, BackColor = RoomTheme.Card };
         _bridgeText = new Label
         {
             Text = "Bridge: …",
@@ -144,6 +147,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(28, 8),
+            BackColor = RoomTheme.Card,
         };
         var bridgeSub = new Label
         {
@@ -152,6 +156,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 8.5f),
             AutoSize = true,
             Location = new Point(28, 28),
+            BackColor = RoomTheme.Card,
         };
         statusCard.Controls.Add(_bridgeDot);
         statusCard.Controls.Add(_bridgeText);
@@ -211,6 +216,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 13f, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(52, 14),
+            BackColor = RoomTheme.Sidebar,
         };
         var verLbl = new Label
         {
@@ -219,6 +225,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 8.5f),
             AutoSize = true,
             Location = new Point(53, 38),
+            BackColor = RoomTheme.Sidebar,
         };
         head.Controls.Add(logo);
         head.Controls.Add(nameLbl);
@@ -289,6 +296,7 @@ public sealed class RoomShell : Panel
             Font = new Font("Segoe UI", 10f),
             TextAlign = ContentAlignment.MiddleLeft,
             Cursor = Cursors.Hand,
+            BackColor = RoomTheme.Sidebar,
         };
         row.Controls.Add(lbl);
         row.Controls.Add(bar);
@@ -299,10 +307,10 @@ public sealed class RoomShell : Panel
         };
         row.Click += click;
         lbl.Click += click;
-        row.MouseEnter += (s, e) => { if (_currentPage != key) row.BackColor = RoomTheme.Hover; };
-        row.MouseLeave += (s, e) => { if (_currentPage != key) row.BackColor = RoomTheme.Sidebar; };
-        lbl.MouseEnter += (s, e) => { if (_currentPage != key) row.BackColor = RoomTheme.Hover; };
-        lbl.MouseLeave += (s, e) => { if (_currentPage != key) row.BackColor = RoomTheme.Sidebar; };
+        row.MouseEnter += (s, e) => { if (_currentPage != key) { row.BackColor = RoomTheme.Hover; lbl.BackColor = RoomTheme.Hover; } };
+        row.MouseLeave += (s, e) => { if (_currentPage != key) { row.BackColor = RoomTheme.Sidebar; lbl.BackColor = RoomTheme.Sidebar; } };
+        lbl.MouseEnter += (s, e) => { if (_currentPage != key) { row.BackColor = RoomTheme.Hover; lbl.BackColor = RoomTheme.Hover; } };
+        lbl.MouseLeave += (s, e) => { if (_currentPage != key) { row.BackColor = RoomTheme.Sidebar; lbl.BackColor = RoomTheme.Sidebar; } };
         _nav[key] = (row, bar, lbl);
         return row;
     }
@@ -324,6 +332,7 @@ public sealed class RoomShell : Panel
             bool aktif = kv.Key == key;
             kv.Value.Bar.Visible = aktif;
             kv.Value.Row.BackColor = aktif ? RoomTheme.Hover : RoomTheme.Sidebar;
+            kv.Value.Text.BackColor = kv.Value.Row.BackColor;
             kv.Value.Text.ForeColor = aktif ? RoomTheme.Text : RoomTheme.Dim;
             kv.Value.Text.Font = new Font("Segoe UI", 10f, aktif ? FontStyle.Bold : FontStyle.Regular);
         }

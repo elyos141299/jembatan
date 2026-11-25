@@ -95,6 +95,7 @@ public sealed class OverviewPage : UserControl
             Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(14, 12),
+            BackColor = RoomTheme.Card,
         };
         var val = new Label
         {
@@ -103,6 +104,7 @@ public sealed class OverviewPage : UserControl
             Font = new Font("Segoe UI", 12.5f, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(13, 32),
+            BackColor = RoomTheme.Card,
         };
         sub = new Label
         {
@@ -111,6 +113,7 @@ public sealed class OverviewPage : UserControl
             Font = new Font("Segoe UI", 9f),
             AutoSize = true,
             Location = new Point(14, 60),
+            BackColor = RoomTheme.Card,
         };
         card.Controls.Add(cap);
         card.Controls.Add(val);
@@ -138,6 +141,7 @@ public sealed class OverviewPage : UserControl
             Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
             AutoSize = true,
             Location = new Point(14, 10),
+            BackColor = RoomTheme.Card,
         };
         var body = new Label
         {
@@ -145,6 +149,7 @@ public sealed class OverviewPage : UserControl
             Font = new Font("Segoe UI", 10f),
             Location = new Point(14, 32),
             Size = new Size(860, 78),
+            BackColor = RoomTheme.Card,
         };
         card.Controls.Add(cap);
         card.Controls.Add(body);
@@ -353,6 +358,7 @@ public sealed class ActivityPage : UserControl
             ForeColor = RoomTheme.Faint,
             Font = new Font("Segoe UI", 8.5f),
             Text = "",
+            BackColor = RoomTheme.Bg,
         };
         Controls.Add(_countLabel);
 
@@ -473,12 +479,14 @@ public sealed class PlaceholderPage : UserControl
             ForeColor = RoomTheme.Text,
             Font = new Font("Segoe UI", 16f, FontStyle.Bold),
             AutoSize = true,
+            BackColor = RoomTheme.Bg,
         };
         var n = new Label
         {
             Text = note,
             ForeColor = RoomTheme.Dim,
             Font = new Font("Segoe UI", 10.5f),
+            BackColor = RoomTheme.Bg,
             AutoSize = true,
             MaximumSize = new Size(560, 0),
         };

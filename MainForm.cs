@@ -122,7 +122,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "4.0.0";
+            return "4.0.1";
         }
     }
     private Label _tileRamValue;
@@ -290,11 +290,13 @@ public sealed class MainForm : Form
         try
         {
             _roomShell = new RoomShell(this, _server);
+            _roomShell.Tag = "roomkeep";
             Controls.Add(_roomShell);
             Controls.SetChildIndex(_roomShell, 1);
             if (_midLegacy != null) _midLegacy.Visible = false;
             if (_titleBar != null)
             {
+                _titleBar.Tag = "roomkeep";
                 _titleBar.Paint -= TitleBarPaint;
                 _titleBar.BackColor = RoomTheme.Sidebar;
                 if (_barTitle != null) _barTitle.ForeColor = RoomTheme.Text;
@@ -304,6 +306,8 @@ public sealed class MainForm : Form
                     cap.GlyphColor = RoomTheme.Text;
                     cap.HoverFill = RoomTheme.Hover;
                 }
+                if (_titleDot != null) _titleDot.BackColor = RoomTheme.Sidebar;
+                if (_titleLogo != null) _titleLogo.BackColor = RoomTheme.Sidebar;
             }
         }
         catch (Exception ex)
@@ -2766,6 +2770,9 @@ public sealed class MainForm : Form
     {
         foreach (Control c in parent.Controls)
         {
+            // v4.0.1: Control Room menjaga palet gelapnya sendiri —
+            // jangan cat ulang & jangan telusuri subtree-nya.
+            if ((c.Tag as string) == "roomkeep") continue;
             if (c is ToggleSwitch ts) ts.BackColor = Card;
             else if (c is RoundDot rd) rd.BackColor = Card;
             else if (c is Panel p && p is not RoundedPanel)
