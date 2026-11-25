@@ -122,7 +122,7 @@ public sealed class MainForm : Form
                 }
             }
             catch { /* abaikan — pakai bawaan */ }
-            return "4.0.1";
+            return "4.0.2";
         }
     }
     private Label _tileRamValue;
@@ -2741,10 +2741,22 @@ public sealed class MainForm : Form
         // panel log = tinta — dicat SETELAH PaintThemedChildren
         // agar tidak ditimpa aturan panel polosnya. Strip status
         // bawah PENSIUN di v3.2.0 (koreksi #5 — isinya duplikat).
-        if (_titleBar != null) { _titleBar.BackColor = Bg; _titleBar.Invalidate(); }
-        if (_barTitle != null) { _barTitle.ForeColor = Ink; _barTitle.BackColor = Color.Transparent; }
-        if (_titleLogo != null) _titleLogo.BackColor = Color.Transparent;
-        if (_titleDot != null) _titleDot.BackColor = TitleDotBg;
+        // v4.0.2: selama Control Room terpasang, bar judul ikut
+        // palet gelapnya — jangan timpa dengan tema terang lama.
+        if (_roomShell != null)
+        {
+            if (_titleBar != null) { _titleBar.BackColor = RoomTheme.Sidebar; _titleBar.Invalidate(); }
+            if (_barTitle != null) { _barTitle.ForeColor = RoomTheme.Text; _barTitle.BackColor = Color.Transparent; }
+            if (_titleLogo != null) _titleLogo.BackColor = RoomTheme.Sidebar;
+            if (_titleDot != null) _titleDot.BackColor = RoomTheme.Sidebar;
+        }
+        else
+        {
+            if (_titleBar != null) { _titleBar.BackColor = Bg; _titleBar.Invalidate(); }
+            if (_barTitle != null) { _barTitle.ForeColor = Ink; _barTitle.BackColor = Color.Transparent; }
+            if (_titleLogo != null) _titleLogo.BackColor = Color.Transparent;
+            if (_titleDot != null) _titleDot.BackColor = TitleDotBg;
+        }
         if (_rail != null) _rail.BackColor = Rail;
         if (_railLogo != null) _railLogo.BackColor = Rail;
         if (_railStatusDot != null) _railStatusDot.BackColor = Rail;
