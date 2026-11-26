@@ -48,14 +48,14 @@ internal static class ReflexEngine
         public Func<IntPtr, string, bool> Dismiss;      // (hwnd, teks tombol) -> terklik?
     }
 
-    private sealed class Fire
+    private sealed class FireEntry
     {
         public string Time, RuleId, Trigger, Detail, Action, Result;
     }
 
     private static readonly object _lock = new();
     private static List<Rule> _rules;
-    private static readonly List<Fire> _fires = new();
+    private static readonly List<FireEntry> _fires = new();
     private static readonly Dictionary<string, long> _lastFireTick = new();
     private static Callbacks _cb;
     private static Thread _poll;
@@ -325,7 +325,7 @@ internal static class ReflexEngine
         catch (Exception ex) { hasil = "ralat: " + ex.Message; }
         lock (_lock)
         {
-            _fires.Add(new Fire
+            _fires.Add(new FireEntry
             {
                 Time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 RuleId = r.Id, Trigger = r.Trigger, Detail = detail,
