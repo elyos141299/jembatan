@@ -113,7 +113,10 @@ public static class UiKit
             Content = text,
             Style = (Style)Application.Current.FindResource("CrButton"),
         };
-        b.Click += onClick;
+        // WAJIB cek null: Click adalah routed event WPF —
+        // AddHandler(null) melempar ArgumentNullException
+        // (crash v5.3.0 saat membuka Console, tombol "+").
+        if (onClick != null) b.Click += onClick;
         return b;
     }
 
@@ -126,7 +129,7 @@ public static class UiKit
             Content = text,
             Style = (Style)Application.Current.FindResource("CrPrimaryButton"),
         };
-        b.Click += onClick;
+        if (onClick != null) b.Click += onClick;
         return b;
     }
 

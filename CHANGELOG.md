@@ -3,6 +3,15 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.3.1 — 2026-11-26
+
+Perbaikan crash: membuka Muse Console (dan halaman lain yang
+memuat tombol contoh desain tanpa handler) membunuh aplikasi —
+UiKit.Btn/PrimaryBtn memasang handler null ke routed event WPF
+(Click), dan AddHandler(null) melempar ArgumentNullException.
+Kini handler hanya dipasang bila tidak null. Tanpa perubahan
+tampilan/fitur dari 5.3.0.
+
 ## 5.3.0 — 2026-11-26
 
 Tata letak dibangun ulang PERSIS desain Figma "MuseLink —
