@@ -3,6 +3,33 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.9.0 — 2026-11-26
+
+Upgrade Tangan (perintah user: "dari kemaren kita belom
+upgrade tangan kamu"). Audit kode sebelum bangun menemukan
+sebagian rencana ternyata SUDAH ada sejak v2.4–v3.11 dan
+tidak perlu dibangun ulang: urutan atomik = /batch (v2.4.1,
+dengan InputArbiter v3.11.0), klik count 1–3, ketik Unicode
+SendInput, clipboard GET/POST + /paste, /setvalue UIA.
+Yang benar-benar baru di ronde ini:
+
+- **Arbitrase manusia di /batch**: bidang opsional
+  `yieldToUserMs` — bila masukan terakhir user <1 detik,
+  rangkaian menunda sampai layar tenang (atau batas
+  tercapai) alih-alih rebutan kursor; dilaporkan sebagai
+  userYielded/userYieldWaitMs/userStillActive di respons.
+  Sensor baru NativeInput.IdleMilliseconds().
+- **/mousedown + /mouseup**: tahan/lepas tombol mouse
+  (pasangan /keydown-/keyup) — tekan-tahan & seret manual
+  dua tahap. Tombol tertahan dicatat dan dilepas paksa oleh
+  jaring pengaman yang sama (Stop & /keys/release).
+- **/click holdMs**: long-press dalam satu aksi lokal.
+- **/drag berparameter**: grabMs/steps/stepMs/settleMs —
+  bawaan persis perilaku lama (60/16/15/60).
+- Endpoint lama & protokol tidak berubah; /mousedown dan
+  /mouseup masuk daftar jalur masukan (terblokir saat
+  Emergency Stop, seperti jalur masukan lain).
+
 ## 5.8.0 — 2026-11-26
 
 Kembali ke tampilan Jembatan v1 (perintah user: "persis

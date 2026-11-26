@@ -319,26 +319,73 @@ public static class NativeInput
         mouse_event(Wheel, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
     }
 
+    /// <summary>Tekan tombol mouse di posisi kursor saat ini
+    /// TANPA melepasnya (v5.9.0 — pasangan ButtonUp; untuk
+    /// tekan-tahan &amp; seret manual dua tahap).</summary>
+    public static void ButtonDown(string button)
+    {
+        ButtonFlags(button, out uint down, out uint _);
+        mouse_event(down, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    /// <summary>Lepas tombol mouse yang sedang tertahan (v5.9.0).</summary>
+    public static void ButtonUp(string button)
+    {
+        ButtonFlags(button, out uint _, out uint up);
+        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    /// <summary>Klik tekan-tahan (v5.9.0): tekan di titik,
+    /// tahan holdMs, lalu lepas — long-press dalam SATU aksi
+    /// lokal sehingga timing-nya tidak dirusak latensi relay.</summary>
+    public static void ClickHold(int x, int y, string button, int holdMs)
+    {
+        if (holdMs < 0) holdMs = 0;
+        if (holdMs > 10000) holdMs = 10000;
+        SetCursorPos(x, y);
+        ButtonDown(button);
+        if (holdMs > 0) Thread.Sleep(holdMs);
+        ButtonUp(button);
+    }
+
     /// <summary>
     /// Seret (drag): tekan tombol di titik awal, gerakkan bertahap
     /// ke titik akhir, lalu lepas. Gerakan dibuat bertahap agar
     /// aplikasi tujuan menerima event drag dengan wajar.
     /// </summary>
     public static void Drag(int x1, int y1, int x2, int y2, string button)
+        => Drag(x1, y1, x2, y2, button, 60, 16, 15, 60);
+
+    /// <summary>
+    /// Seret dengan timing yang bisa diatur (v5.9.0): grabMs =
+    /// tahan di titik awal sebelum bergerak (target sensitif
+    /// seperti node Figma butuh genggaman mantap), steps/stepMs
+    /// = kehalusan lintasan, settleMs = tahan di tujuan sebelum
+    /// lepas. Bawaan memanggil versi lama persis (60/16/15/60).
+    /// </summary>
+    public static void Drag(int x1, int y1, int x2, int y2, string button,
+        int grabMs, int steps, int stepMs, int settleMs)
     {
+        if (grabMs < 0) grabMs = 0;
+        if (grabMs > 2000) grabMs = 2000;
+        if (steps < 1) steps = 1;
+        if (steps > 120) steps = 120;
+        if (stepMs < 0) stepMs = 0;
+        if (stepMs > 100) stepMs = 100;
+        if (settleMs < 0) settleMs = 0;
+        if (settleMs > 2000) settleMs = 2000;
         ButtonFlags(button, out uint down, out uint up);
         SetCursorPos(x1, y1);
         mouse_event(down, 0, 0, 0, UIntPtr.Zero);
-        Thread.Sleep(60);
-        const int steps = 16;
+        if (grabMs > 0) Thread.Sleep(grabMs);
         for (int i = 1; i <= steps; i++)
         {
             int x = x1 + (x2 - x1) * i / steps;
             int y = y1 + (y2 - y1) * i / steps;
             SetCursorPos(x, y);
-            Thread.Sleep(15);
+            if (stepMs > 0) Thread.Sleep(stepMs);
         }
-        Thread.Sleep(60);
+        if (settleMs > 0) Thread.Sleep(settleMs);
         mouse_event(up, 0, 0, 0, UIntPtr.Zero);
     }
 
@@ -538,6 +585,18 @@ public static class NativeInput
         if (GetLastInputInfo(ref lii))
             return (int)((Environment.TickCount64 - (long)lii.Time) / 1000);
         return 0;
+    }
+
+    /// <summary>Milidetik sejak masukan terakhir user (v5.9.0 —
+    /// resolusi halus untuk gerbang arbitrase manusia di /batch).
+    /// Gagal membaca = dianggap sangat lama (tidak menghalangi).</summary>
+    public static long IdleMilliseconds()
+    {
+        var lii = new LastInputInfo();
+        lii.Size = (uint)Marshal.SizeOf(typeof(LastInputInfo));
+        if (GetLastInputInfo(ref lii))
+            return Environment.TickCount64 - (long)lii.Time;
+        return long.MaxValue;
     }
 
     // ---------- Jangan tidur (v2.5.0) ----------

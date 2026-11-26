@@ -97,6 +97,7 @@ public sealed class AgentServer
     // supaya bisa dilepas semua lewat /keys/release dan otomatis
     // saat server berhenti (BUG-20 audit).
     private readonly HashSet<ushort> _heldKeys = new HashSet<ushort>();
+    private readonly HashSet<string> _heldMouse = new HashSet<string>();
     private readonly object _heldLock = new object();
 
     // Mesin jadwal (v5.6.0 — Scheduler Engine): thread penilik
@@ -433,6 +434,19 @@ public sealed class AgentServer
         foreach (var vk in keys)
         {
             try { NativeInput.KeyUp(vk); } catch { /* abaikan */ }
+        }
+        // v5.9.0: tombol mouse tertahan (/mousedown) dilepas
+        // paksa di jaring pengaman yang sama — tidak ada tombol
+        // (keyboard maupun mouse) boleh tertahan selamanya.
+        List<string> mbtns;
+        lock (_heldLock)
+        {
+            mbtns = new List<string>(_heldMouse);
+            _heldMouse.Clear();
+        }
+        foreach (var b in mbtns)
+        {
+            try { NativeInput.ButtonUp(b); } catch { /* abaikan */ }
         }
         return keys.Count;
     }
@@ -2666,6 +2680,33 @@ public sealed class AgentServer
                                     ? new Rectangle(dX, dY, dW, dH) : scrDiff;
                                 diffBefore = CaptureRegionBitmap(mintaDiff, 0, out diffRegion);
                             }
+                            // Arbitrase manusia (v5.9.0): bidang
+                            // opsional "yieldToUserMs" — bila user
+                            // BARU SAJA memakai mouse/keyboard
+                            // (masukan terakhir <1 dtk), rangkaian
+                            // MENUNDA sampai layar tenang atau
+                            // batas tercapai, alih-alih rebutan
+                            // kursor. Tanpa bidang ini, perilaku
+                            // lama persis. Hasilnya dilaporkan di
+                            // respons (userYielded dsb.).
+                            int yieldCap = GetInt(root, "yieldToUserMs", 0);
+                            if (yieldCap < 0) yieldCap = 0;
+                            if (yieldCap > 10000) yieldCap = 10000;
+                            bool userYielded = false;
+                            int userYieldWaitMs = 0;
+                            bool userStillActive = false;
+                            if (yieldCap > 0 && NativeInput.IdleMilliseconds() < 1000)
+                            {
+                                var swYield = System.Diagnostics.Stopwatch.StartNew();
+                                while (NativeInput.IdleMilliseconds() < 1000
+                                       && swYield.ElapsedMilliseconds < yieldCap)
+                                    Thread.Sleep(100);
+                                userYielded = true;
+                                userYieldWaitMs = (int)swYield.ElapsedMilliseconds;
+                                userStillActive = NativeInput.IdleMilliseconds() < 1000;
+                                _log($"batch menunda demi user: {userYieldWaitMs}ms"
+                                    + (userStillActive ? " (user masih aktif — lanjut sesudah batas)" : ""));
+                            }
                             var results = new List<object>();
                             int doneCount = 0;
                             foreach (var action in actions.EnumerateArray())
@@ -2851,6 +2892,12 @@ public sealed class AgentServer
                                 ["count"] = doneCount,
                                 ["results"] = results,
                             };
+                            if (yieldCap > 0)
+                            {
+                                batchResp["userYielded"] = userYielded;
+                                batchResp["userYieldWaitMs"] = userYieldWaitMs;
+                                batchResp["userStillActive"] = userStillActive;
+                            }
                             // shotAfter (v2.4.2, usulan performa A):
                             // respons ditutup dengan bingkai JPEG
                             // keadaan layar TERKINI — Muse langsung
@@ -3003,19 +3050,31 @@ public sealed class AgentServer
                             if (count < 1) count = 1;
                             if (count > 3) count = 3;
                             int n = count;
+                            // holdMs (v5.9.0): tekan-tahan — tombol
+                            // ditahan selama itu sebelum dilepas,
+                            // dalam SATU aksi UI lokal (long-press
+                            // yang timing-nya rapat). Berlaku bila
+                            // > 0; count diabaikan saat menahan.
+                            int hold = GetInt(root, "holdMs", 0);
+                            if (hold < 0) hold = 0;
+                            if (hold > 10000) hold = 10000;
                             // modifiers (gelombang 2): "ctrl,shift,alt,win"
                             // ditahan selama klik berlangsung.
                             var mods = ParseModifiers(GetString(root, "modifiers", ""));
                             OnUi(() =>
                             {
                                 foreach (var vk in mods) NativeInput.KeyDown(vk);
-                                try { NativeInput.ClickTimes(x, y, button, n); }
+                                try
+                                {
+                                    if (hold > 0) NativeInput.ClickHold(x, y, button, hold);
+                                    else NativeInput.ClickTimes(x, y, button, n);
+                                }
                                 finally { for (int i = mods.Count - 1; i >= 0; i--) NativeInput.KeyUp(mods[i]); }
                                 return true;
                             });
                             _onActivity();
                             _lastClickX = x; _lastClickY = y; _lastClickTick = Environment.TickCount64;
-                            _log($"klik {x},{y} ({button}{(n > 1 ? ", " + n + "x" : "")}{(mods.Count > 0 ? ", +penahan" : "")})" + (relTitle != null ? $" (relatif: {relTitle})" : ""));
+                            _log($"klik {x},{y} ({button}{(hold > 0 ? ", tahan " + hold + "ms" : (n > 1 ? ", " + n + "x" : ""))}{(mods.Count > 0 ? ", +penahan" : "")})" + (relTitle != null ? $" (relatif: {relTitle})" : ""));
                             // Klik verifikasi (v2.6.4): {expectText}
                             // -> sesudah klik, server menunggu teks
                             // itu muncul di sekitar titik klik (OCR
@@ -3190,6 +3249,38 @@ public sealed class AgentServer
                             }
                             _onActivity();
                             _log((down ? "tahan tombol: " : "lepas tombol: ") + keyName);
+                            return Ok();
+                        }
+                        case "/mousedown":
+                        case "/mouseup":
+                        {
+                            // Tahan / lepas tombol mouse (v5.9.0 —
+                            // pasangan /keydown-/keyup untuk mouse):
+                            // tekan-tahan & seret manual dua tahap
+                            // jadi mungkin. Tombol tertahan dicatat
+                            // dan dilepas paksa oleh ReleaseHeldKeys
+                            // (Stop & /keys/release) — tidak boleh
+                            // tertahan selamanya di sesi user.
+                            string mButton = GetString(root, "button", "left");
+                            bool mDown = req.Path == "/mousedown";
+                            if (mDown && HasInt(root, "x") && HasInt(root, "y"))
+                            {
+                                int mx = GetInt(root, "x", 0), my = GetInt(root, "y", 0);
+                                OnUi(() => { NativeInput.Move(mx, my); return true; });
+                            }
+                            OnUi(() =>
+                            {
+                                if (mDown) NativeInput.ButtonDown(mButton);
+                                else NativeInput.ButtonUp(mButton);
+                                return true;
+                            });
+                            lock (_heldLock)
+                            {
+                                if (mDown) _heldMouse.Add(mButton.ToLowerInvariant());
+                                else _heldMouse.Remove(mButton.ToLowerInvariant());
+                            }
+                            _onActivity();
+                            _log((mDown ? "tahan mouse: " : "lepas mouse: ") + mButton);
                             return Ok();
                         }
                         case "/keys/release":
@@ -4211,11 +4302,19 @@ public sealed class AgentServer
                             int x1 = GetInt(root, "x1", 0), y1 = GetInt(root, "y1", 0);
                             int x2 = GetInt(root, "x2", 0), y2 = GetInt(root, "y2", 0);
                             string button = GetString(root, "button", "left");
+                            // Timing seret (v5.9.0): grabMs tahan
+                            // di awal, steps/stepMs lintasan,
+                            // settleMs tahan di tujuan. Bawaan =
+                            // perilaku lama persis (60/16/15/60).
+                            int grabMs = GetInt(root, "grabMs", 60);
+                            int dragSteps = GetInt(root, "steps", 16);
+                            int stepMs = GetInt(root, "stepMs", 15);
+                            int settleMs = GetInt(root, "settleMs", 60);
                             var mods = ParseModifiers(GetString(root, "modifiers", ""));
                             OnUi(() =>
                             {
                                 foreach (var vk in mods) NativeInput.KeyDown(vk);
-                                try { NativeInput.Drag(x1, y1, x2, y2, button); }
+                                try { NativeInput.Drag(x1, y1, x2, y2, button, grabMs, dragSteps, stepMs, settleMs); }
                                 finally { for (int i = mods.Count - 1; i >= 0; i--) NativeInput.KeyUp(mods[i]); }
                                 return true;
                             });
@@ -6120,6 +6219,7 @@ public sealed class AgentServer
     private static readonly HashSet<string> InputPaths = new HashSet<string>
     {
         "/move", "/click", "/type", "/key", "/keydown", "/keyup",
+        "/mousedown", "/mouseup",
         "/scroll", "/drag", "/focus", "/window", "/paste",
         "/uia/click", "/uia/act", "/locate/act", "/routines/run",
     };
