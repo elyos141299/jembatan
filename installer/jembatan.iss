@@ -27,6 +27,9 @@ Name: "desktopicon"; Description: "Buat pintasan di Desktop"; GroupDescription: 
 [Files]
 Source: "..\publish\Jembatan.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\publish\tesseract\*"; DestDir: "{app}\tesseract"; Flags: ignoreversion recursesubdirs createallsubdirs
+; v5.4.1: skrip sidecar AI visual (GPU) wajib ikut terpasang di
+; samping exe — AiBridge menyalinnya ke AI-Tools\sidecar\.
+Source: "..\publish\ai_sidecar.py"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\MuseLink"; Filename: "{app}\Jembatan.exe"

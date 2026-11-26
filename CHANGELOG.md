@@ -3,6 +3,15 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.4.1 — 2026-11-26
+
+Perbaikan kemasan 5.4.0: `ai_sidecar.py` kini ikut di dalam
+installer (baris Source baru di jembatan.iss) dan terpasang di
+samping exe. Di 5.4.0 berkas itu tidak terbawa installer —
+fitur GPU tetap jalan hanya karena salinannya sudah ada di
+AI-Tools; pemasangan bersih akan kehilangan skrip sidecar.
+Tanpa perubahan fitur/perilaku lain.
+
 ## 5.4.0 — 2026-11-26
 
 Visual GPU (perintah user: "visual harus dari GPU"). Mesin AI
