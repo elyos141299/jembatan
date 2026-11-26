@@ -3,5 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!-- v5.8.0: tema Control Room dipensiunkan bersama shell
          v5 — jendela klasik v1 mengatur gayanya sendiri di
-         MainWindow.xaml. -->
+         MainWindow.xaml. Application.Resources SENGAJA tetap
+         ada (kosong): tanpa elemen isi apa pun, compiler WPF
+         tidak membuat InitializeComponent untuk App dan
+         Program.Main gagal kompilasi (terbukti CI 45776904351). -->
+    <Application.Resources>
+        <ResourceDictionary/>
+    </Application.Resources>
 </Application>
