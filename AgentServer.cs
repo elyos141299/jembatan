@@ -164,6 +164,7 @@ public sealed class AgentServer
         _schedOn = false; // v5.6.0: mesin jadwal ikut berhenti
         EventLog.StopHooks(); // v3.9.0: lepas WinEventHook
         ReleaseHeldKeys(); // v3.6.0: jangan tinggalkan tombol tertahan
+        MacroRecorder.Shutdown(); // v5.10.0: lepas hook makro & putar ulang
         try { _cts?.Cancel(); } catch { /* abaikan */ }
         try { _listener?.Stop(); } catch { /* abaikan */ }
         _listener = null;
@@ -1088,6 +1089,86 @@ public sealed class AgentServer
                 {
                     ["ok"] = true,
                     ["text"] = text,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/cursor")
+            {
+                // Posisi kursor saat ini (v5.10.0) — mata kursor:
+                // Muse tahu di mana tangannya tanpa motret layar.
+                var pos = NativeInput.CursorPosition();
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true, ["x"] = pos.X, ["y"] = pos.Y,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/clipboard/files")
+            {
+                _onActivity();
+                var files = OnUi(() =>
+                {
+                    var list = new List<string>();
+                    try
+                    {
+                        if (System.Windows.Clipboard.ContainsFileDropList())
+                            foreach (string f in System.Windows.Clipboard.GetFileDropList()) list.Add(f);
+                    }
+                    catch { /* clipboard dikunci aplikasi lain */ }
+                    return list;
+                });
+                // Isi TIDAK dicatat — hanya jumlahnya (aturan clipboard).
+                _log($"clipboard berkas dibaca ({files.Count} berkas)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true, ["files"] = files,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/clipboard/image")
+            {
+                _onActivity();
+                string b64 = OnUi(() =>
+                {
+                    try
+                    {
+                        if (!System.Windows.Clipboard.ContainsImage()) return "";
+                        var img = System.Windows.Clipboard.GetImage();
+                        if (img == null) return "";
+                        var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                        enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(img));
+                        using (var ms = new MemoryStream()) { enc.Save(ms); return Convert.ToBase64String(ms.ToArray()); }
+                    }
+                    catch { return ""; }
+                });
+                if (string.IsNullOrEmpty(b64))
+                    return Response.Json("{\"ok\":false,\"error\":\"tidak ada gambar di clipboard\"}", 404);
+                _log($"clipboard gambar dibaca ({b64.Length} karakter base64)");
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true, ["pngBase64"] = b64,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/record/status")
+            {
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["recording"] = MacroRecorder.IsRecording,
+                    ["name"] = MacroRecorder.RecordingName,
+                    ["events"] = MacroRecorder.RecordedEvents,
+                    ["elapsedMs"] = MacroRecorder.RecordElapsedMs,
+                    ["playing"] = MacroRecorder.IsPlaying,
+                    ["playingName"] = MacroRecorder.PlayingName,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/macros")
+            {
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true, ["macros"] = MacroRecorder.ListMacros(),
                 });
             }
 
@@ -3017,11 +3098,35 @@ public sealed class AgentServer
                         }
                         case "/move":
                         {
-                            if (!HasInt(root, "x") || !HasInt(root, "y")) return MissingField("x/y");
+                            // v5.10.0: relatif {dx, dy} dari posisi
+                            // kursor sekarang, dan glideMs (gerak
+                            // meluncur menyusuri jalur, bukan
+                            // teleport) untuk aplikasi/game yang
+                            // tidak mengakui teleport sebagai
+                            // gerakan. Tanpa keduanya: lama persis.
+                            int glideMs = GetInt(root, "glideMs", 0);
+                            if (glideMs < 0) glideMs = 0;
+                            if (glideMs > 10000) glideMs = 10000;
+                            bool relatif = HasInt(root, "dx") || HasInt(root, "dy");
+                            if (!relatif && (!HasInt(root, "x") || !HasInt(root, "y"))) return MissingField("x/y");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
-                            OnUi(() => { NativeInput.Move(x, y); return true; });
+                            int dx = GetInt(root, "dx", 0), dy = GetInt(root, "dy", 0);
+                            int fx = 0, fy = 0;
+                            OnUi(() =>
+                            {
+                                int tx = x, ty = y;
+                                if (relatif)
+                                {
+                                    var cur = NativeInput.CursorPosition();
+                                    tx = cur.X + dx; ty = cur.Y + dy;
+                                }
+                                if (glideMs > 0) NativeInput.GlideTo(tx, ty, glideMs);
+                                else NativeInput.Move(tx, ty);
+                                fx = tx; fy = ty;
+                                return true;
+                            });
                             _onActivity();
-                            _log($"geser mouse ke {x},{y}");
+                            _log($"geser mouse ke {fx},{fy}" + (glideMs > 0 ? $" (meluncur {glideMs}ms)" : "") + (relatif ? " (relatif)" : ""));
                             return Ok();
                         }
                         case "/click":
@@ -3232,10 +3337,19 @@ public sealed class AgentServer
                             if (vk == 0)
                                 return Response.Json("{\"ok\":false,\"error\":\"nama tombol tidak dikenal\"}", 400);
                             bool down = req.Path == "/keydown";
+                            bool scanHold = GetBool(root, "scan", false);
                             OnUi(() =>
                             {
-                                if (down) NativeInput.KeyDown(vk);
-                                else NativeInput.KeyUp(vk);
+                                if (scanHold)
+                                {
+                                    if (down) NativeInput.KeyDownScan(vk);
+                                    else NativeInput.KeyUpScan(vk);
+                                }
+                                else
+                                {
+                                    if (down) NativeInput.KeyDown(vk);
+                                    else NativeInput.KeyUp(vk);
+                                }
                                 return true;
                             });
                             // v3.6.0 (BUG-20): catat tombol tertahan
@@ -4291,9 +4405,20 @@ public sealed class AgentServer
                             if (!HasInt(root, "x") || !HasInt(root, "y") || !HasInt(root, "delta")) return MissingField("x/y/delta");
                             int x = GetInt(root, "x", 0), y = GetInt(root, "y", 0);
                             int delta = GetInt(root, "delta", 0);
-                            OnUi(() => { NativeInput.Scroll(x, y, delta); return true; });
+                            // v5.10.0: axis "x" = menyamping
+                            // (HWHEEL); smooth = dipecah langkah
+                            // kecil lokal. Bawaan: lama persis.
+                            bool horiz = GetString(root, "axis", "y") == "x";
+                            bool smooth = GetBool(root, "smooth", false);
+                            OnUi(() =>
+                            {
+                                if (smooth) NativeInput.ScrollSmooth(x, y, delta, horiz);
+                                else if (horiz) NativeInput.ScrollH(x, y, delta);
+                                else NativeInput.Scroll(x, y, delta);
+                                return true;
+                            });
                             _onActivity();
-                            _log($"scroll di {x},{y} (delta {delta})");
+                            _log($"scroll di {x},{y} (delta {delta}, sumbu {(horiz ? "x" : "y")}{(smooth ? ", halus" : "")})");
                             return Ok();
                         }
                         case "/drag":
@@ -4310,11 +4435,36 @@ public sealed class AgentServer
                             int dragSteps = GetInt(root, "steps", 16);
                             int stepMs = GetInt(root, "stepMs", 15);
                             int settleMs = GetInt(root, "settleMs", 60);
+                            // Jalur waypoints (v5.10.0): "via"
+                            // [{x, y, dwellMs}] — seret menyusuri
+                            // titik-titik singgah di antara awal
+                            // dan tujuan; tanpa via = garis lurus
+                            // seperti biasa.
+                            var viaPts = new List<(int X, int Y, int DwellMs)>();
+                            if (root.TryGetProperty("via", out var viaEl) && viaEl.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var v in viaEl.EnumerateArray())
+                                {
+                                    if (v.ValueKind != JsonValueKind.Object) continue;
+                                    viaPts.Add((GetInt(v, "x", 0), GetInt(v, "y", 0), GetInt(v, "dwellMs", 0)));
+                                }
+                            }
+                            bool pakaiVia = viaPts.Count > 0;
                             var mods = ParseModifiers(GetString(root, "modifiers", ""));
                             OnUi(() =>
                             {
                                 foreach (var vk in mods) NativeInput.KeyDown(vk);
-                                try { NativeInput.Drag(x1, y1, x2, y2, button, grabMs, dragSteps, stepMs, settleMs); }
+                                try
+                                {
+                                    if (pakaiVia)
+                                    {
+                                        var jalur = new List<(int X, int Y, int DwellMs)> { (x1, y1, 0) };
+                                        jalur.AddRange(viaPts);
+                                        jalur.Add((x2, y2, 0));
+                                        NativeInput.DragPath(jalur, button, grabMs, stepMs, settleMs);
+                                    }
+                                    else NativeInput.Drag(x1, y1, x2, y2, button, grabMs, dragSteps, stepMs, settleMs);
+                                }
                                 finally { for (int i = mods.Count - 1; i >= 0; i--) NativeInput.KeyUp(mods[i]); }
                                 return true;
                             });
@@ -4354,10 +4504,17 @@ public sealed class AgentServer
                             // agar operasi UI lain bisa menyela di
                             // antara potongan, bukan menunggu seluruh
                             // teks panjang selesai.
+                            // rateMs (v5.10.0): jeda per karakter
+                            // 0–50; tanpa bidang = 15 (ritme aman
+                            // lama). 0 = geber — risiko aplikasi
+                            // TSF rewel ditanggung pemanggil.
+                            int rateMs = GetInt(root, "rateMs", 15);
+                            if (rateMs < 0) rateMs = 0;
+                            if (rateMs > 50) rateMs = 50;
                             for (int off = 0; off < text.Length; off += 20)
                             {
                                 string potongan = text.Substring(off, Math.Min(20, text.Length - off));
-                                OnUi(() => { NativeInput.TypeUnicode(potongan); return true; });
+                                OnUi(() => { NativeInput.TypeUnicode(potongan, rateMs); return true; });
                             }
                             _onActivity();
                             string preview = text.Length > 30 ? text.Substring(0, 30) + "…" : text;
@@ -4367,9 +4524,20 @@ public sealed class AgentServer
                         case "/key":
                         {
                             string keys = GetString(root, "keys", "");
+                            // scan (v5.10.0): mode game — kejadian
+                            // dikirim sebagai scan code fisik
+                            // (sintaks "ctrl+shift+esc"), bukan
+                            // kode virtual. Untuk game yang cuek
+                            // ke suntikan VK biasa.
+                            bool scanKey = GetBool(root, "scan", false);
                             try
                             {
-                                OnUi(() => { NativeInput.PressKey(keys); return true; });
+                                OnUi(() =>
+                                {
+                                    if (scanKey) NativeInput.PressKeyScan(keys);
+                                    else NativeInput.PressKey(keys);
+                                    return true;
+                                });
                             }
                             catch (ArgumentException ex)
                             {
@@ -4406,6 +4574,100 @@ public sealed class AgentServer
                             });
                             _onActivity();
                             _log($"tempel teks ({text.Length} karakter)");
+                            return Ok();
+                        }
+                        case "/clipboard/image":
+                        {
+                            // Taruh gambar PNG ke clipboard
+                            // (v5.10.0). Isi tidak pernah dicatat —
+                            // hanya ukurannya.
+                            string b64 = GetString(root, "pngBase64", "");
+                            byte[] pngBytes;
+                            try { pngBytes = Convert.FromBase64String(b64); }
+                            catch { return Response.Json("{\"ok\":false,\"error\":\"pngBase64 tidak valid\"}", 400); }
+                            if (pngBytes.Length == 0 || pngBytes.Length > 16 * 1024 * 1024)
+                                return Response.Json("{\"ok\":false,\"error\":\"ukuran gambar di luar batas\"}", 400);
+                            bool okImg = OnUi(() =>
+                            {
+                                try
+                                {
+                                    using (var ms = new MemoryStream(pngBytes))
+                                    {
+                                        var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                                        bmp.BeginInit();
+                                        bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                                        bmp.StreamSource = ms;
+                                        bmp.EndInit();
+                                        bmp.Freeze();
+                                        System.Windows.Clipboard.SetImage(bmp);
+                                    }
+                                    return true;
+                                }
+                                catch { return false; }
+                            });
+                            _onActivity();
+                            _log($"clipboard gambar diisi ({pngBytes.Length} byte)");
+                            return okImg ? Ok() : Response.Json("{\"ok\":false,\"error\":\"gagal menaruh gambar ke clipboard\"}", 500);
+                        }
+                        case "/record/start":
+                        {
+                            // Rekam makro (v5.10.0) — HANYA mulai
+                            // atas panggilan eksplisit ini.
+                            string recName = GetString(root, "name", "makro");
+                            if (MacroRecorder.IsPlaying)
+                                return Response.Json("{\"ok\":false,\"error\":\"sedang memutar makro\"}", 409);
+                            if (!MacroRecorder.StartRecording(recName))
+                                return Response.Json("{\"ok\":false,\"error\":\"sudah merekam atau hook gagal terpasang\"}", 409);
+                            _onActivity();
+                            _log("rekam makro MULAI: " + MacroRecorder.RecordingName);
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true, ["recording"] = true, ["name"] = MacroRecorder.RecordingName,
+                            });
+                        }
+                        case "/record/stop":
+                        {
+                            // Berhenti merekam & simpan. Endpoint
+                            // ini SENGAJA di luar InputPaths:
+                            // berhenti tidak boleh terblokir
+                            // Emergency Stop.
+                            var mf = MacroRecorder.StopRecording();
+                            if (mf == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"tidak sedang merekam\"}", 409);
+                            _onActivity();
+                            _log($"rekam makro STOP: {mf.Name} ({mf.Events.Count} kejadian, {mf.DurationMs}ms{(mf.Truncated ? ", terpotong batas" : "")})");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true, ["name"] = mf.Name, ["events"] = mf.Events.Count,
+                                ["durationMs"] = mf.DurationMs, ["truncated"] = mf.Truncated,
+                            });
+                        }
+                        case "/macros/run":
+                        {
+                            string mName = GetString(root, "name", "");
+                            double mSpeed = 1.0;
+                            if (root.TryGetProperty("speed", out var spEl) && spEl.ValueKind == JsonValueKind.Number)
+                                mSpeed = spEl.GetDouble();
+                            var macro = MacroRecorder.LoadMacro(mName);
+                            if (macro == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"makro tidak ditemukan\"}", 404);
+                            // Putar ulang di utas MacroRecorder;
+                            // lambda halt membaca Emergency Stop.
+                            if (!MacroRecorder.Play(macro, mSpeed, () => _inputHalted))
+                                return Response.Json("{\"ok\":false,\"error\":\"sedang merekam/memutar makro lain\"}", 409);
+                            _onActivity();
+                            _log($"putar makro: {macro.Name} ({macro.Events.Count} kejadian, {mSpeed}x)");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true, ["started"] = true, ["name"] = macro.Name,
+                                ["events"] = macro.Events.Count, ["speed"] = mSpeed,
+                            });
+                        }
+                        case "/macros/stop":
+                        {
+                            MacroRecorder.StopPlaying();
+                            _onActivity();
+                            _log("putar makro dihentikan");
                             return Ok();
                         }
                         case "/setvalue":
@@ -6219,7 +6481,7 @@ public sealed class AgentServer
     private static readonly HashSet<string> InputPaths = new HashSet<string>
     {
         "/move", "/click", "/type", "/key", "/keydown", "/keyup",
-        "/mousedown", "/mouseup",
+        "/mousedown", "/mouseup", "/macros/run",
         "/scroll", "/drag", "/focus", "/window", "/paste",
         "/uia/click", "/uia/act", "/locate/act", "/routines/run",
     };

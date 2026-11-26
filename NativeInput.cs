@@ -284,6 +284,31 @@ public static class NativeInput
         SetCursorPos(x, y);
     }
 
+    /// <summary>
+    /// Gerak meluncur (v5.10.0): kursor menyusuri garis lurus
+    /// dari posisi sekarang ke (x, y) dalam glideMs dengan
+    /// perlambatan halus di ujung (ease-in-out) — untuk
+    /// aplikasi/game yang tidak mengakui teleport SetCursorPos
+    /// sebagai gerakan. glideMs &lt;= 0 = teleport biasa.
+    /// </summary>
+    public static void GlideTo(int x, int y, int glideMs)
+    {
+        if (glideMs <= 0) { SetCursorPos(x, y); return; }
+        if (glideMs > 10000) glideMs = 10000;
+        var from = CursorPosition();
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            double t = Math.Min(1.0, (double)sw.ElapsedMilliseconds / glideMs);
+            double e = t < 0.5 ? 2 * t * t : 1 - Math.Pow(-2 * t + 2, 2) / 2;
+            int cx = from.X + (int)Math.Round((x - from.X) * e);
+            int cy = from.Y + (int)Math.Round((y - from.Y) * e);
+            SetCursorPos(cx, cy);
+            if (t >= 1.0) break;
+            Thread.Sleep(12);
+        }
+    }
+
     public static void Click(int x, int y, string button)
     {
         SetCursorPos(x, y);
@@ -317,6 +342,36 @@ public static class NativeInput
         SetCursorPos(x, y);
         // dwData untuk wheel bertanda (signed) — kirim sebagai uint.
         mouse_event(Wheel, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
+    }
+
+    private const uint HWheel = 0x01000;
+
+    /// <summary>Scroll MENYAMPING di titik (x, y) (v5.10.0).
+    /// Delta positif = ke kanan, negatif = ke kiri.</summary>
+    public static void ScrollH(int x, int y, int delta)
+    {
+        SetCursorPos(x, y);
+        mouse_event(HWheel, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Scroll halus (v5.10.0): delta total dipecah menjadi
+    /// langkah ±40 per 15 ms — permukaan yang mendukung scroll
+    /// piksel (kanvas, peramban) bergerak mulus alih-alih
+    /// meloncat per klik roda. horizontal memilih sumbu.
+    /// </summary>
+    public static void ScrollSmooth(int x, int y, int delta, bool horizontal)
+    {
+        SetCursorPos(x, y);
+        uint flag = horizontal ? HWheel : Wheel;
+        int sisa = delta;
+        while (sisa != 0)
+        {
+            int langkah = Math.Max(-40, Math.Min(40, sisa));
+            mouse_event(flag, 0, 0, unchecked((uint)langkah), UIntPtr.Zero);
+            sisa -= langkah;
+            if (sisa != 0) Thread.Sleep(15);
+        }
     }
 
     /// <summary>Tekan tombol mouse di posisi kursor saat ini
@@ -384,6 +439,52 @@ public static class NativeInput
             int y = y1 + (y2 - y1) * i / steps;
             SetCursorPos(x, y);
             if (stepMs > 0) Thread.Sleep(stepMs);
+        }
+        if (settleMs > 0) Thread.Sleep(settleMs);
+        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Seret menyusuri JALUR banyak titik (v5.10.0 — waypoints):
+    /// tekan di titik pertama, berhenti sejenak (DwellMs) di
+    /// tiap titik singgah, lepas di titik terakhir sesudah
+    /// settleMs. Gerakan antar titik dipecah langkah ±12px
+    /// berjeda stepMs. Untuk lintasan melengkung, slider yang
+    /// butuh singgah, dan pola seret yang tidak lurus.
+    /// </summary>
+    public static void DragPath(IReadOnlyList<(int X, int Y, int DwellMs)> path,
+        string button, int grabMs, int stepMs, int settleMs)
+    {
+        if (path == null || path.Count < 2)
+            throw new ArgumentException("jalur seret butuh minimal 2 titik");
+        if (grabMs < 0) grabMs = 0;
+        if (grabMs > 2000) grabMs = 2000;
+        if (stepMs < 0) stepMs = 0;
+        if (stepMs > 100) stepMs = 100;
+        if (settleMs < 0) settleMs = 0;
+        if (settleMs > 2000) settleMs = 2000;
+        ButtonFlags(button, out uint down, out uint up);
+        var start = path[0];
+        SetCursorPos(start.X, start.Y);
+        mouse_event(down, 0, 0, 0, UIntPtr.Zero);
+        if (grabMs > 0) Thread.Sleep(grabMs);
+        int cx = start.X, cy = start.Y;
+        for (int p = 1; p < path.Count; p++)
+        {
+            var target = path[p];
+            int dx = target.X - cx, dy = target.Y - cy;
+            int dist = (int)Math.Ceiling(Math.Sqrt(dx * dx + dy * dy));
+            int steps = Math.Max(2, dist / 12);
+            for (int i = 1; i <= steps; i++)
+            {
+                SetCursorPos(cx + dx * i / steps, cy + dy * i / steps);
+                if (stepMs > 0) Thread.Sleep(stepMs);
+            }
+            cx = target.X; cy = target.Y;
+            int dwell = target.DwellMs;
+            if (dwell < 0) dwell = 0;
+            if (dwell > 5000) dwell = 5000;
+            if (dwell > 0) Thread.Sleep(dwell);
         }
         if (settleMs > 0) Thread.Sleep(settleMs);
         mouse_event(up, 0, 0, 0, UIntPtr.Zero);
@@ -533,6 +634,86 @@ public static class NativeInput
     {
         var ev = VkEvent(vk, true);
         SendInput(1, new[] { ev }, Marshal.SizeOf<InputEvent>());
+    }
+
+    // ---------- Mode game: kode pindai / scan code (v5.10.0) ----------
+    // Kejadian VK murni (Scan=0) diterjemahkan Windows, tetapi
+    // game yang membaca DirectInput/Raw Input melihat kode
+    // pindai fisiknya — VK suntikan tanpa scan code bisa cuek
+    // saja bagi mereka. Mode ini mengirim KEYEVENTF_SCANCODE
+    // dengan kode dari MapVirtualKey(VK_TO_VSC_EX), persis
+    // seperti keyboard fisik, termasuk bendera extended untuk
+    // tombol arah/Home/dsb.
+
+    private const uint KeyeventfExtendedKey = 0x0001;
+    private const uint KeyeventfScancode = 0x0008;
+    private const uint MapVkToVscEx = 4;
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKeyW(uint uCode, uint uMapType);
+
+    private static InputEvent ScanEvent(ushort vk, bool keyUp)
+    {
+        uint mapped = MapVirtualKeyW(vk, MapVkToVscEx);
+        ushort scan = (ushort)(mapped & 0xFF);
+        uint flags = KeyeventfScancode | (keyUp ? KeyeventfKeyup : 0);
+        if (((mapped >> 8) & 0xFF) != 0) flags |= KeyeventfExtendedKey;
+        var ev = new InputEvent { Type = 1 };
+        ev.Data.Ki = new KeyboardInput { Vk = 0, Scan = scan, Flags = flags };
+        return ev;
+    }
+
+    /// <summary>Tahan tombol dalam mode scan code (v5.10.0).</summary>
+    public static void KeyDownScan(ushort vk)
+    {
+        var ev = ScanEvent(vk, false);
+        SendInput(1, new[] { ev }, Marshal.SizeOf<InputEvent>());
+    }
+
+    /// <summary>Lepas tombol mode scan code (v5.10.0).</summary>
+    public static void KeyUpScan(ushort vk)
+    {
+        var ev = ScanEvent(vk, true);
+        SendInput(1, new[] { ev }, Marshal.SizeOf<InputEvent>());
+    }
+
+    /// <summary>Tekan-lepas satu tombol mode scan code.</summary>
+    public static void TapKeyScan(ushort vk)
+    {
+        KeyDownScan(vk);
+        KeyUpScan(vk);
+    }
+
+    /// <summary>
+    /// Tekan tombol/kombinasi mode scan code (v5.10.0). Sintaks
+    /// SENGAJA berbeda dari PressKey: nama-nama tombol digabung
+    /// "+" (mis. "ctrl+shift+esc", "alt+f4", "w") — semua
+    /// kecuali terakhir ditahan, terakhir diketuk, lalu semua
+    /// dilepas. Nama dari VkFromName / daftar tombol khusus.
+    /// </summary>
+    public static void PressKeyScan(string keys)
+    {
+        if (string.IsNullOrWhiteSpace(keys)) return;
+        var vks = new List<ushort>();
+        foreach (string part in keys.Split('+'))
+        {
+            string p = part.Trim();
+            if (p.Length == 0) continue;
+            ushort vk = VkFromName(p);
+            if (vk == 0 && SpecialKeys.TryGetValue(p, out ushort sp)) vk = sp;
+            if (vk == 0) throw new ArgumentException("nama tombol tidak dikenal: " + p);
+            vks.Add(vk);
+        }
+        if (vks.Count == 0) return;
+        try
+        {
+            for (int i = 0; i < vks.Count - 1; i++) KeyDownScan(vks[i]);
+            TapKeyScan(vks[vks.Count - 1]);
+        }
+        finally
+        {
+            for (int i = vks.Count - 2; i >= 0; i--) KeyUpScan(vks[i]);
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -798,8 +979,18 @@ public static class NativeInput
     /// dikirim per potongan ±200 kejadian agar SendInput tidak
     /// menolak rangkaian yang terlalu panjang.
     /// </summary>
-    public static void TypeUnicode(string text)
+    public static void TypeUnicode(string text) => TypeUnicode(text, 15);
+
+    /// <summary>
+    /// Sama seperti TypeUnicode klasik, dengan jeda per
+    /// karakter yang bisa diatur (v5.10.0): rateMs 0 = secepat
+    /// SendInput sanggup (berisiko di aplikasi TSF rewel —
+    /// pilihan pemanggil), 15 = ritme aman bawaan.
+    /// </summary>
+    public static void TypeUnicode(string text, int rateMs)
     {
+        if (rateMs < 0) rateMs = 0;
+        if (rateMs > 50) rateMs = 50;
         if (string.IsNullOrEmpty(text)) return;
         // v2.4.1: SATU karakter per SendInput + jeda 15ms. Semburan
         // ratusan event sekaligus dirusak mesin teks TSF aplikasi
@@ -815,7 +1006,7 @@ public static class NativeInput
                 ? new[] { VkEvent(VkReturn, false), VkEvent(VkReturn, true) }
                 : new[] { UnicodeEvent(c, false), UnicodeEvent(c, true) };
             SendInput(2, pair, Marshal.SizeOf<InputEvent>());
-            Thread.Sleep(15);
+            if (rateMs > 0) Thread.Sleep(rateMs);
         }
     }
 

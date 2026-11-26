@@ -3,6 +3,32 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.10.0 — 2026-11-26
+
+Upgrade Tangan jilid 2 (user memilih "Semua" dari menu 8
+butir; PLAN-v5.10.0). Semua tambahan opt-in — perilaku lama
+tidak berubah tanpa bidang baru:
+
+- /scroll: axis "x" (HWHEEL) + smooth (langkah ±40/15ms).
+- GET /cursor (posisi kursor) + /move relatif {dx, dy} dan
+  glideMs (gerak meluncur ease-in-out, bukan teleport).
+- /type rateMs (0–50 ms/huruf; bawaan 15 = lama).
+- /drag "via": seret jalur waypoints dengan dwellMs per
+  titik (NativeInput.DragPath).
+- Mode game: /key, /keydown, /keyup menerima "scan":true —
+  kejadian KEYEVENTF_SCANCODE dari MapVirtualKey(VSC_EX),
+  sintaks gabungan "ctrl+shift+esc" untuk /key.
+- Clipboard gambar & file: POST/GET /clipboard/image
+  (PNG base64), GET /clipboard/files. Log hanya ukuran.
+- Makro (MacroRecorder.cs baru): POST /record/start|stop,
+  GET /record/status, GET /macros, POST /macros/run|stop.
+  Hook LL mouse+keyboard di utas berpump pesan; sampel
+  gerak 30ms/4px; batas 10 mnt/20.000 kejadian; kejadian
+  suntikan ditandai Inj; putar ulang berutas sendiri
+  dengan jaring pengaman lepas-tombol dan gerbang
+  Emergency Stop (/macros/run masuk InputPaths;
+  /record/stop sengaja di luar agar selalu bisa berhenti).
+
 ## 5.9.0 — 2026-11-26
 
 Upgrade Tangan (perintah user: "dari kemaren kita belom
