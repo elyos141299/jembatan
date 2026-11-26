@@ -1,17 +1,21 @@
-# ai_sidecar.py — Pendamping AI visual MuseLink (v5.4.0)
+# ai_sidecar.py — Pendamping AI visual MuseLink (v5.4.0;
+# v5.5.0: + transkrip Whisper GPU & YOLO medium)
 #
 # Server HTTP lokal 127.0.0.1:8770 yang memuat YOLO (deteksi
 # objek) + EasyOCR (OCR) SEKALI ke VRAM GPU lalu melayani:
-#   GET  /health          -> status + device
-#   POST /detect {image}  -> daftar objek + kotak (koord. gambar)
-#   POST /ocr    {image}  -> teks + kata + kotak (koord. gambar)
-# image = base64 PNG/JPEG. Berkas ini tinggal di
+#   GET  /health             -> status + device + model
+#   POST /detect {image}     -> daftar objek + kotak (koord. gambar)
+#   POST /ocr    {image}     -> teks + kata + kotak (koord. gambar)
+#   POST /transcribe {audio} -> teks transkrip (Whisper, GPU;
+#                               model dimuat malas saat pertama)
+# image/audio = base64. Berkas ini tinggal di
 # %USERPROFILE%\AI-Tools\sidecar\ dan dijalankan oleh MuseLink
 # memakai python venv AI-Tools (torch CUDA). Tanpa internet.
 import base64
 import io
 import json
 import os
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,20 +23,50 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT = 8770
 _lock = threading.Lock()
 _yolo = None
+_yolo_name = ""
 _reader = None
+_whisper = None
+
+
+def _register_cuda_dlls():
+    # faster-whisper (CTranslate2) butuh cuBLAS/cuDNN yang
+    # dibundel torch — daftarkan folder lib-nya ke pencarian DLL.
+    try:
+        import torch
+        lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.isdir(lib) and hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(lib)
+    except Exception:
+        pass
 
 
 def load_models():
-    global _yolo, _reader
+    global _yolo, _yolo_name, _reader
+    _register_cuda_dlls()
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     from ultralytics import YOLO
-    _yolo = YOLO(os.path.join(base, "yolo11n.pt"))
+    # v5.5.0: medium jadi utama (lebih akurat); nano cadangan.
+    for name in ("yolo11m.pt", "yolo11n.pt"):
+        path = os.path.join(base, name)
+        if os.path.exists(path):
+            _yolo = YOLO(path)
+            _yolo_name = name
+            break
     import numpy as np
     blank = np.zeros((64, 64, 3), dtype=np.uint8)
     _yolo.predict(blank, device=0, verbose=False)  # pemanasan GPU
     import easyocr
     _reader = easyocr.Reader(["id", "en"], gpu=True, verbose=False)
-    print("[sidecar] model siap: YOLO + EasyOCR di GPU", flush=True)
+    print("[sidecar] model siap: %s + EasyOCR di GPU" % _yolo_name, flush=True)
+
+
+def get_whisper():
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+        _whisper = WhisperModel("small", device="cuda", compute_type="float16")
+        print("[sidecar] Whisper siap di GPU", flush=True)
+    return _whisper
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -50,14 +84,39 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             self._send({"ok": True, "device": "cuda",
-                        "yolo": _yolo is not None, "ocr": _reader is not None})
+                        "yolo": _yolo is not None, "ocr": _reader is not None,
+                        "model": _yolo_name, "whisper": _whisper is not None})
         else:
             self._send({"ok": False, "error": "unknown path"}, 404)
+
+    def _transcribe(self, req):
+        audio_b64 = req.get("audio", "")
+        if not audio_b64:
+            return self._send({"ok": False, "error": "audio kosong"}, 400)
+        raw = base64.b64decode(audio_b64)
+        fd, tmp = tempfile.mkstemp(suffix=".wav")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(raw)
+            t = time.time()
+            with _lock:
+                segs, info = get_whisper().transcribe(tmp)
+                text = " ".join(s.text for s in segs).strip()
+            return self._send({"ok": True, "text": text,
+                               "language": info.language,
+                               "ms": int((time.time() - t) * 1000)})
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
     def do_POST(self):
         try:
             n = int(self.headers.get("Content-Length", 0))
             req = json.loads(self.rfile.read(n) or b"{}")
+            if self.path == "/transcribe":
+                return self._transcribe(req)
             img_b64 = req.get("image", "")
             if not img_b64:
                 return self._send({"ok": False, "error": "image kosong"}, 400)

@@ -3,6 +3,42 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.5.0 — 2026-11-26
+
+Paket "semua" (perintah user): empat upgrade visual/suara GPU
+sekaligus di atas fondasi sidecar 5.4.
+
+### Baru / berubah
+- **POST /transcribe** — {audio: base64 WAV} -> teks via
+  faster-whisper (small, float16) di GPU sidecar. Model Whisper
+  dimuat malas pada panggilan pertama; /health sidecar kini
+  melaporkan `model` + status `whisper`.
+- **/listen {transcribe:true}** — rekaman loopback/mic yang
+  sama kini bisa langsung dikembalikan sebagai TEKS (JSON:
+  text/language/ms/source/seconds), bukan WAV mentah. Ini
+  jembatan perintah suara bahasa Indonesia: Whisper paham id,
+  pengenal suara Windows tidak. Sidecar gagal -> 503 jujur;
+  tanpa transcribe perilaku lama utuh.
+- **/ocr bawaan = GPU dulu** — tanpa ?engine= (dan tanpa
+  enhance), EasyOCR GPU dicoba pertama; tangga mesin lama
+  (WinRT/Tesseract/auto) menjadi cadangan otomatis. Mode yang
+  dipakai tetap dilaporkan apa adanya.
+- **/locate cadangan YOLO (Visual Grounding)** — mode auto/yolo:
+  bila UIA + OCR gagal, query dipetakan ke label COCO (alias
+  Indonesia: orang->person, hp->cell phone, kucing->cat, dst)
+  dan YOLO GPU mencari objeknya di layar; kandidat bervia
+  "yolo-gpu". YOLO hanya mengenal label tetapnya — tombol UI
+  tetap wilayah UIA/OCR.
+- **Model deteksi medium** — sidecar memuat yolo11m.pt lebih
+  dulu (jauh lebih akurat dari nano; inferensi tetap puluhan
+  ms di GPU), yolo11n.pt jadi cadangan. /detect & /health kini
+  melaporkan `model` yang benar-benar dimuat.
+
+### Catatan
+- Tiga model (YOLO medium + EasyOCR + Whisper) berbagi VRAM
+  6 GB (±3-4 GB); sidecar tetap mulai malas dan mati bersama
+  MuseLink bila ia yang memulainya.
+
 ## 5.4.1 — 2026-11-26
 
 Perbaikan kemasan 5.4.0: `ai_sidecar.py` kini ikut di dalam

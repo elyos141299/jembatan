@@ -1838,6 +1838,10 @@ public sealed class AgentServer
                 // EasyOCR di sidecar AI (GPU); gagal -> jatuh ke
                 // mesin bawaan secara jujur (mode tetap "normal").
                 bool gpuOn = engineParam == "gpu";
+                // Bawaan GPU (v5.5.0): tanpa ?engine= (dan tanpa
+                // enhance) GPU dicoba PERTAMA; tangga mesin lama
+                // menjadi cadangan otomatis.
+                bool gpuDefault = engineParam == "" && !enhanceOn && !adaptif;
                 OcrReader.Result hasil;
                 string modeDipakai = "normal";
                 using (var bmp = CaptureRegionBitmap(wilayah, 0, out var eff))
@@ -1845,15 +1849,19 @@ public sealed class AgentServer
                     wilayah = eff;
                     try
                     {
-                        if (gpuOn)
+                        // GPU dulu (v5.5.0): engine=gpu memaksa;
+                        // tanpa engine GPU adalah bawaan. Gagal ->
+                        // tangga mesin lama di bawah yang menilai.
+                        OcrReader.Result gpuHasil = null;
+                        if (gpuOn || gpuDefault)
                         {
-                            var gA = AiBridge.OcrResult(bmp, eff.X, eff.Y, out var gErr);
-                            if (gA != null) { hasil = gA; modeDipakai = "gpu"; }
-                            else
-                            {
-                                _log("OCR GPU gagal (" + gErr + ") — jatuh ke mesin bawaan");
-                                hasil = OcrReader.Read(bmp, eff.X, eff.Y);
-                            }
+                            gpuHasil = AiBridge.OcrResult(bmp, eff.X, eff.Y, out var gErr);
+                            if (gpuHasil != null) modeDipakai = "gpu";
+                            else _log("OCR GPU gagal (" + gErr + ") — lanjut mesin bawaan");
+                        }
+                        if (gpuHasil != null)
+                        {
+                            hasil = gpuHasil;
                         }
                         else if (tessOn)
                         {
@@ -1976,7 +1984,8 @@ public sealed class AgentServer
                                 return Response.JsonObject(new Dictionary<string, object>
                                 {
                                     ["ok"] = true,
-                                    ["engine"] = "yolo11n-gpu",
+                                    ["engine"] = "yolo-gpu",
+                                    ["model"] = AiBridge.ModelName,
                                     ["ms"] = msD,
                                     ["detections"] = dets,
                                     ["region"] = new Dictionary<string, object>
@@ -1992,6 +2001,38 @@ public sealed class AgentServer
                                 return Response.Json("{\"ok\":false,\"error\":\"" +
                                     ex.Message.Replace("\\", " ").Replace("\"", " ") + "\"}", 500);
                             }
+                        }
+
+                        case "/transcribe":
+                        {
+                            // Transkrip audio Whisper di GPU
+                            // (v5.5.0): {audio: base64 WAV} -> teks
+                            // + bahasa terdeteksi. Jembatan perintah
+                            // suara bahasa Indonesia (Whisper paham
+                            // id; pengenal suara Windows tidak).
+                            _onActivity();
+                            string aB64 = GetString(root, "audio", "");
+                            if (string.IsNullOrWhiteSpace(aB64))
+                                return Response.Json("{\"ok\":false,\"error\":\"audio (base64) wajib diisi\"}", 400);
+                            byte[] aBytes;
+                            try { aBytes = Convert.FromBase64String(aB64); }
+                            catch { return Response.Json("{\"ok\":false,\"error\":\"audio bukan base64 sah\"}", 400); }
+                            var rawT = AiBridge.TranscribeJson(aBytes, out var tErr);
+                            if (rawT == null)
+                                return Response.Json("{\"ok\":false,\"error\":\"transkrip GPU tidak tersedia: " +
+                                    tErr.Replace("\\", " ").Replace("\"", " ") + "\"}", 503);
+                            using var docT = JsonDocument.Parse(rawT);
+                            var rt = docT.RootElement;
+                            string teksT = rt.TryGetProperty("text", out var txEl) ? txEl.GetString() ?? "" : "";
+                            _log($"transkrip GPU ({aBytes.Length} byte): {teksT.Length} char");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["engine"] = "whisper-gpu",
+                                ["text"] = teksT,
+                                ["language"] = rt.TryGetProperty("language", out var lgEl) ? lgEl.GetString() ?? "" : "",
+                                ["ms"] = rt.TryGetProperty("ms", out var msTEl) ? msTEl.GetInt64() : -1,
+                            });
                         }
 
                         case "/routines/save":
@@ -2913,6 +2954,35 @@ public sealed class AgentServer
                                 }
                                 if (hits.Count > 0) viaUsed = "ocr";
                             }
+                            if (hits.Count == 0 && (mode == "auto" || mode == "yolo"))
+                            {
+                                // Cadangan Visual Grounding GPU
+                                // (v5.5.0): YOLO mengenali objek
+                                // dunia nyata berlabel tetap (COCO).
+                                // Query dipetakan ke label (alias
+                                // Indonesia di MapCocoLabel); tak
+                                // terpetakan -> lewati diam-diam.
+                                string labelY = MapCocoLabel(q);
+                                if (labelY != null)
+                                {
+                                    var boundsY = NativeInput.PrimaryBounds();
+                                    using (var bmpY = CaptureRegionBitmap(boundsY, 0, out var effY))
+                                    {
+                                        var detsY = AiBridge.DetectList(bmpY, effY.X, effY.Y, out var yErr);
+                                        if (detsY != null)
+                                        {
+                                            foreach (var dY in detsY)
+                                            {
+                                                if (string.Equals(dY.Label, labelY, StringComparison.OrdinalIgnoreCase))
+                                                    hits.Add(new LocateHit { Via = "yolo-gpu", Text = dY.Label, Type = "object", Rect = dY.Rect });
+                                                if (hits.Count >= 10) break;
+                                            }
+                                            if (hits.Count > 0) viaUsed = "yolo-gpu";
+                                        }
+                                        else _log("locate YOLO gagal: " + yErr);
+                                    }
+                                }
+                            }
                             var cand = new List<Dictionary<string, object>>();
                             foreach (var h in hits)
                             {
@@ -3411,6 +3481,31 @@ public sealed class AgentServer
                                     ex.Message.Replace("\\", " ").Replace("\"", " ") + "\"}", 500);
                             }
                             _log($"rekaman selesai ({wav.Length} byte)");
+                            // Transkrip Whisper GPU (v5.5.0):
+                            // {transcribe:true} mengembalikan TEKS
+                            // (JSON) alih-alih WAV mentah — Whisper
+                            // paham bahasa Indonesia. Gagal sidecar
+                            // -> 503 jujur; panggil ulang tanpa
+                            // transcribe untuk WAV mentahnya.
+                            if (GetBool(root, "transcribe", false))
+                            {
+                                var rawL = AiBridge.TranscribeJson(wav, out var lErr);
+                                if (rawL == null)
+                                    return Response.Json("{\"ok\":false,\"error\":\"transkrip GPU tidak tersedia: " +
+                                        lErr.Replace("\\", " ").Replace("\"", " ") + "\"}", 503);
+                                using var docL = JsonDocument.Parse(rawL);
+                                var rl = docL.RootElement;
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true,
+                                    ["engine"] = "whisper-gpu",
+                                    ["text"] = rl.TryGetProperty("text", out var txL) ? txL.GetString() ?? "" : "",
+                                    ["language"] = rl.TryGetProperty("language", out var lgL) ? lgL.GetString() ?? "" : "",
+                                    ["ms"] = rl.TryGetProperty("ms", out var msL) ? msL.GetInt64() : -1,
+                                    ["source"] = sumber,
+                                    ["seconds"] = detik,
+                                });
+                            }
                             return new Response { ContentType = "audio/wav", BodyBytes = wav };
                         }
                         case "/say":
@@ -4648,6 +4743,71 @@ public sealed class AgentServer
     /// null bila teks tidak mengandung angka — pemanggil lalu
     /// memakai teks asli (query huruf murni tetap dicocokkan persis).
     /// </summary>
+    /// <summary>
+    /// Petakan query /locate ke label objek COCO yang dikenal
+    /// YOLO (v5.5.0): label Inggris apa adanya, atau alias
+    /// bahasa Indonesia. Null = bukan objek yang dikenal YOLO.
+    /// </summary>
+    private static string MapCocoLabel(string q)
+    {
+        string s = (q ?? "").Trim().ToLowerInvariant();
+        if (s.Length == 0) return null;
+        switch (s)
+        {
+            case "person": case "orang": case "manusia": return "person";
+            case "bicycle": case "sepeda": return "bicycle";
+            case "car": case "mobil": return "car";
+            case "motorcycle": case "motor": case "sepeda motor": return "motorcycle";
+            case "airplane": case "pesawat": return "airplane";
+            case "bus": return "bus";
+            case "train": case "kereta": return "train";
+            case "truck": case "truk": return "truck";
+            case "boat": case "kapal": case "perahu": return "boat";
+            case "bird": case "burung": return "bird";
+            case "cat": case "kucing": return "cat";
+            case "dog": case "anjing": return "dog";
+            case "horse": case "kuda": return "horse";
+            case "backpack": case "ransel": case "tas": return "backpack";
+            case "umbrella": case "payung": return "umbrella";
+            case "handbag": case "tas tangan": return "handbag";
+            case "suitcase": case "koper": return "suitcase";
+            case "bottle": case "botol": return "bottle";
+            case "cup": case "gelas": case "cangkir": return "cup";
+            case "fork": case "garpu": return "fork";
+            case "knife": case "pisau": return "knife";
+            case "spoon": case "sendok": return "spoon";
+            case "bowl": case "mangkok": return "bowl";
+            case "banana": case "pisang": return "banana";
+            case "apple": case "apel": return "apple";
+            case "orange": case "jeruk": return "orange";
+            case "carrot": case "wortel": return "carrot";
+            case "pizza": return "pizza";
+            case "donut": case "donat": return "donut";
+            case "cake": case "kue": return "cake";
+            case "chair": case "kursi": return "chair";
+            case "couch": case "sofa": return "couch";
+            case "bed": case "tempat tidur": case "kasur": return "bed";
+            case "dining table": case "meja makan": case "meja": return "dining table";
+            case "tv": case "televisi": case "layar": case "monitor": return "tv";
+            case "laptop": return "laptop";
+            case "mouse": return "mouse";
+            case "remote": return "remote";
+            case "keyboard": return "keyboard";
+            case "cell phone": case "hp": case "ponsel": case "handphone":
+            case "telepon": case "smartphone": return "cell phone";
+            case "microwave": return "microwave";
+            case "oven": return "oven";
+            case "refrigerator": case "kulkas": return "refrigerator";
+            case "book": case "buku": return "book";
+            case "clock": case "jam": return "clock";
+            case "scissors": case "gunting": return "scissors";
+            case "toothbrush": case "sikat gigi": return "toothbrush";
+            case "sports ball": case "bola": return "sports ball";
+            case "potted plant": case "tanaman": case "pot": return "potted plant";
+            default: return null;
+        }
+    }
+
     private static string NormalizeOcrFuzzy(string s)
     {
         if (string.IsNullOrEmpty(s)) return null;

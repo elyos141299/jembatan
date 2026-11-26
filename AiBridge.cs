@@ -42,14 +42,29 @@ public static class AiBridge
     public static string SidecarScript => Path.Combine(SidecarDir, "ai_sidecar.py");
     public static bool Installed => File.Exists(PythonExe);
 
+    private static string _modelName = "";
+
+    /// <summary>Nama berkas model YOLO yang dimuat sidecar
+    /// (dari /health terakhir; "" bila belum diketahui).</summary>
+    public static string ModelName => _modelName;
+
     public static bool Healthy()
     {
         try
         {
             using var cts = new CancellationTokenSource(900);
             using var req = new HttpRequestMessage(HttpMethod.Get, Base + "/health");
-            using var resp = Http.Send(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-            return resp.IsSuccessStatusCode;
+            using var resp = Http.Send(req, cts.Token);
+            if (!resp.IsSuccessStatusCode) return false;
+            try
+            {
+                var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                using var doc = JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("model", out var m))
+                    _modelName = m.GetString() ?? "";
+            }
+            catch { /* nama model saja; abaikan */ }
+            return true;
         }
         catch { return false; }
     }
@@ -121,6 +136,51 @@ public static class AiBridge
     public static string DetectJson(Bitmap bmp, out string error)
         => Call("/detect", bmp, out error);
 
+    /// <summary>Satu hasil deteksi (koordinat sudah LAYAR).</summary>
+    public sealed class AiDetection
+    {
+        public string Label = "";
+        public double Conf;
+        public Rectangle Rect;
+    }
+
+    /// <summary>Deteksi YOLO sebagai daftar rapi (untuk
+    /// /locate): koordinat gambar digeser ke koordinat layar.</summary>
+    public static List<AiDetection> DetectList(Bitmap bmp, int offX, int offY, out string error)
+    {
+        var raw = DetectJson(bmp, out error);
+        if (raw == null) return null;
+        try
+        {
+            var list = new List<AiDetection>();
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("detections", out var arr))
+            {
+                foreach (var d in arr.EnumerateArray())
+                {
+                    list.Add(new AiDetection
+                    {
+                        Label = d.TryGetProperty("label", out var lb) ? lb.GetString() ?? "" : "",
+                        Conf = d.TryGetProperty("conf", out var cf) ? cf.GetDouble() : 0,
+                        Rect = new Rectangle(
+                            offX + (d.TryGetProperty("x", out var ex) ? ex.GetInt32() : 0),
+                            offY + (d.TryGetProperty("y", out var ey) ? ey.GetInt32() : 0),
+                            d.TryGetProperty("w", out var ew) ? ew.GetInt32() : 0,
+                            d.TryGetProperty("h", out var eh) ? eh.GetInt32() : 0),
+                    });
+                }
+            }
+            return list;
+        }
+        catch (Exception ex) { error = ex.Message; return null; }
+    }
+
+    /// <summary>Transkrip audio Whisper di GPU (v5.5.0).
+    /// Mengembalikan JSON mentah sidecar atau null.</summary>
+    public static string TranscribeJson(byte[] audio, out string error)
+        => CallJson("/transcribe",
+            "{\"audio\":\"" + Convert.ToBase64String(audio) + "\"}", out error);
+
     /// <summary>OCR EasyOCR di GPU -> OcrReader.Result dengan
     /// koordinat layar (offset wilayah ditambahkan di sini).</summary>
     public static OcrReader.Result OcrResult(Bitmap bmp, int offX, int offY, out string error)
@@ -159,18 +219,22 @@ public static class AiBridge
 
     private static string Call(string path, Bitmap bmp, out string error)
     {
+        string b64;
+        using (var ms = new MemoryStream())
+        {
+            bmp.Save(ms, ImageFormat.Png);
+            b64 = Convert.ToBase64String(ms.ToArray());
+        }
+        return CallJson(path, "{\"image\":\"" + b64 + "\"}", out error);
+    }
+
+    private static string CallJson(string path, string json, out string error)
+    {
         error = "";
         if (!EnsureRunning()) { error = _lastError; return null; }
         try
         {
-            string b64;
-            using (var ms = new MemoryStream())
-            {
-                bmp.Save(ms, ImageFormat.Png);
-                b64 = Convert.ToBase64String(ms.ToArray());
-            }
-            using var content = new StringContent(
-                "{\"image\":\"" + b64 + "\"}", Encoding.UTF8, "application/json");
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var resp = Http.PostAsync(Base + path, content).GetAwaiter().GetResult();
             var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             if (!resp.IsSuccessStatusCode)
@@ -198,6 +262,7 @@ public static class AiBridge
             ["installed"] = Installed,
             ["sidecar"] = _cacheHealthy ? "online" : "offline",
             ["device"] = "cuda",
+            ["model"] = _modelName,
         };
     }
 
