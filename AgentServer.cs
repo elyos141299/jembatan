@@ -143,7 +143,7 @@ public sealed class AgentServer
                 try
                 {
                     var resp = Route(new Request { Method = "POST", Path = "/routines/run", Query = "", Body = "{\"name\":\"" + nama.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}" });
-                    return resp.StatusCode >= 200 && resp.StatusCode < 300;
+                    return resp.Status >= 200 && resp.Status < 300;
                 }
                 catch { return false; }
             },
