@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Jembatan;
 
@@ -27,6 +29,20 @@ internal static class Program
     private static void Main(string[] args)
     {
         StartedAuto = args != null && Array.IndexOf(args, "--auto") >= 0;
+
+        // Pencatat crash (v5.12.0): kematian aplikasi harus
+        // meninggalkan jejak tertulis. Penyelidikan restart
+        // misterius 26 Nov 2026 membuktikan TIDAK ada crash
+        // (listener dimatikan dari UI — tercatat di log utama),
+        // tapi pengecualian tak tertangani di masa depan kini
+        // tertulis di crash.log, bukan menguap tanpa bukti.
+        AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            WriteCrashLog("UnhandledException", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (s, e) =>
+        {
+            WriteCrashLog("UnobservedTaskException", e.Exception);
+            e.SetObserved();
+        };
 
         // Penjaga satu instans: jalan otomatis (Tugas Terjadwal / Run)
         // dan pembukaan manual bisa berbenturan — instans kedua keluar
@@ -89,6 +105,21 @@ internal static class Program
             Thread.Sleep(100);
         }
         return false;
+    }
+
+    private static void WriteCrashLog(string kind, Exception ex)
+    {
+        try
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Jembatan");
+            Directory.CreateDirectory(dir);
+            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\t" + kind + "\t" +
+                (ex == null ? "(tanpa objek pengecualian)" : ex.ToString().Replace("\r", " ").Replace("\n", " | "));
+            File.AppendAllText(Path.Combine(dir, "crash.log"), line + Environment.NewLine);
+        }
+        catch { /* pencatat tidak boleh ikut menjatuhkan aplikasi */ }
     }
 
     private static void ReleaseSingleInstance()

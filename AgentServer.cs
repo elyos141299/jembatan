@@ -1287,6 +1287,7 @@ public sealed class AgentServer
                     ["ok"] = true,
                     ["version"] = AppVersion,
                     ["admin"] = Settings.IsElevated(),
+                    ["task"] = TaskContext.Snapshot(),
                     ["foreground"] = fgDict,
                     ["windows"] = winList,
                     ["apps"] = new Dictionary<string, object>
@@ -1677,6 +1678,13 @@ public sealed class AgentServer
                         ["ramMB"] = proc.WorkingSet64 / 1048576,
                         ["cpuSec"] = Math.Round(proc.TotalProcessorTime.TotalSeconds, 1),
                         ["threads"] = proc.Threads.Count,
+                        // v5.12.0: pisahkan umur PROSES dari umur
+                        // listener (uptimeSec di atas). Penyelidikan
+                        // 26 Nov: listener yang dimatikan/dinyalakan
+                        // dari UI sempat terbaca sebagai "aplikasi
+                        // restart" — kini keduanya terbaca jelas.
+                        ["pid"] = proc.Id,
+                        ["processUptimeSec"] = (long)(DateTime.Now - proc.StartTime).TotalSeconds,
                     },
                     ["endpoints"] = eps,
                 });
@@ -1774,6 +1782,17 @@ public sealed class AgentServer
                 // Isi dibangun BuildHealth() — UI Control Room
                 // (v4.0.0) membaca data yang sama persis.
                 return Response.JsonObject(BuildHealth());
+            }
+
+            if (req.Method == "GET" && req.Path == "/task")
+            {
+                // Task Memory & Context (v5.12.0): potret tugas
+                // aktif + tugas terakhir yang selesai.
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["task"] = TaskContext.Snapshot(),
+                });
             }
 
             if (req.Method == "POST" && req.Path == "/halt")
@@ -4618,6 +4637,32 @@ public sealed class AgentServer
                             _log($"penstroke {penPts.Count} titik: {(penOk ? "ok" : "GAGAL " + penErr)}");
                             return Response.JsonObject(respPen, penOk ? 200 : 500);
                         }
+                        case "/task/start":
+                        case "/task/note":
+                        case "/task/done":
+                        {
+                            // Task Memory & Context (v5.12.0).
+                            if (req.Path == "/task/start")
+                            {
+                                TaskContext.Start(GetString(root, "title", ""));
+                                _log("tugas dibuka: " + GetString(root, "title", ""));
+                            }
+                            else if (req.Path == "/task/note")
+                            {
+                                TaskContext.Note(GetString(root, "text", ""));
+                            }
+                            else
+                            {
+                                TaskContext.Done();
+                                _log("tugas ditutup");
+                            }
+                            _onActivity();
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["task"] = TaskContext.Snapshot(),
+                            });
+                        }
                         case "/type":
                         {
                             string text = GetString(root, "text", "");
@@ -4647,6 +4692,39 @@ public sealed class AgentServer
                                     ["ok"] = false,
                                     ["error"] = "teks melebihi batas 20000 karakter per panggilan",
                                 }, 400);
+                            // v5.12.0: /type PINTAR. mode "auto"
+                            // (bawaan): bila jendela depan aplikasi
+                            // rewel TSF (Notepad Win11 — terbukti
+                            // merusak ketikan tombol, vonis
+                            // eksperimen belah 26 Nov), teks dikirim
+                            // lewat jalur TEMPEL (clipboard
+                            // dipulihkan sesudahnya) agar persis.
+                            // mode "paste" memaksa tempel; "keys"
+                            // memaksa tombol. rateMs hanya berlaku
+                            // untuk jalur tombol.
+                            string typeMode = GetString(root, "mode", "auto");
+                            bool usePaste = typeMode == "paste" ||
+                                (typeMode != "keys" && IsFussyTextAppForeground());
+                            if (usePaste)
+                            {
+                                if (_inputHalted)
+                                    return Response.JsonObject(new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false,
+                                        ["error"] = "pengetikan dihentikan Emergency Stop",
+                                        ["code"] = "input_halted",
+                                        ["typedChars"] = 0,
+                                    }, 409);
+                                OnUi(() => { PasteTextInternal(text); return true; });
+                                _onActivity();
+                                _log($"ketik (tempel): {text.Length} karakter");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true,
+                                    ["via"] = "paste",
+                                    ["chars"] = text.Length,
+                                });
+                            }
                             // v5.11.0 (Bagian A.2+A.3): potongan
                             // diperkecil 20 -> 12 karakter + jeda
                             // antar-potongan 40 ms agar tumpukan
@@ -4679,7 +4757,12 @@ public sealed class AgentServer
                             _onActivity();
                             string preview = text.Length > 30 ? text.Substring(0, 30) + "…" : text;
                             _log($"ketik: {preview} ({text.Length} karakter)");
-                            return Ok();
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["via"] = "keys",
+                                ["chars"] = text.Length,
+                            });
                         }
                         case "/key":
                         {
@@ -6661,6 +6744,80 @@ public sealed class AgentServer
         // Clipboard.SetText menolak string kosong — pakai Clear() untuk itu.
         if (string.IsNullOrEmpty(text)) System.Windows.Clipboard.Clear();
         else System.Windows.Clipboard.SetText(text);
+    }
+
+    /// <summary>
+    /// Tempel teks ke jendela fokus lewat clipboard, lalu pulihkan
+    /// isi clipboard user (thread UI). Mekanisme yang sama dengan
+    /// /paste v5.11.1 (potret per format FileDrop > gambar > teks)
+    /// — dipakai juga oleh /type pintar (v5.12.0) untuk aplikasi
+    /// yang tumpukan teksnya merusak ketikan tombol.
+    /// </summary>
+    private static void PasteTextInternal(string text)
+    {
+        System.Collections.Specialized.StringCollection savedFiles = null;
+        System.Windows.Media.Imaging.BitmapSource savedImage = null;
+        string savedText = null;
+        bool hasSaved = false;
+        try
+        {
+            if (System.Windows.Clipboard.ContainsFileDropList())
+            {
+                savedFiles = System.Windows.Clipboard.GetFileDropList();
+                hasSaved = savedFiles != null && savedFiles.Count > 0;
+            }
+            else if (System.Windows.Clipboard.ContainsImage())
+            {
+                savedImage = System.Windows.Clipboard.GetImage();
+                hasSaved = savedImage != null;
+            }
+            else if (System.Windows.Clipboard.ContainsText())
+            {
+                savedText = System.Windows.Clipboard.GetText();
+                hasSaved = savedText != null;
+            }
+        }
+        catch { hasSaved = false; }
+        SetClipboardText(text);
+        NativeInput.PressKey("^v");
+        if (hasSaved)
+        {
+            Thread.Sleep(250);
+            try
+            {
+                var data = new System.Windows.DataObject();
+                if (savedFiles != null) data.SetFileDropList(savedFiles);
+                else if (savedImage != null) data.SetImage(savedImage);
+                else data.SetText(savedText);
+                System.Windows.Clipboard.SetDataObject(data, true);
+            }
+            catch { /* clipboard gagal dipulihkan — tempel tetap sah */ }
+        }
+    }
+
+    /// <summary>
+    /// True bila jendela depan adalah aplikasi yang tumpukan
+    /// teksnya (TSF) terbukti merusak ketikan per tombol
+    /// (v5.12.0): Notepad Windows 11 — vonis eksperimen belah
+    /// 26 Nov 2026 (teks persis lewat tempel, rusak acak lewat
+    /// tombol; penerima bersih seperti omnibox Chrome tidak
+    /// bermasalah). Daftar sengaja pendek & berbasis bukti.
+    /// </summary>
+    private static bool IsFussyTextAppForeground()
+    {
+        try
+        {
+            var fg = NativeInput.ForegroundHandle();
+            if (fg == IntPtr.Zero) return false;
+            foreach (var w in NativeInput.ListWindows())
+            {
+                if (w.Handle != fg) continue;
+                string p = (w.Process ?? "").ToLowerInvariant();
+                return p == "notepad";
+            }
+        }
+        catch { /* gagal membaca = anggap tidak rewel */ }
+        return false;
     }
 
     /// <summary>Parse angka query string lalu jepit ke rentang [min, max].</summary>

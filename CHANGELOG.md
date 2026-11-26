@@ -3,6 +3,40 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.12.0 — 2026-11-26
+
+"Tangan Stabil & Ingat" (approv user "Gas semua 1-5"
+26 Nov 2026), dari temuan full test v5.11.1:
+- Penyelidikan restart: TERBUKTI bukan crash dan bukan
+  makro — log aplikasi mencatat "Listener DIMATIKAN oleh
+  kamu" (AppHost.ToggleServer, jalur tombol UI) pada
+  20:16 & 20:18; uptimeSec adalah umur LISTENER sehingga
+  mati/nyala listener terbaca sebagai restart. Uji tekanan
+  putar makro 10x: PID tetap, nol gagal.
+- /health: blok "process" kini memuat pid &
+  processUptimeSec — umur proses dan umur listener terbaca
+  terpisah, tidak tertukar lagi.
+- Pencatat crash: UnhandledException &
+  UnobservedTaskException tertulis ke crash.log
+  (%LOCALAPPDATA%\Jembatan) — kematian di masa depan
+  meninggalkan jejak, bukan teka-teki.
+- /type PINTAR: mode "auto" (bawaan) mengirim teks lewat
+  jalur tempel (clipboard dipulihkan) bila jendela depan
+  aplikasi rewel TSF (Notepad Win11); mode "paste"/"keys"
+  memaksa jalur. Respons memuat "via" & "chars".
+- Task Memory & Context: POST /task/start|note|done +
+  GET /task; konteks tugas aktif tersimpan JSON
+  (task-context.json, tahan restart) dan ikut terbaca di
+  GET /context — ingatan kerja bersama agent & aplikasi.
+- VONIS PENA (gerbang ditutup): /penstroke di Paint
+  (Windows Ink) menghasilkan NOL tinta (2x, termasuk
+  variasi kursor diparkir) dan di Krita hanya garis tipis
+  bertekanan terkunci + palet terpicu. Pena sintetis tidak
+  diterima sebagai pena bertekanan oleh tumpukan Ink asli
+  di mesin ini; endpoint tetap ada (tidak berbahaya,
+  melaporkan apa adanya) tapi BUKAN alat gambar. Jalur
+  gambar resmi tetap mouse SendInput (terbukti setia).
+
 ## 5.11.1 — 2026-11-26
 
 Dua obat dari baterai tes v5.11.0 (approv user "Gas
