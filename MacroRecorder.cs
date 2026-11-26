@@ -76,6 +76,12 @@ public static class MacroRecorder
     private static int _lastMoveX, _lastMoveY;
     private static ManualResetEventSlim _hookReady;
     private static bool _hookOk;
+    // Pemungut posisi berkala (v5.11.0 — Bagian A.1b): hook
+    // tingkat rendah TIDAK menerima gerakan SetCursorPos
+    // (teleport senyap), jadi selama merekam posisi kursor
+    // ikut disampel dari utas terpisah sebagai jaring kedua.
+    private static Thread _pollThread;
+    private static volatile bool _pollStop;
 
     public static bool IsRecording { get { lock (_lock) { return _hookThread != null; } } }
     public static string RecordingName { get { lock (_lock) { return _recName; } } }
@@ -125,7 +131,54 @@ public static class MacroRecorder
         bool ok;
         lock (_lock) { ok = _hookOk && _hookThread != null; }
         if (!ok) Shutdown(); // hook gagal terpasang — jangan tinggalkan utas menggantung
+        if (ok)
+        {
+            _pollStop = false;
+            _pollThread = new Thread(PollThreadMain)
+            { IsBackground = true, Name = "MacroPoll" };
+            _pollThread.Start();
+        }
         return ok;
+    }
+
+    // Sampel posisi kursor tiap 50 ms selama merekam.
+    // Kejadian move hanya ditambah bila kursor berpindah
+    // ≥4px dari titik tercatat terakhir DAN hook belum
+    // mencatat gerakan dalam 80 ms terakhir — jadi jalur
+    // ini khusus menangkap gerakan yang hook lewatkan
+    // (teleport), bukan menduplikasi gerakan fisik.
+    private static void PollThreadMain()
+    {
+        while (!_pollStop)
+        {
+            try
+            {
+                var pos = NativeInput.CursorPosition();
+                lock (_lock)
+                {
+                    if (_events != null && _clock != null)
+                    {
+                        long t = _clock.ElapsedMilliseconds;
+                        bool jauh = Math.Abs(pos.X - _lastMoveX) >= 4 || Math.Abs(pos.Y - _lastMoveY) >= 4;
+                        if (jauh && t - _lastMoveT >= 80)
+                        {
+                            _lastMoveT = t; _lastMoveX = pos.X; _lastMoveY = pos.Y;
+                            AddEventLocked(new MacroEvent { Kind = "move", X = pos.X, Y = pos.Y, Inj = true }, t);
+                        }
+                    }
+                }
+            }
+            catch { /* pemungut tidak boleh menjatuhkan perekam */ }
+            Thread.Sleep(50);
+        }
+    }
+
+    private static void StopPolling()
+    {
+        _pollStop = true;
+        var pt = _pollThread;
+        _pollThread = null;
+        if (pt != null && pt.IsAlive) pt.Join(600);
     }
 
     private static void HookThreadMain()
@@ -166,6 +219,7 @@ public static class MacroRecorder
         }
         PostThreadMessage(_hookThreadId, WmQuit, IntPtr.Zero, IntPtr.Zero);
         t.Join(2500);
+        StopPolling();
         MacroFile file;
         lock (_lock)
         {
@@ -406,6 +460,7 @@ public static class MacroRecorder
     public static void Shutdown()
     {
         _playStop = true;
+        StopPolling();
         Thread t;
         lock (_lock) { t = _hookThread; }
         if (t != null)

@@ -279,9 +279,197 @@ public static class NativeInput
         try { return IsHungAppWindow(hWnd); } catch { return false; }
     }
 
-    public static void Move(int x, int y)
+    // ---------- Gerakan SendInput absolut (v5.11.0 — Bagian A.1) ----------
+    // SetCursorPos adalah "warga kelas dua": mesin tinta
+    // Paint/Krita tidak menggambar setia darinya, perekam
+    // makro buta terhadapnya, dan sebagian aplikasi tidak
+    // mengakuinya sebagai gerakan (bukti audit 26 Nov +
+    // latihan gambar Krita). Semua gerakan kini lewat
+    // SendInput absolut (MOUSEEVENTF_ABSOLUTE|VIRTUALDESK) —
+    // gerakan pointer ASLI yang diakui semua jalur itu.
+    // SetCursorPos hanya tinggal sebagai jalan kembali bila
+    // SendInput gagal total.
+
+    private const uint MouseEventfMove = 0x0001;
+    private const uint MouseEventfAbsolute = 0x8000;
+    private const uint MouseEventfVirtualDesk = 0x4000;
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    /// <summary>Pindahkan kursor ke (x, y) sebagai gerakan
+    /// pointer asli lewat SendInput absolut di seluruh
+    /// desktop virtual (koordinat ternormalisasi 0..65535).</summary>
+    public static void MoveTo(int x, int y)
     {
-        SetCursorPos(x, y);
+        int vx = GetSystemMetrics(76); // SM_XVIRTUALSCREEN
+        int vy = GetSystemMetrics(77); // SM_YVIRTUALSCREEN
+        int vw = GetSystemMetrics(78); // SM_CXVIRTUALSCREEN
+        int vh = GetSystemMetrics(79); // SM_CYVIRTUALSCREEN
+        if (vw <= 1 || vh <= 1) { SetCursorPos(x, y); return; }
+        int nx = (int)Math.Round((x - vx) * 65535.0 / (vw - 1));
+        int ny = (int)Math.Round((y - vy) * 65535.0 / (vh - 1));
+        var ev = new InputEvent { Type = 0 };
+        ev.Data.Mi = new MouseInput
+        {
+            Dx = nx,
+            Dy = ny,
+            MouseData = 0,
+            Flags = MouseEventfMove | MouseEventfAbsolute | MouseEventfVirtualDesk,
+            Time = 0,
+            ExtraInfo = UIntPtr.Zero,
+        };
+        if (SendInput(1, new[] { ev }, Marshal.SizeOf<InputEvent>()) == 0)
+            SetCursorPos(x, y);
+    }
+
+    public static void Move(int x, int y) => MoveTo(x, y);
+
+    /// <summary>
+    /// Lepas tombol mouse DENGAN verifikasi (v5.11.0): sesudah
+    /// event lepas dikirim, keadaan tombol diperiksa lewat
+    /// GetAsyncKeyState; bila masih terbaca tertahan, event
+    /// lepas dikirim ulang (maks 3×). Obat buat artefak
+    /// "pena belum terangkat" (garis liar antar goresan di
+    /// Krita, 26 Nov) — perpindahan kursor sesudah ini aman.
+    /// </summary>
+    public static void ReleaseButton(string button)
+    {
+        ButtonFlags(button, out uint _, out uint up);
+        int vk = ((button ?? "left").Trim().ToLowerInvariant()) switch
+        {
+            "right" => 0x02,   // VK_RBUTTON
+            "middle" => 0x04,  // VK_MBUTTON
+            _ => 0x01,         // VK_LBUTTON
+        };
+        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        for (int i = 0; i < 3; i++)
+        {
+            if ((GetAsyncKeyState(vk) & 0x8000) == 0) return;
+            Thread.Sleep(10);
+            mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        }
+    }
+
+    // ---------- Pena sintetis Windows Ink (v5.11.0 — Bagian B.9, PROTOTIPE) ----------
+    // Tekanan kuas tidak bisa dikirim SendInput/mouse_event.
+    // Jalur resminya: perangkat pena sintetis
+    // (CreateSyntheticPointerDevice + InjectSyntheticPointerInput,
+    // Windows 10 1809+) dengan POINTER_PEN_INFO bertekanan
+    // 0..1024. Aplikasi tujuan harus memakai API tablet
+    // "Windows 8+ Pointer Input (Windows Ink)" — di Krita:
+    // Settings > Configure Krita > Tablet Settings.
+    // Status: prototipe bergerbang tes goresan meruncing.
+
+    private const uint PtPen = 3; // PT_PEN
+    private const uint PointerFeedbackDefault = 1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointerInfo
+    {
+        public uint PointerType;
+        public uint PointerId;
+        public uint FrameId;
+        public uint PointerFlags;
+        public IntPtr SourceDevice;
+        public IntPtr HwndTarget;
+        public PointNative PtPixelLocation;
+        public PointNative PtHimetricLocation;
+        public PointNative PtPixelLocationRaw;
+        public PointNative PtHimetricLocationRaw;
+        public uint DwTime;
+        public uint HistoryCount;
+        public int InputData;
+        public uint DwKeyStates;
+        public ulong PerformanceCount;
+        public int ButtonChangeType;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointerPenInfo
+    {
+        public PointerInfo PointerInfo;
+        public uint PenFlags;
+        public uint PenMask;
+        public uint Pressure;
+        public uint Rotation;
+        public int TiltX;
+        public int TiltY;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr CreateSyntheticPointerDevice(uint pointerType, uint maxCount, uint activeMode);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool InjectSyntheticPointerInput(IntPtr device, PointerPenInfo[] pointerInfos, uint count);
+
+    private static IntPtr _penDevice = IntPtr.Zero;
+
+    private const uint PenFlagNone = 0;
+    private const uint PenMaskPressure = 0x00000001;
+    private const uint PfNew = 0x00000001;
+    private const uint PfInRange = 0x00000002;
+    private const uint PfInContact = 0x00000004;
+    private const uint PfFirstButton = 0x00000010;
+    private const uint PfPrimary = 0x00002000;
+    private const uint PfDown = 0x00010000;
+    private const uint PfUpdate = 0x00020000;
+    private const uint PfUp = 0x00040000;
+
+    /// <summary>
+    /// Satu goresan pena bertekanan menyusuri titik-titik
+    /// (x, y, pressure 0..1024). stepMs = jeda antar titik.
+    /// False + error bila perangkat sintetis gagal dibuat
+    /// atau suntikan ditolak sistem.
+    /// </summary>
+    public static bool PenStroke(IReadOnlyList<(int X, int Y, int Pressure)> pts, int stepMs, out string error)
+    {
+        error = "";
+        if (pts == null || pts.Count < 2) { error = "goresan pena butuh minimal 2 titik"; return false; }
+        if (stepMs < 0) stepMs = 0;
+        if (stepMs > 100) stepMs = 100;
+        if (_penDevice == IntPtr.Zero)
+        {
+            _penDevice = CreateSyntheticPointerDevice(PtPen, 1, PointerFeedbackDefault);
+            if (_penDevice == IntPtr.Zero)
+            {
+                error = "CreateSyntheticPointerDevice gagal (err " + Marshal.GetLastWin32Error() + ")";
+                return false;
+            }
+        }
+        for (int i = 0; i < pts.Count; i++)
+        {
+            var p = pts[i];
+            int pressure = p.Pressure < 0 ? 0 : p.Pressure > 1024 ? 1024 : p.Pressure;
+            uint flags;
+            if (i == 0) flags = PfNew | PfInRange | PfInContact | PfFirstButton | PfPrimary | PfDown;
+            else if (i == pts.Count - 1) flags = PfInRange | PfPrimary | PfUp;
+            else flags = PfInRange | PfInContact | PfFirstButton | PfPrimary | PfUpdate;
+            var info = new PointerPenInfo
+            {
+                PointerInfo = new PointerInfo
+                {
+                    PointerType = PtPen,
+                    PointerId = 1,
+                    PointerFlags = flags,
+                    PtPixelLocation = new PointNative { X = p.X, Y = p.Y },
+                    PtPixelLocationRaw = new PointNative { X = p.X, Y = p.Y },
+                },
+                PenFlags = PenFlagNone,
+                PenMask = PenMaskPressure,
+                Pressure = (uint)(flags == (PfInRange | PfPrimary | PfUp) ? 0 : pressure),
+                Rotation = 0,
+                TiltX = 0,
+                TiltY = 0,
+            };
+            if (!InjectSyntheticPointerInput(_penDevice, new[] { info }, 1))
+            {
+                error = "InjectSyntheticPointerInput gagal di titik " + i + " (err " + Marshal.GetLastWin32Error() + ")";
+                return false;
+            }
+            if (stepMs > 0 && i < pts.Count - 1) Thread.Sleep(stepMs);
+        }
+        return true;
     }
 
     /// <summary>
@@ -293,7 +481,7 @@ public static class NativeInput
     /// </summary>
     public static void GlideTo(int x, int y, int glideMs)
     {
-        if (glideMs <= 0) { SetCursorPos(x, y); return; }
+        if (glideMs <= 0) { MoveTo(x, y); return; }
         if (glideMs > 10000) glideMs = 10000;
         var from = CursorPosition();
         var sw = Stopwatch.StartNew();
@@ -303,7 +491,7 @@ public static class NativeInput
             double e = t < 0.5 ? 2 * t * t : 1 - Math.Pow(-2 * t + 2, 2) / 2;
             int cx = from.X + (int)Math.Round((x - from.X) * e);
             int cy = from.Y + (int)Math.Round((y - from.Y) * e);
-            SetCursorPos(cx, cy);
+            MoveTo(cx, cy);
             if (t >= 1.0) break;
             Thread.Sleep(12);
         }
@@ -311,11 +499,11 @@ public static class NativeInput
 
     public static void Click(int x, int y, string button)
     {
-        SetCursorPos(x, y);
-        ButtonFlags(button, out uint down, out uint up);
+        MoveTo(x, y);
+        ButtonFlags(button, out uint down, out uint _);
         mouse_event(down, 0, 0, 0, UIntPtr.Zero);
         Thread.Sleep(45);
-        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        ReleaseButton(button);
     }
 
     /// <summary>
@@ -339,7 +527,7 @@ public static class NativeInput
     /// </summary>
     public static void Scroll(int x, int y, int delta)
     {
-        SetCursorPos(x, y);
+        MoveTo(x, y);
         // dwData untuk wheel bertanda (signed) — kirim sebagai uint.
         mouse_event(Wheel, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
     }
@@ -350,7 +538,7 @@ public static class NativeInput
     /// Delta positif = ke kanan, negatif = ke kiri.</summary>
     public static void ScrollH(int x, int y, int delta)
     {
-        SetCursorPos(x, y);
+        MoveTo(x, y);
         mouse_event(HWheel, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
     }
 
@@ -362,7 +550,7 @@ public static class NativeInput
     /// </summary>
     public static void ScrollSmooth(int x, int y, int delta, bool horizontal)
     {
-        SetCursorPos(x, y);
+        MoveTo(x, y);
         uint flag = horizontal ? HWheel : Wheel;
         int sisa = delta;
         while (sisa != 0)
@@ -383,11 +571,11 @@ public static class NativeInput
         mouse_event(down, 0, 0, 0, UIntPtr.Zero);
     }
 
-    /// <summary>Lepas tombol mouse yang sedang tertahan (v5.9.0).</summary>
+    /// <summary>Lepas tombol mouse yang sedang tertahan (v5.9.0;
+    /// v5.11.0: kini lewat ReleaseButton terverifikasi).</summary>
     public static void ButtonUp(string button)
     {
-        ButtonFlags(button, out uint _, out uint up);
-        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        ReleaseButton(button);
     }
 
     /// <summary>Klik tekan-tahan (v5.9.0): tekan di titik,
@@ -397,7 +585,7 @@ public static class NativeInput
     {
         if (holdMs < 0) holdMs = 0;
         if (holdMs > 10000) holdMs = 10000;
-        SetCursorPos(x, y);
+        MoveTo(x, y);
         ButtonDown(button);
         if (holdMs > 0) Thread.Sleep(holdMs);
         ButtonUp(button);
@@ -429,19 +617,19 @@ public static class NativeInput
         if (stepMs > 100) stepMs = 100;
         if (settleMs < 0) settleMs = 0;
         if (settleMs > 2000) settleMs = 2000;
-        ButtonFlags(button, out uint down, out uint up);
-        SetCursorPos(x1, y1);
+        ButtonFlags(button, out uint down, out uint _);
+        MoveTo(x1, y1);
         mouse_event(down, 0, 0, 0, UIntPtr.Zero);
         if (grabMs > 0) Thread.Sleep(grabMs);
         for (int i = 1; i <= steps; i++)
         {
             int x = x1 + (x2 - x1) * i / steps;
             int y = y1 + (y2 - y1) * i / steps;
-            SetCursorPos(x, y);
+            MoveTo(x, y);
             if (stepMs > 0) Thread.Sleep(stepMs);
         }
         if (settleMs > 0) Thread.Sleep(settleMs);
-        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        ReleaseButton(button);
     }
 
     /// <summary>
@@ -463,9 +651,9 @@ public static class NativeInput
         if (stepMs > 100) stepMs = 100;
         if (settleMs < 0) settleMs = 0;
         if (settleMs > 2000) settleMs = 2000;
-        ButtonFlags(button, out uint down, out uint up);
+        ButtonFlags(button, out uint down, out uint _);
         var start = path[0];
-        SetCursorPos(start.X, start.Y);
+        MoveTo(start.X, start.Y);
         mouse_event(down, 0, 0, 0, UIntPtr.Zero);
         if (grabMs > 0) Thread.Sleep(grabMs);
         int cx = start.X, cy = start.Y;
@@ -474,10 +662,31 @@ public static class NativeInput
             var target = path[p];
             int dx = target.X - cx, dy = target.Y - cy;
             int dist = (int)Math.Ceiling(Math.Sqrt(dx * dx + dy * dy));
-            int steps = Math.Max(2, dist / 12);
+            // Kecepatan adaptif (v5.11.0 — Bagian B.11): ukuran
+            // langkah mengikuti ketajaman belokan DI titik
+            // tujuan segmen ini. Lurus = langkah 16px (lebih
+            // sedikit jeda, lebih cepat); belokan tajam =
+            // langkah 6px (rapat & pelan, tinta setia). Sudut
+            // dihitung dari arah masuk vs arah keluar titik.
+            double sudut = 0;
+            if (p + 1 < path.Count)
+            {
+                var next = path[p + 1];
+                double ax = target.X - cx, ay = target.Y - cy;
+                double bx = next.X - target.X, by = next.Y - target.Y;
+                double la = Math.Sqrt(ax * ax + ay * ay), lb = Math.Sqrt(bx * bx + by * by);
+                if (la > 0 && lb > 0)
+                {
+                    double cos = (ax * bx + ay * by) / (la * lb);
+                    if (cos < -1) cos = -1; if (cos > 1) cos = 1;
+                    sudut = Math.Acos(cos) * 180.0 / Math.PI;
+                }
+            }
+            int stepSize = sudut >= 60 ? 6 : sudut >= 25 ? 9 : 16;
+            int steps = Math.Max(2, (int)Math.Ceiling((double)dist / stepSize));
             for (int i = 1; i <= steps; i++)
             {
-                SetCursorPos(cx + dx * i / steps, cy + dy * i / steps);
+                MoveTo(cx + dx * i / steps, cy + dy * i / steps);
                 if (stepMs > 0) Thread.Sleep(stepMs);
             }
             cx = target.X; cy = target.Y;
@@ -487,7 +696,7 @@ public static class NativeInput
             if (dwell > 0) Thread.Sleep(dwell);
         }
         if (settleMs > 0) Thread.Sleep(settleMs);
-        mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        ReleaseButton(button);
     }
 
     /// <summary>Mengetik teks biasa (v5.0.0: SendInput murni,
@@ -611,9 +820,32 @@ public static class NativeInput
             case "END": return 0x23;
             case "PGUP": case "PAGEUP": return 0x21;
             case "PGDN": case "PAGEDOWN": return 0x22;
+            // v5.11.0 (Bagian A.6): nama tombol dilengkapi —
+            // sisip, kunci-kunci khusus, numpad, media & volume.
+            case "INSERT": case "INS": return 0x2D;
+            case "PRINTSCREEN": case "PRTSC": case "PRTSCR": return 0x2C;
+            case "SCROLLLOCK": case "SCROLL": return 0x91;
+            case "PAUSE": case "BREAK": return 0x13;
+            case "CAPSLOCK": case "CAPS": return 0x14;
+            case "NUMLOCK": return 0x90;
+            case "MENU": case "APPS": return 0x5D;
+            case "MULTIPLY": case "NUMPAD*": return 0x6A;
+            case "ADD": case "NUMPAD+": return 0x6B;
+            case "SUBTRACT": case "NUMPAD-": return 0x6D;
+            case "DECIMAL": case "NUMPAD.": return 0x6E;
+            case "DIVIDE": case "NUMPAD/": return 0x6F;
+            case "MEDIA_NEXT": case "MEDIANEXT": case "NEXT_TRACK": case "NEXTTRACK": return 0xB0;
+            case "MEDIA_PREV": case "MEDIAPREV": case "PREV_TRACK": case "PREVTRACK": return 0xB1;
+            case "MEDIA_STOP": case "MEDIASTOP": return 0xB2;
+            case "MEDIA_PLAYPAUSE": case "PLAYPAUSE": case "PLAY_PAUSE": return 0xB3;
+            case "VOL_MUTE": case "VOLMUTE": case "VOLUME_MUTE": case "MUTE": return 0xAD;
+            case "VOL_DOWN": case "VOLDOWN": case "VOLUME_DOWN": return 0xAE;
+            case "VOL_UP": case "VOLUP": case "VOLUME_UP": return 0xAF;
         }
-        if (k.Length == 2 && k[0] == 'F' && int.TryParse(k.Substring(1), out int f) && f >= 1 && f <= 12)
-            return (ushort)(0x70 + f - 1);
+        if (k.StartsWith("NUMPAD") && k.Length == 7 && k[6] >= '0' && k[6] <= '9')
+            return (ushort)(0x60 + (k[6] - '0'));
+        if (k.Length >= 2 && k.Length <= 3 && k[0] == 'F' && int.TryParse(k.Substring(1), out int f) && f >= 1 && f <= 24)
+            return (ushort)(f <= 12 ? 0x70 + f - 1 : 0x7C + f - 13);
         if (k.Length == 1)
         {
             char c = k[0];
@@ -677,11 +909,27 @@ public static class NativeInput
         SendInput(1, new[] { ev }, Marshal.SizeOf<InputEvent>());
     }
 
-    /// <summary>Tekan-lepas satu tombol mode scan code.</summary>
+    /// <summary>Tekan-lepas satu tombol mode scan code.
+    /// v5.11.0 (Bagian A.5): jeda tahan dari _tapHoldMs —
+    /// ketukan tanpa jeda bisa hilang di game polling.</summary>
     public static void TapKeyScan(ushort vk)
     {
         KeyDownScan(vk);
+        if (_tapHoldMs > 0) Thread.Sleep(_tapHoldMs);
         KeyUpScan(vk);
+    }
+
+    // Jeda tahan ketukan (v5.11.0 — Bagian A.5): dipasang
+    // PressKey/PressKeyScan dari bidang holdMs selama satu
+    // panggilan. Semua jalur ini berjalan serial di utas UI,
+    // jadi satu bidang bersama aman. 0 = perilaku lama persis.
+    private static int _tapHoldMs;
+
+    private static int ClampHold(int holdMs)
+    {
+        if (holdMs < 0) return 0;
+        if (holdMs > 5000) return 5000;
+        return holdMs;
     }
 
     /// <summary>
@@ -691,7 +939,11 @@ public static class NativeInput
     /// kecuali terakhir ditahan, terakhir diketuk, lalu semua
     /// dilepas. Nama dari VkFromName / daftar tombol khusus.
     /// </summary>
-    public static void PressKeyScan(string keys)
+    public static void PressKeyScan(string keys) => PressKeyScan(keys, 0);
+
+    /// <summary>PressKeyScan dengan jeda tahan (v5.11.0):
+    /// holdMs menahan tombol terakhir sebelum dilepas.</summary>
+    public static void PressKeyScan(string keys, int holdMs)
     {
         if (string.IsNullOrWhiteSpace(keys)) return;
         var vks = new List<ushort>();
@@ -705,6 +957,8 @@ public static class NativeInput
             vks.Add(vk);
         }
         if (vks.Count == 0) return;
+        int prevHold = _tapHoldMs;
+        _tapHoldMs = ClampHold(holdMs);
         try
         {
             for (int i = 0; i < vks.Count - 1; i++) KeyDownScan(vks[i]);
@@ -713,6 +967,7 @@ public static class NativeInput
         finally
         {
             for (int i = vks.Count - 2; i >= 0; i--) KeyUpScan(vks[i]);
+            _tapHoldMs = prevHold;
         }
     }
 
@@ -758,14 +1013,27 @@ public static class NativeInput
         return ((long)ft.High << 32) | ft.Low;
     }
 
-    /// <summary>Detik sejak masukan terakhir user (untuk pemantau kejadian).</summary>
-    public static int IdleSeconds()
+    // Selisih idle yang AMAN dari luapan tick 32-bit
+    // (v5.11.0 — Bagian A.8): LastInputInfo.Time adalah
+    // DWORD (membungkus tiap 49,7 hari) sedangkan
+    // TickCount64 terus naik — pengurangan langsung
+    // menghasilkan angka raksasa sesudah luapan. Selisih
+    // dihitung di ruang uint 32-bit (ikut membungkus),
+    // benar untuk idle < 49,7 hari. -1 = gagal membaca.
+    private static long IdleDiffMs()
     {
         var lii = new LastInputInfo();
         lii.Size = (uint)Marshal.SizeOf(typeof(LastInputInfo));
-        if (GetLastInputInfo(ref lii))
-            return (int)((Environment.TickCount64 - (long)lii.Time) / 1000);
-        return 0;
+        if (!GetLastInputInfo(ref lii)) return -1;
+        uint now = unchecked((uint)Environment.TickCount64);
+        return unchecked(now - lii.Time);
+    }
+
+    /// <summary>Detik sejak masukan terakhir user (untuk pemantau kejadian).</summary>
+    public static int IdleSeconds()
+    {
+        long d = IdleDiffMs();
+        return d < 0 ? 0 : (int)(d / 1000);
     }
 
     /// <summary>Milidetik sejak masukan terakhir user (v5.9.0 —
@@ -773,11 +1041,8 @@ public static class NativeInput
     /// Gagal membaca = dianggap sangat lama (tidak menghalangi).</summary>
     public static long IdleMilliseconds()
     {
-        var lii = new LastInputInfo();
-        lii.Size = (uint)Marshal.SizeOf(typeof(LastInputInfo));
-        if (GetLastInputInfo(ref lii))
-            return Environment.TickCount64 - (long)lii.Time;
-        return long.MaxValue;
+        long d = IdleDiffMs();
+        return d < 0 ? long.MaxValue : d;
     }
 
     // ---------- Jangan tidur (v2.5.0) ----------
@@ -1015,9 +1280,23 @@ public static class NativeInput
     /// atau kombinasi dalam sintaks SendKeys ("^c" = Ctrl+C, "%{F4}" = Alt+F4).
     /// v5.0.0: diuraikan sendiri ke SendInput — SendKeys WinForms hilang.
     /// </summary>
-    public static void PressKey(string keys)
+    public static void PressKey(string keys) => PressKey(keys, 0);
+
+    /// <summary>PressKey dengan jeda tahan (v5.11.0 — Bagian
+    /// A.5): holdMs menahan tiap ketukan sebelum dilepas,
+    /// untuk aplikasi/game polling yang kehilangan ketukan
+    /// sekejap. 0 = perilaku lama persis.</summary>
+    public static void PressKey(string keys, int holdMs)
     {
         if (string.IsNullOrWhiteSpace(keys)) return;
+        int prevHold = _tapHoldMs;
+        _tapHoldMs = ClampHold(holdMs);
+        try { PressKeyInti(keys); }
+        finally { _tapHoldMs = prevHold; }
+    }
+
+    private static void PressKeyInti(string keys)
+    {
         string k = keys.Trim();
         if (SpecialKeys.TryGetValue(k, out ushort vkOnly))
         {
@@ -1109,6 +1388,7 @@ public static class NativeInput
     internal static void TapKey(ushort vk)
     {
         KeyDown(vk);
+        if (_tapHoldMs > 0) Thread.Sleep(_tapHoldMs);
         KeyUp(vk);
     }
 

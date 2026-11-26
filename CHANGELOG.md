@@ -3,6 +3,84 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.11.0 — 2026-11-26
+
+"Upgrade Tangan: Tiga Jalur Kendali + Tekanan Kuas"
+(PLAN-v5.11.0 — menggantikan PLAN-v5.10.1; approv user
+"gas" 26 Nov 2026). Tiga jalur kendali kini resmi:
+desktop terstruktur = UIA/FlaUI, canvas & gambar = mouse
+SendInput + pena, web = CDP.
+
+Bagian A — perbaikan cacat audit (delapan butir):
+- A.1 Semua gerakan mouse kini SendInput ABSOLUT
+  (MoveTo; MOUSEEVENTF_ABSOLUTE|VIRTUALDESK) — SetCursorPos
+  hanya jalan kembali. Mesin tinta & perekam makro kini
+  menerima gerakan yang sama seperti pointer fisik.
+  Pelepasan tombol DIVERIFIKASI (ReleaseButton:
+  GetAsyncKeyState, kirim ulang maks 3×) — obat garis liar
+  antar goresan. Perekam makro menambah PEMUNGUT POSISI
+  berkala (50 ms) yang menangkap gerakan teleport yang
+  luput dari hook.
+- A.2 Ritme ketik dibedah: potongan 20 -> 12 karakter +
+  jeda antar-potongan 40 ms (tumpukan TSF sempat terkuras;
+  anomali kerusakan indeks tetap pada teks panjang).
+- A.3 /type memeriksa Emergency Stop di TIAP potongan
+  (berhenti di tengah + typedChars) dan menolak teks
+  > 20.000 karakter (400).
+- A.4 ScrollSmooth dijepit total ±4800; DragPath ditolak
+  bila > 200 titik atau total diam > 30 detik (400).
+- A.5 /key menerima holdMs (0–5000) — jeda tahan ketukan
+  untuk game polling; berlaku juga mode scan.
+- A.6 VkFromName lengkap: F13–F24, numpad penuh, sisip/
+  printscreen/scrolllock/pause/capslock/numlock/menu,
+  media (next/prev/stop/play-pause) & volume (up/down/mute).
+- A.7 /paste menyimpan & MEMULIHKAN clipboard user
+  sesudah tempel (jeda 250 ms); keepClipboard:true =
+  perilaku lama.
+- A.8 IdleMilliseconds/IdleSeconds aman dari luapan tick
+  32-bit (selisih dihitung di ruang uint; dulu rusak
+  sesudah uptime 49,7 hari).
+
+Bagian B — kemampuan gambar:
+- B.9 /penstroke (PROTOTIPE): goresan pena bertekanan
+  Windows Ink (CreateSyntheticPointerDevice +
+  InjectSyntheticPointerInput, tekanan 0..1024 per titik).
+  Aplikasi tujuan harus memakai API "Windows 8+ Pointer
+  Input". Bergerbang tes goresan meruncing di Krita.
+- B.10 /penstroke verify:true — potret kotak goresan
+  sebelum/sesudah, laporkan changedRatio & inkDetected.
+- B.11 DragPath berkecepatan ADAPTIF: langkah 16px di
+  lintasan lurus, 9px belokan sedang, 6px belokan tajam
+  (sudut di titik tujuan segmen).
+
+Bagian C — jalur UIA (FlaUI sudah terpasang sejak v2.4.0
+& /uia/act sejak v3.5.0): /uia/act kini menerima waitMs
+(0–60000) — pencarian elemen dicoba ulang tiap 250 ms
+sampai batas waktu, bukan sekali tembak.
+
+Bagian D — mata: sidecar AI + endpoint /parse OmniParser
+(icon-detect microsoft/OmniParser-v2.0 di GPU, dimuat
+malas; label kotak = teks EasyOCR yang pusatnya di dalam
+kotak). /locate menambah tahap "omniparser" sesudah
+UIA/OCR/YOLO; mode "omni" mengembalikan semua kotak
+elemen (maks 40). Keterangan Florence-2 DITUNDA ronde
+ini dengan sadar (label dari OCR sudah menutup kebutuhan
+grounding; caption model menyusul bila terbukti perlu).
+
+Bagian E — jalur web: CdpBrowser.cs — CDP MENTAH lewat
+WebSocket (keputusan teknis: TANPA pustaka Playwright
+agar exe tetap berkas tunggal; fungsi sesuai rencana).
+Chrome TERPASANG dikendalikan dengan PROFIL KHUSUS
+otomasi (LocalAppData\Jembatan\browser-profile; profil
+utama user tidak disentuh). Endpoint: /browser/start|
+stop|goto|eval|waitfor|click|setvalue|text. Klik & isi
+nilai di tingkat DOM; waitfor = polling Smart Waiting.
+Aksi peramban masuk InputPaths (tunduk lease & halt).
+
+Bagian F — AutoHotkey v2 terpasang di PC sebagai perkakas
+samping (di luar aplikasi; hanya skrip tulisan agen).
+Power Automate Desktop DITOLAK user (dicatat di rencana).
+
 ## 5.10.0 — 2026-11-26
 
 Upgrade Tangan jilid 2 (user memilih "Semua" dari menu 8

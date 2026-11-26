@@ -3762,6 +3762,34 @@ public sealed class AgentServer
                                     }
                                 }
                             }
+                            if (hits.Count == 0 && (mode == "auto" || mode == "omni"))
+                            {
+                                // Tahap terakhir (v5.11.0 —
+                                // Bagian D): OmniParser untuk UI
+                                // buta-UIA (canvas, Electron,
+                                // game). mode "omni" eksplisit =
+                                // kembalikan SEMUA kotak elemen
+                                // (maks 40) agar pemanggil memilih;
+                                // mode "auto" = hanya kotak yang
+                                // label teksnya memuat query.
+                                var boundsO = NativeInput.PrimaryBounds();
+                                using (var bmpO = CaptureRegionBitmap(boundsO, 0, out var effO))
+                                {
+                                    var detsO = AiBridge.ParseList(bmpO, effO.X, effO.Y, out var oErr);
+                                    if (detsO != null)
+                                    {
+                                        foreach (var dO in detsO)
+                                        {
+                                            if (mode == "omni" ||
+                                                dO.Label.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                                                hits.Add(new LocateHit { Via = "omniparser", Text = dO.Label, Type = "element", Rect = dO.Rect });
+                                            if (hits.Count >= 40) break;
+                                        }
+                                        if (hits.Count > 0) viaUsed = "omniparser";
+                                    }
+                                    else _log("locate OmniParser gagal: " + oErr);
+                                }
+                            }
                             var cand = new List<Dictionary<string, object>>();
                             foreach (var h in hits)
                             {
@@ -4410,6 +4438,15 @@ public sealed class AgentServer
                             // kecil lokal. Bawaan: lama persis.
                             bool horiz = GetString(root, "axis", "y") == "x";
                             bool smooth = GetBool(root, "smooth", false);
+                            // v5.11.0 (Bagian A.4): scroll halus
+                            // dijepit total ±4800 (40 klik roda)
+                            // — delta ekstrem tidak lagi membuat
+                            // UI sibuk puluhan detik.
+                            if (smooth)
+                            {
+                                if (delta > 4800) delta = 4800;
+                                if (delta < -4800) delta = -4800;
+                            }
                             OnUi(() =>
                             {
                                 if (smooth) NativeInput.ScrollSmooth(x, y, delta, horiz);
@@ -4450,6 +4487,21 @@ public sealed class AgentServer
                                 }
                             }
                             bool pakaiVia = viaPts.Count > 0;
+                            // v5.11.0 (Bagian A.4): jalur seret
+                            // dijepit total — maks 200 titik dan
+                            // total waktu diam (grab + semua
+                            // dwell + settle) maks 30 detik.
+                            if (pakaiVia)
+                            {
+                                long totalDiam = grabMs + settleMs;
+                                foreach (var p in viaPts) totalDiam += Math.Max(0, p.DwellMs);
+                                if (viaPts.Count > 200 || totalDiam > 30000)
+                                    return Response.JsonObject(new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false,
+                                        ["error"] = "jalur seret melebihi batas (maks 200 titik, total diam maks 30 detik)",
+                                    }, 400);
+                            }
                             var mods = ParseModifiers(GetString(root, "modifiers", ""));
                             OnUi(() =>
                             {
@@ -4493,6 +4545,79 @@ public sealed class AgentServer
                             }
                             return Ok();
                         }
+                        case "/penstroke":
+                        {
+                            // Goresan pena BERTEKANAN (v5.11.0 —
+                            // Bagian B.9, prototipe Windows Ink):
+                            // points [{x, y, p}] dengan p =
+                            // tekanan 0..1024 (bawaan 700).
+                            // verify=true: potret kotak goresan
+                            // sebelum & sesudah, laporkan piksel
+                            // yang berubah (Bagian B.10).
+                            var penPts = new List<(int X, int Y, int Pressure)>();
+                            if (root.TryGetProperty("points", out var penEl) && penEl.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var v in penEl.EnumerateArray())
+                                {
+                                    if (v.ValueKind != JsonValueKind.Object) continue;
+                                    penPts.Add((GetInt(v, "x", 0), GetInt(v, "y", 0), GetInt(v, "p", 700)));
+                                }
+                            }
+                            if (penPts.Count < 2 || penPts.Count > 500)
+                                return Response.Json("{\"ok\":false,\"error\":\"points harus 2..500 titik\"}", 400);
+                            int penStepMs = GetInt(root, "stepMs", 8);
+                            bool penVerify = GetBool(root, "verify", false);
+                            int bx = int.MaxValue, by = int.MaxValue, bx2 = int.MinValue, by2 = int.MinValue;
+                            foreach (var p in penPts)
+                            {
+                                if (p.X < bx) bx = p.X; if (p.Y < by) by = p.Y;
+                                if (p.X > bx2) bx2 = p.X; if (p.Y > by2) by2 = p.Y;
+                            }
+                            var bbox = new Rectangle(Math.Max(0, bx - 10), Math.Max(0, by - 10),
+                                bx2 - bx + 21, by2 - by + 21);
+                            byte[] beforeBytes = null;
+                            if (penVerify)
+                            {
+                                using (var b0 = CaptureRegionBitmap(bbox, 900, out var _e0))
+                                using (var ms0 = new MemoryStream())
+                                { b0.Save(ms0, ImageFormat.Png); beforeBytes = ms0.ToArray(); }
+                            }
+                            string penErr = "";
+                            bool penOk = OnUi(() => NativeInput.PenStroke(penPts, penStepMs, out penErr));
+                            _onActivity();
+                            var respPen = new Dictionary<string, object>
+                            {
+                                ["ok"] = penOk,
+                                ["points"] = penPts.Count,
+                                ["error"] = penErr,
+                            };
+                            if (penVerify && beforeBytes != null)
+                            {
+                                Thread.Sleep(120);
+                                using (var b1 = CaptureRegionBitmap(bbox, 900, out var _e1))
+                                using (var msB = new MemoryStream(beforeBytes))
+                                using (var b0 = new Bitmap(msB))
+                                {
+                                    int wMin = Math.Min(b0.Width, b1.Width);
+                                    int hMin = Math.Min(b0.Height, b1.Height);
+                                    long changed = 0, total = (long)wMin * hMin;
+                                    for (int yy = 0; yy < hMin; yy += 2)
+                                        for (int xx = 0; xx < wMin; xx += 2)
+                                        {
+                                            var c0 = b0.GetPixel(xx, yy);
+                                            var c1 = b1.GetPixel(xx, yy);
+                                            if (Math.Abs(c0.R - c1.R) > 40 || Math.Abs(c0.G - c1.G) > 40 || Math.Abs(c0.B - c1.B) > 40)
+                                                changed++;
+                                        }
+                                    long sampled = total / 4;
+                                    double ratio = sampled > 0 ? (double)changed / sampled : 0;
+                                    respPen["changedRatio"] = Math.Round(ratio, 4);
+                                    respPen["inkDetected"] = ratio > 0.001;
+                                }
+                            }
+                            _log($"penstroke {penPts.Count} titik: {(penOk ? "ok" : "GAGAL " + penErr)}");
+                            return Response.JsonObject(respPen, penOk ? 200 : 500);
+                        }
                         case "/type":
                         {
                             string text = GetString(root, "text", "");
@@ -4511,10 +4636,45 @@ public sealed class AgentServer
                             int rateMs = GetInt(root, "rateMs", 15);
                             if (rateMs < 0) rateMs = 0;
                             if (rateMs > 50) rateMs = 50;
-                            for (int off = 0; off < text.Length; off += 20)
+                            // v5.11.0 (Bagian A.3): batas panjang
+                            // wajar — teks raksasa dalam satu
+                            // panggilan ditolak, pecah oleh
+                            // pemanggil. Dulu tanpa batas sama
+                            // sekali.
+                            if (text.Length > 20000)
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "teks melebihi batas 20000 karakter per panggilan",
+                                }, 400);
+                            // v5.11.0 (Bagian A.2+A.3): potongan
+                            // diperkecil 20 -> 12 karakter + jeda
+                            // antar-potongan 40 ms agar tumpukan
+                            // teks (TSF) aplikasi tujuan sempat
+                            // terkuras — obat anomali kerusakan
+                            // karakter pada teks panjang (audit
+                            // 26 Nov: selalu di indeks yang sama
+                            // pada rate 15, hilang di rate 30).
+                            // Emergency Stop kini DIPERIKSA di
+                            // tiap potongan: pengetikan berhenti
+                            // di tengah, bukan berjalan sampai
+                            // habis sesudah gerbang ditutup.
+                            for (int off = 0; off < text.Length; off += 12)
                             {
-                                string potongan = text.Substring(off, Math.Min(20, text.Length - off));
+                                if (_inputHalted)
+                                {
+                                    _log($"ketik DIBATALKAN Emergency Stop di {off}/{text.Length} karakter");
+                                    return Response.JsonObject(new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false,
+                                        ["error"] = "pengetikan dihentikan Emergency Stop",
+                                        ["code"] = "input_halted",
+                                        ["typedChars"] = off,
+                                    }, 409);
+                                }
+                                string potongan = text.Substring(off, Math.Min(12, text.Length - off));
                                 OnUi(() => { NativeInput.TypeUnicode(potongan, rateMs); return true; });
+                                if (off + 12 < text.Length) Thread.Sleep(40);
                             }
                             _onActivity();
                             string preview = text.Length > 30 ? text.Substring(0, 30) + "…" : text;
@@ -4530,12 +4690,17 @@ public sealed class AgentServer
                             // kode virtual. Untuk game yang cuek
                             // ke suntikan VK biasa.
                             bool scanKey = GetBool(root, "scan", false);
+                            // holdMs (v5.11.0 — Bagian A.5):
+                            // jeda tahan tiap ketukan 0–5000,
+                            // untuk game polling yang kehilangan
+                            // ketukan sekejap.
+                            int holdMs = GetInt(root, "holdMs", 0);
                             try
                             {
                                 OnUi(() =>
                                 {
-                                    if (scanKey) NativeInput.PressKeyScan(keys);
-                                    else NativeInput.PressKey(keys);
+                                    if (scanKey) NativeInput.PressKeyScan(keys, holdMs);
+                                    else NativeInput.PressKey(keys, holdMs);
                                     return true;
                                 });
                             }
@@ -4566,10 +4731,32 @@ public sealed class AgentServer
                         case "/paste":
                         {
                             string text = GetString(root, "text", "");
+                            // keepClipboard (v5.11.0): true =
+                            // biarkan teks tempel menetap di
+                            // clipboard (perilaku lama). Bawaan
+                            // kini FALSE: isi clipboard user
+                            // disimpan dulu & dipulihkan sesudah
+                            // tempel (Bagian A.7).
+                            bool keepClip = GetBool(root, "keepClipboard", false);
                             OnUi(() =>
                             {
+                                System.Windows.IDataObject savedClip = null;
+                                if (!keepClip)
+                                {
+                                    try { savedClip = System.Windows.Clipboard.GetDataObject(); }
+                                    catch { savedClip = null; }
+                                }
                                 SetClipboardText(text);
                                 NativeInput.PressKey("^v"); // Ctrl+V di jendela yang sedang fokus
+                                if (savedClip != null)
+                                {
+                                    // Beri aplikasi tujuan waktu
+                                    // membaca clipboard sebelum
+                                    // isinya dipulihkan.
+                                    Thread.Sleep(250);
+                                    try { System.Windows.Clipboard.SetDataObject(savedClip, true); }
+                                    catch { /* clipboard gagal dipulihkan — tempel tetap sah */ }
+                                }
                                 return true;
                             });
                             _onActivity();
@@ -4781,7 +4968,21 @@ public sealed class AgentServer
                             int index = GetInt(root, "index", -1);
                             int? px = HasInt(root, "x") ? GetInt(root, "x", 0) : (int?)null;
                             int? py = HasInt(root, "y") ? GetInt(root, "y", 0) : (int?)null;
+                            // waitMs (v5.11.0 — Bagian C): cari
+                            // elemen dengan coba-lagi sampai
+                            // batas waktu — elemen yang belum
+                            // muncul tidak lagi langsung gagal.
+                            // 0 = perilaku lama (sekali coba).
+                            int waitMs = GetInt(root, "waitMs", 0);
+                            if (waitMs < 0) waitMs = 0;
+                            if (waitMs > 60000) waitMs = 60000;
                             var oc = OnUi(() => UiaScan.Act(px, py, aid, name, index, action, text));
+                            var swAct = Stopwatch.StartNew();
+                            while (!oc.Ok && swAct.ElapsedMilliseconds < waitMs)
+                            {
+                                Thread.Sleep(250);
+                                oc = OnUi(() => UiaScan.Act(px, py, aid, name, index, action, text));
+                            }
                             _onActivity();
                             _log($"uia/act {action} '{oc.ElementName}' {(oc.Ok ? "ok" : "gagal: " + oc.Error)}");
                             return Response.JsonObject(new Dictionary<string, object>
@@ -4793,6 +4994,107 @@ public sealed class AgentServer
                                 ["value"] = oc.Value,
                                 ["error"] = oc.Error,
                             });
+                        }
+                        case "/browser/start":
+                        {
+                            // Otomasi peramban CDP (v5.11.0 —
+                            // Bagian E): Chrome TERPASANG dengan
+                            // PROFIL KHUSUS otomasi (profil utama
+                            // user tidak disentuh). Lihat
+                            // CdpBrowser.cs soal keputusan CDP
+                            // mentah vs pustaka Playwright.
+                            var rb = CdpBrowser.Start();
+                            _onActivity();
+                            _log("browser/start: " + (rb.Ok ? rb.Text : "gagal: " + rb.Error));
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok,
+                                ["status"] = rb.Ok ? rb.Text : "",
+                                ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 500);
+                        }
+                        case "/browser/stop":
+                        {
+                            var rb = CdpBrowser.Stop(GetBool(root, "closeBrowser", false));
+                            _onActivity();
+                            _log("browser/stop");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 500);
+                        }
+                        case "/browser/goto":
+                        {
+                            string url = GetString(root, "url", "");
+                            if (string.IsNullOrWhiteSpace(url))
+                                return Response.Json("{\"ok\":false,\"error\":\"url wajib\"}", 400);
+                            var rb = CdpBrowser.Navigate(url);
+                            _onActivity();
+                            _log("browser/goto " + url + (rb.Ok ? "" : " GAGAL: " + rb.Error));
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 500);
+                        }
+                        case "/browser/eval":
+                        {
+                            string expr = GetString(root, "expr", "");
+                            if (string.IsNullOrWhiteSpace(expr))
+                                return Response.Json("{\"ok\":false,\"error\":\"expr wajib\"}", 400);
+                            var rb = CdpBrowser.Eval(expr);
+                            _onActivity();
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["value"] = rb.Text, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 500);
+                        }
+                        case "/browser/waitfor":
+                        {
+                            string sel = GetString(root, "selector", "");
+                            if (string.IsNullOrWhiteSpace(sel))
+                                return Response.Json("{\"ok\":false,\"error\":\"selector wajib\"}", 400);
+                            int tw = GetInt(root, "timeoutMs", 10000);
+                            var rb = CdpBrowser.WaitFor(sel, tw);
+                            _onActivity();
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["status"] = rb.Text, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 404);
+                        }
+                        case "/browser/click":
+                        {
+                            string sel = GetString(root, "selector", "");
+                            if (string.IsNullOrWhiteSpace(sel))
+                                return Response.Json("{\"ok\":false,\"error\":\"selector wajib\"}", 400);
+                            var rb = CdpBrowser.ClickSelector(sel);
+                            _onActivity();
+                            _log("browser/click " + sel + (rb.Ok ? "" : " GAGAL: " + rb.Error));
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 404);
+                        }
+                        case "/browser/setvalue":
+                        {
+                            string sel = GetString(root, "selector", "");
+                            if (string.IsNullOrWhiteSpace(sel))
+                                return Response.Json("{\"ok\":false,\"error\":\"selector wajib\"}", 400);
+                            var rb = CdpBrowser.SetValue(sel, GetString(root, "value", ""));
+                            _onActivity();
+                            _log("browser/setvalue " + sel + (rb.Ok ? "" : " GAGAL: " + rb.Error));
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 404);
+                        }
+                        case "/browser/text":
+                        {
+                            var rb = CdpBrowser.GetText(GetString(root, "selector", ""));
+                            _onActivity();
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = rb.Ok, ["text"] = rb.Text, ["error"] = rb.Error,
+                            }, rb.Ok ? 200 : 404);
                         }
                         case "/waitfor":
                         {
@@ -6484,6 +6786,10 @@ public sealed class AgentServer
         "/mousedown", "/mouseup", "/macros/run",
         "/scroll", "/drag", "/focus", "/window", "/paste",
         "/uia/click", "/uia/act", "/locate/act", "/routines/run",
+        // v5.11.0: aksi peramban CDP juga masukan — tunduk
+        // pada lease & Emergency Stop yang sama.
+        "/browser/goto", "/browser/click", "/browser/setvalue", "/browser/eval",
+        "/penstroke",
     };
 
     /// <summary>Pemilik lease aktif, atau null. Lease lewat TTL

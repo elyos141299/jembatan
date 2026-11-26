@@ -175,6 +175,45 @@ public static class AiBridge
         catch (Exception ex) { error = ex.Message; return null; }
     }
 
+    /// <summary>Kotak elemen UI OmniParser sebagai daftar
+    /// rapi (untuk /locate, v5.11.0): label = teks OCR yang
+    /// pusatnya di dalam kotak, atau "icon". Koordinat gambar
+    /// digeser ke koordinat layar seperti DetectList.</summary>
+    public static List<AiDetection> ParseList(Bitmap bmp, int offX, int offY, out string error)
+    {
+        var raw = Call("/parse", bmp, out error);
+        if (raw == null) return null;
+        try
+        {
+            var list = new List<AiDetection>();
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("ok", out var okEl) && !okEl.GetBoolean())
+            {
+                error = root.TryGetProperty("error", out var eEl) ? eEl.GetString() : "sidecar menolak";
+                return null;
+            }
+            if (root.TryGetProperty("detections", out var arr))
+            {
+                foreach (var d in arr.EnumerateArray())
+                {
+                    list.Add(new AiDetection
+                    {
+                        Label = d.TryGetProperty("label", out var lb) ? lb.GetString() ?? "" : "",
+                        Conf = d.TryGetProperty("conf", out var cf) ? cf.GetDouble() : 0,
+                        Rect = new Rectangle(
+                            offX + (d.TryGetProperty("x", out var ex) ? ex.GetInt32() : 0),
+                            offY + (d.TryGetProperty("y", out var ey) ? ey.GetInt32() : 0),
+                            d.TryGetProperty("w", out var ew) ? ew.GetInt32() : 0,
+                            d.TryGetProperty("h", out var eh) ? eh.GetInt32() : 0),
+                    });
+                }
+            }
+            return list;
+        }
+        catch (Exception ex) { error = ex.Message; return null; }
+    }
+
     /// <summary>Transkrip audio Whisper di GPU (v5.5.0).
     /// Mengembalikan JSON mentah sidecar atau null.</summary>
     public static string TranscribeJson(byte[] audio, out string error)

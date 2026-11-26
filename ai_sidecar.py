@@ -1,5 +1,6 @@
 # ai_sidecar.py — Pendamping AI visual MuseLink (v5.4.0;
-# v5.5.0: + transkrip Whisper GPU & YOLO medium)
+# v5.5.0: + transkrip Whisper GPU & YOLO medium;
+# v5.11.0: + /parse OmniParser)
 #
 # Server HTTP lokal 127.0.0.1:8770 yang memuat YOLO (deteksi
 # objek) + EasyOCR (OCR) SEKALI ke VRAM GPU lalu melayani:
@@ -8,6 +9,10 @@
 #   POST /ocr    {image}     -> teks + kata + kotak (koord. gambar)
 #   POST /transcribe {audio} -> teks transkrip (Whisper, GPU;
 #                               model dimuat malas saat pertama)
+#   POST /parse  {image}     -> kotak elemen UI (OmniParser
+#                               icon-detect, dimuat malas) +
+#                               label teks dari EasyOCR yang
+#                               pusatnya jatuh di dalam kotak
 # image/audio = base64. Berkas ini tinggal di
 # %USERPROFILE%\AI-Tools\sidecar\ dan dijalankan oleh MuseLink
 # memakai python venv AI-Tools (torch CUDA). Tanpa internet.
@@ -26,6 +31,8 @@ _yolo = None
 _yolo_name = ""
 _reader = None
 _whisper = None
+_omni = None
+_omni_err = ""
 
 
 def _register_cuda_dlls():
@@ -69,6 +76,32 @@ def get_whisper():
     return _whisper
 
 
+def omni_weights_path():
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "models", "icon_detect.pt")
+
+
+def get_omni():
+    # OmniParser icon-detect (v5.11.0): model YOLO khusus
+    # elemen UI dari microsoft/OmniParser-v2.0, dimuat MALAS
+    # pada panggilan /parse pertama agar start sidecar tetap
+    # ringan. Bobot diunduh sekali ke AI-Tools/models/.
+    global _omni, _omni_err
+    if _omni is not None or _omni_err:
+        return _omni
+    try:
+        path = omni_weights_path()
+        if not os.path.exists(path):
+            _omni_err = "model OmniParser belum ada di AI-Tools/models/icon_detect.pt"
+            return None
+        from ultralytics import YOLO
+        _omni = YOLO(path)
+        print("[sidecar] OmniParser icon-detect siap di GPU", flush=True)
+    except Exception as ex:
+        _omni_err = str(ex)
+    return _omni
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -85,7 +118,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send({"ok": True, "device": "cuda",
                         "yolo": _yolo is not None, "ocr": _reader is not None,
-                        "model": _yolo_name, "whisper": _whisper is not None})
+                        "model": _yolo_name, "whisper": _whisper is not None,
+                        "omni": os.path.exists(omni_weights_path()),
+                        "omniLoaded": _omni is not None})
         else:
             self._send({"ok": False, "error": "unknown path"}, 404)
 
@@ -126,6 +161,39 @@ class Handler(BaseHTTPRequestHandler):
             arr = np.array(img)
             t = time.time()
             with _lock:
+                if self.path == "/parse":
+                    omni = get_omni()
+                    if omni is None:
+                        return self._send({"ok": False,
+                                           "error": _omni_err or "OmniParser tidak siap"}, 503)
+                    r = omni.predict(arr, device=0, verbose=False, conf=0.05)[0]
+                    boxes = []
+                    for b in r.boxes:
+                        x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
+                        boxes.append({
+                            "label": "icon", "conf": round(float(b.conf[0]), 3),
+                            "x": int(x1), "y": int(y1),
+                            "w": int(x2 - x1), "h": int(y2 - y1),
+                        })
+                    # Label teks: kata EasyOCR yang PUSATNYA
+                    # jatuh di dalam kotak menjadi label kotak
+                    # itu (gabungan urut kiri->kanan).
+                    if _reader is not None and boxes:
+                        words = []
+                        for quad, text, conf in _reader.readtext(arr):
+                            xs = [p[0] for p in quad]
+                            ys = [p[1] for p in quad]
+                            words.append((sum(xs) / len(xs), sum(ys) / len(ys), text))
+                        for bx in boxes:
+                            inside = [w for w in words
+                                      if bx["x"] <= w[0] <= bx["x"] + bx["w"]
+                                      and bx["y"] <= w[1] <= bx["y"] + bx["h"]]
+                            if inside:
+                                inside.sort(key=lambda w: w[0])
+                                bx["label"] = " ".join(w[2] for w in inside)
+                    boxes.sort(key=lambda b: (b["y"], b["x"]))
+                    return self._send({"ok": True, "detections": boxes,
+                                       "ms": int((time.time() - t) * 1000)})
                 if self.path == "/detect":
                     r = _yolo.predict(arr, device=0, verbose=False)[0]
                     dets = []
