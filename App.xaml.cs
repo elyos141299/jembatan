@@ -51,6 +51,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        // Bendera berhenti-sengaja dibersihkan setiap aplikasi
+        // dimulai (v5.7.1): penjaga anti-crash kembali bersiaga
+        // penuh untuk sesi ini.
+        Settings.UserStopped = false;
         UiHost = new WpfUiHost(Dispatcher);
         Host = new AppHost(UiHost);
         Host.RequestShutdown += () => Dispatcher.BeginInvoke(new Action(ExitApp));
@@ -86,6 +90,14 @@ public partial class App : Application
     {
         if (Exiting) return;
         Exiting = true;
+        // Berhenti SENGAJA (v5.7.1 — memperbaiki regresi sejak
+        // UI WPF v5.0.0): pasang bendera UserStopped agar penjaga
+        // anti-crash TIDAK menyalakan ulang aplikasi ini, persis
+        // rancangan v2.3.2. Tanpa baris ini, "Keluar" dari tray
+        // hanya bertahan <1 menit sebelum penjaga menghidupkan
+        // lagi (terbukti di tes v5.7.0). Bendera dibersihkan
+        // lagi di OnStartup saat aplikasi dibuka kembali.
+        Settings.UserStopped = true;
         try { _tray?.Dispose(); } catch { /* abaikan */ }
         Shutdown();
     }

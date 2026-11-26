@@ -3,6 +3,19 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.7.1 — 2026-11-26
+
+Perbaikan Exit (temuan tes Tray-First di hari yang sama):
+"Keluar" dari menu tray mematikan aplikasi, tetapi penjaga
+anti-crash menyalakannya lagi <1 menit kemudian — bendera
+berhenti-sengaja `UserStopped` (rancangan v2.3.2, dibaca
+skrip penjaga tiap menit) ternyata tidak pernah dipasang
+oleh UI WPF sejak v5.0.0, dan tidak pernah dibersihkan di
+mana pun. Kini: ExitApp memasang bendera sebelum Shutdown,
+OnStartup membersihkannya setiap aplikasi dimulai. Exit
+kini benar-benar berhenti; perlindungan anti-crash untuk
+crash sungguhan tidak berubah.
+
 ## 5.7.0 — 2026-11-26
 
 Penyederhanaan UI **Tray-First** (prompt user di hari yang sama:
