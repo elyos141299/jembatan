@@ -271,7 +271,7 @@ public sealed class AiPage : UserControl, IRoomPage
                 foreach (var dir in path.Split(';'))
                 {
                     if (dir.Length == 0) continue;
-                    if (File.Exists(Path.Combine(dir.Trim(), "gh.exe"))) return true;
+                    if (File.Exists(System.IO.Path.Combine(dir.Trim(), "gh.exe"))) return true;
                 }
                 return false;
             }

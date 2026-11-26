@@ -191,7 +191,7 @@ public sealed class HomePage : UserControl, IRoomPage
                 ? (m.DiskTotalGb - m.DiskFreeGb) * 100.0 / m.DiskTotalGb : -1;
             _diskVal.Text = diskPct >= 0 ? (int)Math.Round(diskPct) + "%" : "—";
             _diskSub.Text = m.DiskTotalGb > 0
-                ? "SSD • bebas " + (int)Math.Round(m.DiskFreeGb) + " GB"
+                ? "SSD • bebas " + m.DiskFreeGb + " GB"
                 : "SSD";
 
             // Panel aktivitas
