@@ -7104,11 +7104,25 @@ public sealed class AgentServer
         }
         string fgTitle = "";
         try { fgTitle = NativeInput.TitleOf(NativeInput.ForegroundHandle()); } catch { }
+        // v5.12.1: umur PROSES di /health (terpisah dari uptimeSec
+        // = umur listener). Perbaikan penempatan: di 5.12.0 field
+        // ini tak sengaja mendarat di endpoint diagnostik lain.
+        long processUptimeSec = -1;
+        int processPid = -1;
+        try
+        {
+            var self = Process.GetCurrentProcess();
+            processPid = self.Id;
+            processUptimeSec = (long)(DateTime.Now - self.StartTime).TotalSeconds;
+        }
+        catch { }
         return new Dictionary<string, object>
         {
             ["ok"] = true,
             ["version"] = AppVersion,
             ["uptimeSec"] = (Environment.TickCount64 - _startTick) / 1000,
+            ["processUptimeSec"] = processUptimeSec,
+            ["pid"] = processPid,
             ["listener"] = IsRunning,
             ["ui"] = new Dictionary<string, object>
             {

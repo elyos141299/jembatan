@@ -3,6 +3,14 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.12.1 — 2026-11-26
+
+- /health: pid & processUptimeSec kini BENAR-BENAR di
+  /health (BuildHealth). Di 5.12.0 keduanya tak sengaja
+  mendarat di endpoint diagnostik endpoint — ketahuan
+  dari baterai tes gerbang 5.12.0 dan diperbaiki di
+  ronde yang sama.
+
 ## 5.12.0 — 2026-11-26
 
 "Tangan Stabil & Ingat" (approv user "Gas semua 1-5"
