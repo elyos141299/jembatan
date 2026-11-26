@@ -3,6 +3,19 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.14.1 — 2026-11-26
+
+Perbaikan dari baterai gerbang 5.14.0 (ronde yang sama):
+- /uia3 find/act: saringan automationId & nama kini berlaku
+  BERSAMA bila keduanya diisi. Di baterai gerbang, aid
+  "TextBox" saja menabrak address bar Explorer (sama-sama
+  "TextBox") dan nama "Search" saja menabrak item daftar
+  "Searches" — gabungan keduanya unik.
+- Catatan baterai: setvalue pada elemen Edit NAMA ITEM di
+  Explorer = mengganti nama berkas/folder (rename). Jangan
+  pernah dipakai sebagai sasaran uji — satu folder user
+  sempat terganti nama dan langsung dipulihkan utuh.
+
 ## 5.14.0 — 2026-11-26
 
 "Upgrade Semua" (pilihan user; UI nomor 4 di-skip user):

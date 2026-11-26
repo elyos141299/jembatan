@@ -567,10 +567,15 @@ public static class UiaScan
                             string nm = e.Name ?? "";
                             string aid = "";
                             try { aid = e.AutomationId ?? ""; } catch { }
-                            bool cocok;
+                            // Kedua saringan berlaku BERSAMA
+                            // bila keduanya diisi (v5.14.1):
+                            // aid saja bisa menabrak elemen lain
+                            // ber-aid sama (address bar Explorer
+                            // juga "TextBox"); nama saja bisa
+                            // menabrak item daftar ("Searches").
+                            bool cocok = true;
                             if (!string.IsNullOrWhiteSpace(automationId)) cocok = aid == automationId;
-                            else if (!string.IsNullOrWhiteSpace(nameQuery)) cocok = nm.IndexOf(nameQuery, StringComparison.OrdinalIgnoreCase) >= 0;
-                            else cocok = true;
+                            if (cocok && !string.IsNullOrWhiteSpace(nameQuery)) cocok = nm.IndexOf(nameQuery, StringComparison.OrdinalIgnoreCase) >= 0;
                             if (!cocok) continue;
                             hasil.Add(new CrossHit
                             {
