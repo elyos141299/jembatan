@@ -128,6 +128,27 @@ public sealed class AgentServer
         // EventHub (v3.9.0): hook WinEvent di thread UI untuk
         // kejadian fokus & perubahan judul secara real-time.
         EventLog.StartHooks(_ui);
+        // Arbitrase (v5.13.0): sensor sentuhan FISIK user —
+        // fondasi yield & penjaga idle. Dipasang di thread UI.
+        PhysicalInput.StartOnUi(_ui);
+        // Refleks (v5.13.0): mesin aturan kejadian — aksi berat
+        // (rutinitas/dismiss) memanggil balik ke server ini.
+        ReflexEngine.Start(new ReflexEngine.Callbacks
+        {
+            Log = _log,
+            EventAdd = (detail) => EventLog.Add("reflex", detail),
+            TaskNote = (teks) => TaskContext.Note(teks),
+            RunRoutine = (nama) =>
+            {
+                try
+                {
+                    var resp = Route(new Request { Method = "POST", Path = "/routines/run", Query = "", Body = "{\"name\":\"" + nama.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}" });
+                    return resp.StatusCode >= 200 && resp.StatusCode < 300;
+                }
+                catch { return false; }
+            },
+            Dismiss = (hwnd, teks) => DismissButtonInWindow(hwnd, teks),
+        });
         RotateJournalIfNeeded();
         // Penghangat cache relay Tailscale (v2.5.5): /sysinfo
         // pertama sesudah aplikasi mulai dulu lambat (query
@@ -1795,6 +1816,40 @@ public sealed class AgentServer
                 });
             }
 
+            if (req.Method == "GET" && req.Path == "/input/lease")
+            {
+                // Arbitrase (v5.13.0): siapa memegang lease input.
+                var (pemilik, sisa) = LeaseInfo();
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["leased"] = pemilik != null,
+                    ["owner"] = pemilik,
+                    ["remainingSec"] = sisa,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/reflex/rules")
+            {
+                var daftar = new List<Dictionary<string, object>>();
+                foreach (var r in ReflexEngine.Rules())
+                    daftar.Add(RuleJson(r));
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["rules"] = daftar,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/reflex/log")
+            {
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["fires"] = ReflexEngine.Fires(),
+                });
+            }
+
             if (req.Method == "POST" && req.Path == "/halt")
             {
                 // Emergency Stop dari sisi agen (v4.0.0): agen
@@ -2448,6 +2503,12 @@ public sealed class AgentServer
                             if (saring != null)
                                 return Response.Json("{\"ok\":false,\"error\":\"" + saring + "\"}", 400);
                             Routines.Save(nama, acts.GetRawText());
+                            // Penjaga idle (v5.13.0): minIdleSec
+                            // opsional — rutinitas ditunda selama
+                            // user fisik masih aktif.
+                            int minIdle = GetInt(root, "minIdleSec", 0);
+                            if (minIdle > 0 || root.TryGetProperty("minIdleSec", out _))
+                                Routines.SetMinIdleSec(nama, minIdle);
                             _onActivity();
                             _log($"rutinitas '{nama}' disimpan ({acts.GetArrayLength()} aksi)");
                             return Response.JsonObject(new Dictionary<string, object>
@@ -2455,6 +2516,7 @@ public sealed class AgentServer
                                 ["ok"] = true,
                                 ["name"] = nama,
                                 ["steps"] = acts.GetArrayLength(),
+                                ["minIdleSec"] = Routines.GetMinIdleSec(nama),
                             });
                         }
                         case "/routines/delete":
@@ -2477,6 +2539,32 @@ public sealed class AgentServer
                             string nama = GetString(root, "name", "").Trim();
                             if (!Routines.TryGet(nama, out var actsJson))
                                 return Response.Json("{\"ok\":false,\"error\":\"rutinitas tidak ditemukan\"}", 404);
+                            // Penjaga idle (v5.13.0 — Arbitrase):
+                            // rutinitas ber-minIdleSec DITUNDA
+                            // selama sentuhan fisik user masih
+                            // lebih baru dari ambangnya — jangan
+                            // merebut layar orang yang sedang
+                            // memakai PC-nya. Berlaku juga untuk
+                            // panggilan dari scheduler & refleks
+                            // (semuanya lewat handler ini).
+                            int minIdleRun = Routines.GetMinIdleSec(nama);
+                            if (minIdleRun > 0)
+                            {
+                                long agoIdle = PhysicalInput.AgoSec;
+                                if (agoIdle >= 0 && agoIdle < minIdleRun)
+                                {
+                                    _log($"rutinitas '{nama}' DITUNDA: user aktif ({agoIdle} dtk lalu, ambang {minIdleRun} dtk)");
+                                    return Response.JsonObject(new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false,
+                                        ["error"] = "ditunda: user sedang aktif memakai PC",
+                                        ["code"] = "user_active",
+                                        ["retryable"] = true,
+                                        ["userIdleSec"] = agoIdle,
+                                        ["minIdleSec"] = minIdleRun,
+                                    }, 409);
+                                }
+                            }
                             using (var dokActs = JsonDocument.Parse(actsJson))
                             {
                                 string saring = ScanRoutineActions(dokActs.RootElement);
@@ -4522,8 +4610,13 @@ public sealed class AgentServer
                                     }, 400);
                             }
                             var mods = ParseModifiers(GetString(root, "modifiers", ""));
-                            OnUi(() =>
+                            // Yield (v5.13.0): seret berhenti bila
+                            // user menyentuh perangkat fisik di
+                            // tengah jalan.
+                            long dragStartTick = Environment.TickCount64;
+                            bool dragDone = OnUi(() =>
                             {
+                                bool selesai = true;
                                 foreach (var vk in mods) NativeInput.KeyDown(vk);
                                 try
                                 {
@@ -4532,13 +4625,26 @@ public sealed class AgentServer
                                         var jalur = new List<(int X, int Y, int DwellMs)> { (x1, y1, 0) };
                                         jalur.AddRange(viaPts);
                                         jalur.Add((x2, y2, 0));
-                                        NativeInput.DragPath(jalur, button, grabMs, stepMs, settleMs);
+                                        selesai = NativeInput.DragPath(jalur, button, grabMs, stepMs, settleMs,
+                                            () => PhysicalInput.TouchedSince(dragStartTick));
                                     }
-                                    else NativeInput.Drag(x1, y1, x2, y2, button, grabMs, dragSteps, stepMs, settleMs);
+                                    else NativeInput.Drag(x1, y1, x2, y2, button, grabMs, dragSteps, stepMs, settleMs,
+                                        () => PhysicalInput.TouchedSince(dragStartTick));
                                 }
                                 finally { for (int i = mods.Count - 1; i >= 0; i--) NativeInput.KeyUp(mods[i]); }
-                                return true;
+                                return selesai;
                             });
+                            if (!dragDone || PhysicalInput.TouchedSince(dragStartTick))
+                            {
+                                _log($"drag {x1},{y1} -> {x2},{y2} BERHENTI: user mengambil alih (sentuhan fisik)");
+                                EventLog.Add("yield", $"drag {x1},{y1} -> {x2},{y2}");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "seret dihentikan: user mengambil alih",
+                                    ["code"] = "user_preempted",
+                                }, 409);
+                            }
                             _onActivity();
                             _log($"drag {x1},{y1} -> {x2},{y2} ({button}{(mods.Count > 0 ? ", +penahan" : "")})");
                             // Verifikasi hasil drag (v3.5.0 — Action
@@ -4636,6 +4742,87 @@ public sealed class AgentServer
                             }
                             _log($"penstroke {penPts.Count} titik: {(penOk ? "ok" : "GAGAL " + penErr)}");
                             return Response.JsonObject(respPen, penOk ? 200 : 500);
+                        }
+                        case "/input/lease":
+                        case "/input/lease/release":
+                        {
+                            // Arbitrase (v5.13.0): sewa input
+                            // eksklusif lintas agen. Pemegang
+                            // menyebut "taskId" = owner di body
+                            // panggilan inputnya (mekanisme waris
+                            // lease batch v3.11.0); panggilan agen
+                            // lain tertolak 429 input_leased oleh
+                            // gerbang yang sudah ada.
+                            string leaseOwnerReq = GetString(root, "owner", "").Trim();
+                            if (leaseOwnerReq.Length < 1 || leaseOwnerReq.Length > 60)
+                                return Response.Json("{\"ok\":false,\"error\":\"owner wajib 1-60 karakter\"}", 400);
+                            if (req.Path == "/input/lease/release")
+                            {
+                                ReleaseLease(leaseOwnerReq);
+                                _log("lease input dilepas: " + leaseOwnerReq);
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true, ["leased"] = false,
+                                });
+                            }
+                            int ttlSec = GetInt(root, "ttlSec", 120);
+                            if (ttlSec < 10) ttlSec = 10;
+                            if (ttlSec > 300) ttlSec = 300;
+                            if (!TryAcquireLease(leaseOwnerReq, ttlSec * 1000))
+                            {
+                                var (pemegang, sisaGagal) = LeaseInfo();
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "input sedang disewa " + pemegang,
+                                    ["code"] = "input_leased",
+                                    ["leaseOwner"] = pemegang,
+                                    ["remainingSec"] = sisaGagal,
+                                }, 429);
+                            }
+                            _onActivity();
+                            _log($"lease input diambil: {leaseOwnerReq} ({ttlSec} dtk)");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true, ["leased"] = true,
+                                ["owner"] = leaseOwnerReq, ["ttlSec"] = ttlSec,
+                            });
+                        }
+                        case "/reflex/rules":
+                        case "/reflex/rules/delete":
+                        {
+                            // Refleks (v5.13.0): kelola aturan.
+                            if (req.Path == "/reflex/rules/delete")
+                            {
+                                bool terhapus = ReflexEngine.Delete(GetString(root, "id", ""));
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true, ["deleted"] = terhapus,
+                                });
+                            }
+                            string trig = GetString(root, "trigger", "").Trim().ToLowerInvariant();
+                            string match = GetString(root, "match", "").Trim();
+                            if (trig != "window" && trig != "process" && trig != "file")
+                                return Response.Json("{\"ok\":false,\"error\":\"trigger wajib window|process|file\"}", 400);
+                            if (match.Length < 1 || match.Length > 260)
+                                return Response.Json("{\"ok\":false,\"error\":\"match wajib 1-260 karakter\"}", 400);
+                            var aturan = new ReflexEngine.Rule
+                            {
+                                Trigger = trig,
+                                Match = match,
+                                Pattern = GetString(root, "pattern", ""),
+                                On = GetString(root, "on", ""),
+                                Action = GetString(root, "action", "log"),
+                                CooldownSec = GetInt(root, "cooldownSec", 30),
+                            };
+                            var tersimpan = ReflexEngine.Add(aturan);
+                            _onActivity();
+                            _log($"aturan refleks ditambah: {trig} '{match}' -> {aturan.Action}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["rule"] = RuleJson(tersimpan),
+                            });
                         }
                         case "/task/start":
                         case "/task/note":
@@ -4737,8 +4924,24 @@ public sealed class AgentServer
                             // tiap potongan: pengetikan berhenti
                             // di tengah, bukan berjalan sampai
                             // habis sesudah gerbang ditutup.
+                            // Yield (v5.13.0): sentuhan fisik user
+                            // sesudah ketik mulai menghentikan
+                            // ketikan di batas potongan berikutnya.
+                            long typeStartTick = Environment.TickCount64;
                             for (int off = 0; off < text.Length; off += 12)
                             {
+                                if (PhysicalInput.TouchedSince(typeStartTick))
+                                {
+                                    _log($"ketik DIBATALKAN user mengambil alih di {off}/{text.Length} karakter");
+                                    EventLog.Add("yield", $"ketik {off}/{text.Length}");
+                                    return Response.JsonObject(new Dictionary<string, object>
+                                    {
+                                        ["ok"] = false,
+                                        ["error"] = "pengetikan dihentikan: user mengambil alih",
+                                        ["code"] = "user_preempted",
+                                        ["typedChars"] = off,
+                                    }, 409);
+                                }
                                 if (_inputHalted)
                                 {
                                     _log($"ketik DIBATALKAN Emergency Stop di {off}/{text.Length} karakter");
@@ -4958,7 +5161,24 @@ public sealed class AgentServer
                                 return Response.Json("{\"ok\":false,\"error\":\"makro tidak ditemukan\"}", 404);
                             // Putar ulang di utas MacroRecorder;
                             // lambda halt membaca Emergency Stop.
-                            if (!MacroRecorder.Play(macro, mSpeed, () => _inputHalted))
+                            // Yield (v5.13.0): sentuhan FISIK user
+                            // sesudah putar mulai menghentikan
+                            // putaran; alasan selesai tercatat.
+                            long playStartTick = Environment.TickCount64;
+                            if (!MacroRecorder.Play(macro, mSpeed, () => _inputHalted,
+                                () => PhysicalInput.TouchedSince(playStartTick),
+                                (reason) =>
+                                {
+                                    if (reason == "preempted")
+                                    {
+                                        _log($"putar makro '{macro.Name}' BERHENTI: user mengambil alih (sentuhan fisik)");
+                                        EventLog.Add("yield", "makro " + macro.Name);
+                                    }
+                                    else if (reason == "halted")
+                                        _log($"putar makro '{macro.Name}' berhenti: Emergency Stop");
+                                    else if (reason == "done")
+                                        _log($"putar makro '{macro.Name}' selesai penuh");
+                                }))
                                 return Response.Json("{\"ok\":false,\"error\":\"sedang merekam/memutar makro lain\"}", 409);
                             _onActivity();
                             _log($"putar makro: {macro.Name} ({macro.Events.Count} kejadian, {mSpeed}x)");
@@ -6795,6 +7015,50 @@ public sealed class AgentServer
         }
     }
 
+    /// <summary>Bentuk JSON satu aturan refleks (v5.13.0).</summary>
+    private static Dictionary<string, object> RuleJson(ReflexEngine.Rule r)
+    {
+        return new Dictionary<string, object>
+        {
+            ["id"] = r.Id,
+            ["trigger"] = r.Trigger,
+            ["match"] = r.Match,
+            ["pattern"] = r.Pattern,
+            ["on"] = r.On,
+            ["action"] = r.Action,
+            ["cooldownSec"] = r.CooldownSec,
+        };
+    }
+
+    /// <summary>
+    /// Klik tombol berteks PERSIS pada jendela tertentu via UIA
+    /// (v5.13.0 — aksi dismiss Refleks). Hanya InvokePattern;
+    /// tidak ditemukan / tidak bisa di-invoke = false jujur.
+    /// </summary>
+    private bool DismissButtonInWindow(IntPtr hwnd, string buttonText)
+    {
+        if (hwnd == IntPtr.Zero || string.IsNullOrWhiteSpace(buttonText)) return false;
+        return OnUi(() =>
+        {
+            try
+            {
+                var rootEl = System.Windows.Automation.AutomationElement.FromHandle(hwnd);
+                if (rootEl == null) return false;
+                var cond = new System.Windows.Automation.PropertyCondition(
+                    System.Windows.Automation.AutomationElement.NameProperty, buttonText);
+                var el = rootEl.FindFirst(System.Windows.Automation.TreeScope.Descendants, cond);
+                if (el == null) return false;
+                if (el.TryGetCurrentPattern(System.Windows.Automation.InvokePattern.Pattern, out var pat))
+                {
+                    ((System.Windows.Automation.InvokePattern)pat).Invoke();
+                    return true;
+                }
+                return false;
+            }
+            catch { return false; }
+        });
+    }
+
     /// <summary>
     /// True bila jendela depan adalah aplikasi yang tumpukan
     /// teksnya (TSF) terbukti merusak ketikan per tombol
@@ -6971,6 +7235,9 @@ public sealed class AgentServer
     private long _leaseExpiryTick;
     private long _leaseSeq;
     private const int LeaseTtlMs = 180000;
+    // TTL lease berjalan (v5.13.0): lease API boleh meminta
+    // TTL sendiri (10-300 dtk); lease batch tetap 180 dtk.
+    private int _leaseTtlMs = LeaseTtlMs;
 
     private static readonly HashSet<string> InputPaths = new HashSet<string>
     {
@@ -7003,12 +7270,18 @@ public sealed class AgentServer
 
     private bool TryAcquireLease(string owner)
     {
+        return TryAcquireLease(owner, LeaseTtlMs);
+    }
+
+    private bool TryAcquireLease(string owner, int ttlMs)
+    {
         lock (_leaseLock)
         {
             string aktif = ActiveLeaseOwner();
             if (aktif != null && aktif != owner) return false;
             _leaseOwner = owner;
-            _leaseExpiryTick = Environment.TickCount64 + LeaseTtlMs;
+            _leaseTtlMs = ttlMs;
+            _leaseExpiryTick = Environment.TickCount64 + ttlMs;
             return true;
         }
     }
@@ -7018,8 +7291,32 @@ public sealed class AgentServer
         lock (_leaseLock)
         {
             if (_leaseOwner == owner)
-                _leaseExpiryTick = Environment.TickCount64 + LeaseTtlMs;
+                _leaseExpiryTick = Environment.TickCount64 + _leaseTtlMs;
         }
+    }
+
+    /// <summary>Potret lease untuk endpoint &amp; /health:
+    /// (pemilik, sisa detik) — pemilik null bila bebas.</summary>
+    private (string owner, long remainingSec) LeaseInfo()
+    {
+        lock (_leaseLock)
+        {
+            string aktif = ActiveLeaseOwner();
+            if (aktif == null) return (null, 0);
+            long sisa = (_leaseExpiryTick - Environment.TickCount64) / 1000;
+            return (aktif, sisa < 0 ? 0 : sisa);
+        }
+    }
+
+    private Dictionary<string, object> LeaseInfoJson()
+    {
+        var (pemilik, sisa) = LeaseInfo();
+        if (pemilik == null) return null;
+        return new Dictionary<string, object>
+        {
+            ["owner"] = pemilik,
+            ["remainingSec"] = sisa,
+        };
     }
 
     private void ReleaseLease(string owner)
@@ -7124,6 +7421,21 @@ public sealed class AgentServer
             ["processUptimeSec"] = processUptimeSec,
             ["pid"] = processPid,
             ["listener"] = IsRunning,
+            // Arbitrase & Refleks (v5.13.0): sensor fisik,
+            // lease berjalan, dan mesin aturan — terbaca
+            // sekilas dari /health.
+            ["physicalInput"] = new Dictionary<string, object>
+            {
+                ["agoSec"] = PhysicalInput.AgoSec,
+                ["count"] = PhysicalInput.Count,
+                ["lastKind"] = PhysicalInput.LastKind,
+            },
+            ["lease"] = LeaseInfoJson(),
+            ["reflex"] = new Dictionary<string, object>
+            {
+                ["rules"] = ReflexEngine.Counts().rules,
+                ["fires"] = ReflexEngine.Counts().fires,
+            },
             ["ui"] = new Dictionary<string, object>
             {
                 ["ok"] = probeMs >= 0,

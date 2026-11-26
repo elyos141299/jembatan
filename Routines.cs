@@ -125,7 +125,59 @@ public static class Routines
             EnsureLoaded();
             if (!_map.Remove(name ?? "")) return false;
             Persist();
+            SetMinIdleSec(name, 0); // meta ikut dibersihkan
             return true;
+        }
+    }
+
+    // ---------- Meta: penjaga idle (v5.13.0 — Arbitrase) ----------
+    // minIdleSec per rutinitas disimpan terpisah
+    // (routines-meta.json) agar format routines.json lama
+    // tidak berubah. 0 / tidak ada = tanpa penjaga.
+
+    private static Dictionary<string, int> _meta;
+    private static string MetaPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Jembatan", "routines-meta.json");
+
+    private static void EnsureMetaLoaded()
+    {
+        if (_meta != null) return;
+        _meta = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (File.Exists(MetaPath))
+            {
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(MetaPath));
+                if (loaded != null)
+                    foreach (var kv in loaded) _meta[kv.Key] = kv.Value;
+            }
+        }
+        catch { /* berkas rusak → kosong */ }
+    }
+
+    public static int GetMinIdleSec(string name)
+    {
+        lock (_lock)
+        {
+            EnsureMetaLoaded();
+            return _meta.TryGetValue(name ?? "", out int v) ? v : 0;
+        }
+    }
+
+    public static void SetMinIdleSec(string name, int sec)
+    {
+        lock (_lock)
+        {
+            EnsureMetaLoaded();
+            if (sec <= 0) _meta.Remove(name ?? "");
+            else _meta[name] = sec > 86400 ? 86400 : sec;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(MetaPath));
+                File.WriteAllText(MetaPath, JsonSerializer.Serialize(_meta));
+            }
+            catch { /* gagal simpan tidak menjatuhkan server */ }
         }
     }
 }

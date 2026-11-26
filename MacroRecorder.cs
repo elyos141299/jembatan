@@ -377,8 +377,12 @@ public static class MacroRecorder
 
     /// <summary>Mulai putar ulang di utas sendiri. False bila
     /// sedang merekam/memutar. halted dipanggil berkala —
-    /// true = batalkan (Emergency Stop).</summary>
-    public static bool Play(MacroFile macro, double speed, Func<bool> halted)
+    /// true = batalkan (Emergency Stop). preempted (v5.13.0)
+    /// dipanggil berkala juga — true = user mengambil alih
+    /// secara fisik; onEnd menerima alasan selesai:
+    /// "done" | "halted" | "preempted" | "stopped".</summary>
+    public static bool Play(MacroFile macro, double speed, Func<bool> halted,
+        Func<bool> preempted = null, Action<string> onEnd = null)
     {
         if (macro == null || macro.Events == null || macro.Events.Count == 0) return false;
         if (speed < 0.25) speed = 0.25;
@@ -388,35 +392,41 @@ public static class MacroRecorder
             if (_playThread != null || _hookThread != null) return false;
             _playStop = false;
             _playName = macro.Name;
-            _playThread = new Thread(() => PlayMain(macro, speed, halted))
+            _playThread = new Thread(() => PlayMain(macro, speed, halted, preempted, onEnd))
             { IsBackground = true, Name = "MacroPlay" };
             _playThread.Start();
         }
         return true;
     }
 
-    private static void PlayMain(MacroFile macro, double speed, Func<bool> halted)
+    private static void PlayMain(MacroFile macro, double speed, Func<bool> halted,
+        Func<bool> preempted = null, Action<string> onEnd = null)
     {
         var heldButtons = new HashSet<string>();
         var heldKeys = new HashSet<ushort>();
+        string endReason = "done";
+        bool StopReason()
+        {
+            if (preempted != null && preempted()) { endReason = "preempted"; return true; }
+            if (halted != null && halted()) { endReason = "halted"; return true; }
+            if (_playStop) { endReason = "stopped"; return true; }
+            return false;
+        }
         try
         {
             var sw = Stopwatch.StartNew();
             foreach (var ev in macro.Events)
             {
-                if (_playStop) break;
-                if (halted != null && halted()) break;
+                if (StopReason()) break;
                 long target = (long)(ev.T / speed);
                 // Tidur bertahap agar berhenti terasa segera.
                 while (sw.ElapsedMilliseconds < target)
                 {
-                    if (_playStop) break;
-                    if (halted != null && halted()) break;
+                    if (StopReason()) break;
                     long sisa = target - sw.ElapsedMilliseconds;
                     Thread.Sleep((int)Math.Min(50, Math.Max(1, sisa)));
                 }
-                if (_playStop) break;
-                if (halted != null && halted()) break;
+                if (StopReason()) break;
                 ExecuteEvent(ev, heldButtons, heldKeys);
             }
         }
@@ -427,6 +437,7 @@ public static class MacroRecorder
             foreach (var b in heldButtons) { try { NativeInput.ButtonUp(b); } catch { } }
             foreach (var k in heldKeys) { try { NativeInput.KeyUp(k); } catch { } }
             lock (_lock) { _playThread = null; _playName = ""; }
+            try { onEnd?.Invoke(endReason); } catch { }
         }
     }
 

@@ -3,6 +3,43 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.13.0 — 2026-11-26
+
+"Refleks & Arbitrase" (perintah user "push sampai mentok"
+26 Nov 2026):
+
+ARBITRASE — siapa berhak menggerakkan PC:
+- Sensor sentuhan FISIK (PhysicalInput): hook low-level
+  mouse+keyboard membedakan kejadian fisik dari suntikan
+  (flag INJECTED) — terbaca di /health (physicalInput:
+  agoSec/count/lastKind).
+- YIELD: putar makro, /type berpotongan, dan /drag kini
+  berhenti seketika saat user menyentuh perangkat fisik di
+  tengah operasi — respons jujur code "user_preempted",
+  alasan selesai makro tercatat ("preempted"), kejadian
+  masuk /events sebagai "yield". Suntikan sendiri tidak
+  memicu yield.
+- Lease API: POST /input/lease {owner, ttlSec 10-300} &
+  /input/lease/release & GET /input/lease — di atas
+  mekanisme lease taskId v3.11.0 (agen lain tertolak 429
+  input_leased selama lease aktif).
+- Penjaga idle rutinitas: /routines/save menerima
+  minIdleSec; /routines/run menunda (409 user_active)
+  selama sentuhan fisik user lebih baru dari ambang —
+  berlaku juga untuk scheduler & refleks.
+
+REFLEKS — bereaksi tanpa diperintah:
+- Mesin aturan tersimpan (reflex-rules.json): pemicu
+  window (jendela baru cocok judul/proses), process
+  (mulai/berhenti), file (berkas baru/berubah di folder
+  terpantau, FileSystemWatcher).
+- Aksi aman: log, event (masuk /events), tasknote
+  (catatan Task Memory), routine:<nama>,
+  dismiss:<teks tombol persis> via UIA pada jendela baru.
+- Cooldown per aturan (bawaan 30 dtk) anti-banjir;
+  GET /reflex/rules, POST /reflex/rules(+delete),
+  GET /reflex/log (100 pemicuan terakhir).
+
 ## 5.12.1 — 2026-11-26
 
 - /health: pid & processUptimeSec kini BENAR-BENAR di

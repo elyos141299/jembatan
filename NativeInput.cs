@@ -637,7 +637,7 @@ public static class NativeInput
     /// lepas. Bawaan memanggil versi lama persis (60/16/15/60).
     /// </summary>
     public static void Drag(int x1, int y1, int x2, int y2, string button,
-        int grabMs, int steps, int stepMs, int settleMs)
+        int grabMs, int steps, int stepMs, int settleMs, Func<bool> abort = null)
     {
         if (grabMs < 0) grabMs = 0;
         if (grabMs > 2000) grabMs = 2000;
@@ -653,6 +653,9 @@ public static class NativeInput
         if (grabMs > 0) Thread.Sleep(grabMs);
         for (int i = 1; i <= steps; i++)
         {
+            // Yield (v5.13.0): user mengambil alih di tengah
+            // seret — lepas tombol rapi dan berhenti.
+            if (abort != null && abort()) { ReleaseButton(button); return; }
             int x = x1 + (x2 - x1) * i / steps;
             int y = y1 + (y2 - y1) * i / steps;
             MoveTo(x, y);
@@ -670,8 +673,12 @@ public static class NativeInput
     /// berjeda stepMs. Untuk lintasan melengkung, slider yang
     /// butuh singgah, dan pola seret yang tidak lurus.
     /// </summary>
-    public static void DragPath(IReadOnlyList<(int X, int Y, int DwellMs)> path,
-        string button, int grabMs, int stepMs, int settleMs)
+    /// <summary>Seret mengikuti jalur; abort (v5.13.0, opsional)
+    /// diperiksa tiap segmen — true = berhenti di tengah,
+    /// tombol dilepas rapi, kembalian false. Kembalian true
+    /// bila jalur selesai penuh.</summary>
+    public static bool DragPath(IReadOnlyList<(int X, int Y, int DwellMs)> path,
+        string button, int grabMs, int stepMs, int settleMs, Func<bool> abort = null)
     {
         if (path == null || path.Count < 2)
             throw new ArgumentException("jalur seret butuh minimal 2 titik");
@@ -689,6 +696,7 @@ public static class NativeInput
         int cx = start.X, cy = start.Y;
         for (int p = 1; p < path.Count; p++)
         {
+            if (abort != null && abort()) { ReleaseButton(button); return false; }
             var target = path[p];
             int dx = target.X - cx, dy = target.Y - cy;
             int dist = (int)Math.Ceiling(Math.Sqrt(dx * dx + dy * dy));
@@ -727,6 +735,7 @@ public static class NativeInput
         }
         if (settleMs > 0) Thread.Sleep(settleMs);
         ReleaseButton(button);
+        return true;
     }
 
     /// <summary>Mengetik teks biasa (v5.0.0: SendInput murni,
