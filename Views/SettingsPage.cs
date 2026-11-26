@@ -9,18 +9,18 @@ using System.Windows.Threading;
 namespace Jembatan;
 
 /// <summary>
-/// Settings v5.3.0 — persis frame Figma: daftar 9 kategori di
-/// kiri, panel isi di kanan. Panel General mengikuti desain
-/// (nama perangkat, bahasa, 4 baris saklar, pilihan tema, tombol
-/// Simpan/Reset, footer versi): tiga saklar pertama SUNGGUH
-/// berfungsi (Jalan otomatis, Cegah PC tidur, Mode Administrator
-/// — penyimpanan &amp; penerapan yang sama seperti sebelumnya);
-/// saklar Notifikasi, kolom bahasa, dan pilihan tema masih
-/// contoh desain (fitur menyusul). Isi lama Permissions &amp;
-/// Security + Connections dilipat ke kategori Desktop Bridge
-/// (status bridge, Putuskan/Sambungkan, Emergency Stop, mode &amp;
-/// lease — semua berfungsi), dan About memuat info versi asli.
-/// Kategori lain tampil sebagai panel judul (isi menyusul).
+/// Settings v5.7.0 (Tray-First) — hanya kategori yang isinya
+/// SUNGGUH berfungsi: General (tiga saklar asli: Jalan
+/// otomatis, Cegah PC tidur, Mode Administrator — berlaku
+/// seketika saat digeser, tanpa tombol Simpan), Desktop
+/// Bridge (status bridge, Putuskan/Sambungkan, Emergency
+/// Stop, mode &amp; lease), dan Appearance (pilihan tema —
+/// masih contoh desain, tema aktif tetap Futuristic Dark).
+/// Kategori contoh Figma yang kosong (Muse Connection,
+/// Screen, Performance, Notifications, Diagnostics) dan
+/// kolom display-only di General (nama perangkat, bahasa,
+/// saklar Notifikasi) DIBUANG atas prompt penyederhanaan
+/// user 26 Nov 2026. About kini halaman utama tersendiri.
 /// </summary>
 public sealed class SettingsPage : UserControl, IRoomPage
 {
@@ -29,7 +29,7 @@ public sealed class SettingsPage : UserControl, IRoomPage
     private bool _loading = true;
 
     // Panel General
-    private CheckBox _tgAuto, _tgAwake, _tgAdmin, _tgNotif;
+    private CheckBox _tgAuto, _tgAwake, _tgAdmin;
     private TextBlock _genFooter;
 
     // Panel Desktop Bridge
@@ -39,8 +39,7 @@ public sealed class SettingsPage : UserControl, IRoomPage
 
     private static readonly string[] Categories =
     {
-        "General", "Appearance", "Muse Connection", "Desktop Bridge",
-        "Screen", "Performance", "Notifications", "Diagnostics", "About",
+        "General", "Desktop Bridge", "Appearance",
     };
 
     public SettingsPage()
@@ -107,9 +106,8 @@ public sealed class SettingsPage : UserControl, IRoomPage
             {
                 "General" => BuildGeneral(),
                 "Desktop Bridge" => BuildBridge(),
-                "About" => BuildAbout(),
                 "Appearance" => BuildAppearance(),
-                _ => BuildPlaceholder(cat),
+                _ => BuildGeneral(),
             };
             _panels[cat] = panel;
         }
@@ -141,29 +139,9 @@ public sealed class SettingsPage : UserControl, IRoomPage
         var stack = new StackPanel { Margin = new Thickness(24) };
         stack.Children.Add(UiKit.SectionLabel("GENERAL"));
 
-        var fields = new Grid { Margin = new Thickness(0, 16, 0, 0) };
-        fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        fields.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var nameStack = new StackPanel { Margin = new Thickness(0, 0, 8, 0) };
-        nameStack.Children.Add(UiKit.Muted("Nama perangkat"));
-        var nameBox = UiKit.Input(Environment.MachineName);
-        nameBox.Margin = new Thickness(0, 6, 0, 0);
-        nameStack.Children.Add(nameBox);
-        fields.Children.Add(nameStack);
-        var langStack = new StackPanel { Margin = new Thickness(8, 0, 0, 0) };
-        langStack.Children.Add(UiKit.Muted("Bahasa"));
-        var langBox = new ComboBox
-        {
-            Style = (Style)Application.Current.FindResource("CrComboBox"),
-            Margin = new Thickness(0, 6, 0, 0),
-        };
-        langBox.Items.Add("Indonesia");
-        langBox.Items.Add("English");
-        langBox.SelectedIndex = 0;
-        langStack.Children.Add(langBox);
-        Grid.SetColumn(langStack, 1);
-        fields.Children.Add(langStack);
-        stack.Children.Add(fields);
+        var note = UiKit.Muted("Semua saklar di halaman ini berlaku seketika saat digeser — tidak ada tombol Simpan.");
+        note.Margin = new Thickness(0, 10, 0, 0);
+        stack.Children.Add(note);
 
         _tgAuto = AddToggleRow(stack, "Jalan otomatis saat Windows menyala",
             "MuseLink ikut menyala sesudah login (mengikuti Mode Administrator).",
@@ -177,32 +155,6 @@ public sealed class SettingsPage : UserControl, IRoomPage
             "Dibutuhkan untuk mengendalikan aplikasi yang berjalan sebagai admin.",
             (s, e) => { if (!_loading) App.Host?.ApplyAdminMode(true); },
             (s, e) => { if (!_loading) App.Host?.ApplyAdminMode(false); });
-        _tgNotif = AddToggleRow(stack, "Notifikasi aktivitas",
-            "Tampilkan pemberitahuan saat tugas besar selesai.", null, null);
-
-        stack.Children.Add(new Border
-        {
-            Height = 1,
-            Background = UiKit.Res("CrBorder"),
-            Margin = new Thickness(0, 22, 0, 0),
-        });
-
-        stack.Children.Add(new TextBlock
-        {
-            Text = "APPEARANCE",
-            FontSize = 10.5,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = UiKit.Res("CrMuted"),
-            Margin = new Thickness(0, 18, 0, 0),
-        });
-        stack.Children.Add(ThemeCards());
-
-        var btns = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 22, 0, 0) };
-        btns.Children.Add(UiKit.PrimaryBtn("Simpan", null));
-        var resetBtn = UiKit.Btn("Reset", (s, e) => RefreshGeneral());
-        resetBtn.Margin = new Thickness(10, 0, 0, 0);
-        btns.Children.Add(resetBtn);
-        stack.Children.Add(btns);
 
         _genFooter = new TextBlock
         {
@@ -390,31 +342,4 @@ public sealed class SettingsPage : UserControl, IRoomPage
         return PanelShell(stack);
     }
 
-    private UIElement BuildPlaceholder(string cat)
-    {
-        var stack = new StackPanel { Margin = new Thickness(24) };
-        stack.Children.Add(UiKit.SectionLabel(cat.ToUpperInvariant()));
-        var note = UiKit.Muted("Panel " + cat + " tampil sesuai daftar kategori Figma; "
-            + "isinya menyusul pada ronde berikutnya.");
-        note.Margin = new Thickness(0, 12, 0, 0);
-        note.TextWrapping = TextWrapping.Wrap;
-        stack.Children.Add(note);
-        return PanelShell(stack);
-    }
-
-    private UIElement BuildAbout()
-    {
-        var stack = new StackPanel { Margin = new Thickness(24) };
-        stack.Children.Add(UiKit.SectionLabel("ABOUT"));
-        var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        var info = UiKit.Body(
-            "MuseLink v" + (v != null ? v.ToString(3) : "5.3.0") + " • UI WPF (Control Room)\n"
-            + "Proses: " + (Settings.IsElevated() ? "Administrator" : "Pengguna biasa")
-            + " • Bridge port " + AgentServer.Port + "\n"
-            + "Tata letak v5.3.0 mengikuti desain Figma “MuseLink — Futuristic AI Control Center”.\n"
-            + "Pengaturan tersimpan di registry HKCU\\Software\\Jembatan.");
-        info.Margin = new Thickness(0, 12, 0, 0);
-        stack.Children.Add(info);
-        return PanelShell(stack);
-    }
 }

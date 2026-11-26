@@ -56,7 +56,12 @@ public partial class App : Application
         Host.RequestShutdown += () => Dispatcher.BeginInvoke(new Action(ExitApp));
         var win = new MainWindow();
         MainWindow = win;
-        win.Show();
+        // Tray-First (v5.7.0): mulai otomatis (--auto) TIDAK
+        // membuka jendela sama sekali — aplikasi langsung
+        // bersemayam di tray; jendela muncul hanya saat user
+        // membukanya (ikon tray / pintasan). Dibuka manual →
+        // tampil seperti biasa.
+        if (!Program.StartedAuto) win.Show();
 
         _tray = new TrayIcon
         {
@@ -68,7 +73,10 @@ public partial class App : Application
         _tray.ExitRequested += ExitApp;
 
         Host.Start();
-        Host.Log("MuseLink v5.0.0 dimulai (UI WPF — Control Room).");
+        var asmVer = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        Host.Log("MuseLink v" + (asmVer != null ? asmVer.ToString(3) : "?")
+            + " dimulai (UI WPF — Tray-First)"
+            + (Program.StartedAuto ? ", mulai otomatis — jendela tetap di tray." : "."));
         if (Program.ElevationDeclined)
             Host.Log("Mode Administrator ditolak — jalan sebagai pengguna biasa.");
     }

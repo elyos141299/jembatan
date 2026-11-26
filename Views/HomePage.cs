@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,57 +8,43 @@ using System.Windows.Threading;
 namespace Jembatan;
 
 /// <summary>
-/// Overview v5.3.0 — komposisi persis frame Figma: 4 kartu metrik,
-/// panel Current AI Activity + Quick Actions, Recent Activity
-/// model linimasa, dan System Overview 5 bilah. Semua angka dari
-/// data asli (BuildHealth, SystemMetrics, nvidia-smi, operasi
-/// bridge terakhir). Quick Actions berfungsi: Screenshot menyimpan
-/// PNG ke folder Pictures, dua tombol tengah menavigasi halaman,
-/// Emergency Stop menghentikan input bridge.
+/// Home v5.7.0 (Tray-First) — penyederhanaan Overview lama:
+/// 5 kartu metrik (Muse, Bridge, CPU, GPU, Disk), panel
+/// aktivitas AI saat ini, dan aktivitas terakhir. Quick
+/// Actions &amp; System Overview dibuang (duplikat/tidak
+/// penting untuk aplikasi jembatan). Semua angka dari data
+/// asli (BuildHealth, SystemMetrics, nvidia-smi, operasi
+/// bridge terakhir) — sama seperti sebelumnya.
 /// </summary>
-public sealed class OverviewPage : UserControl, IRoomPage
+public sealed class HomePage : UserControl, IRoomPage
 {
     private readonly TextBlock _museVal, _museSub, _bridgeVal, _bridgeSub;
-    private readonly TextBlock _cpuVal, _cpuSub, _gpuVal, _gpuSub;
+    private readonly TextBlock _cpuVal, _cpuSub, _gpuVal, _gpuSub, _diskVal, _diskSub;
     private readonly TextBlock _actTitle, _actDesc, _actPct;
     private readonly Grid _actBar;
     private readonly StackPanel _actSteps, _recentList;
-    private readonly Button _stopRowBtn;
-    private readonly TextBlock[] _sysVals = new TextBlock[5];
-    private readonly Grid[] _sysBars = new Grid[5];
     private readonly DispatcherTimer _timer;
     private bool _busy;
 
-    public OverviewPage()
+    public HomePage()
     {
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        // ---- Baris metrik (4 kartu) ----
+        // ---- Baris metrik (5 kartu) ----
         var metrics = new Grid();
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 5; i++)
             metrics.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        metrics.Children.Add(MetricCard(0, "MUSE STATUS", "CrSage", out _museVal, out _museSub));
-        metrics.Children.Add(MetricCard(1, "DESKTOP BRIDGE", "CrGreen", out _bridgeVal, out _bridgeSub));
-        metrics.Children.Add(MetricCard(2, "CPU LOAD", "CrAccent", out _cpuVal, out _cpuSub));
-        metrics.Children.Add(MetricCard(3, "GPU / VRAM", "CrGreen", out _gpuVal, out _gpuSub));
+        metrics.Children.Add(MetricCard(0, 5, "MUSE STATUS", "CrSage", out _museVal, out _museSub));
+        metrics.Children.Add(MetricCard(1, 5, "DESKTOP BRIDGE", "CrGreen", out _bridgeVal, out _bridgeSub));
+        metrics.Children.Add(MetricCard(2, 5, "CPU LOAD", "CrAccent", out _cpuVal, out _cpuSub));
+        metrics.Children.Add(MetricCard(3, 5, "GPU / VRAM", "CrGreen", out _gpuVal, out _gpuSub));
+        metrics.Children.Add(MetricCard(4, 5, "DISK", "CrGold", out _diskVal, out _diskSub));
         root.Children.Add(metrics);
 
-        // ---- Area bawah: kiri (aktivitas + terbaru), kanan (aksi + sistem) ----
-        var lower = new Grid { Margin = new Thickness(0, 16, 0, 0) };
-        lower.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3.2, GridUnitType.Star) });
-        lower.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetRow(lower, 1);
-        root.Children.Add(lower);
-
-        var leftCol = new Grid { Margin = new Thickness(0, 0, 16, 0) };
-        leftCol.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        leftCol.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        Grid.SetColumn(leftCol, 0);
-        lower.Children.Add(leftCol);
-
-        // Current AI Activity
+        // ---- Aktivitas AI saat ini ----
         var actStack = new StackPanel();
         var actHead = new StackPanel { Orientation = Orientation.Horizontal };
         actHead.Children.Add(UiKit.Dot("CrAccent", 9));
@@ -106,9 +91,12 @@ public sealed class OverviewPage : UserControl, IRoomPage
         haltBtn.Margin = new Thickness(10, 0, 0, 0);
         actBtns.Children.Add(haltBtn);
         actStack.Children.Add(actBtns);
-        leftCol.Children.Add(UiKit.Card("CURRENT AI ACTIVITY", actStack));
+        var actCard = UiKit.Card("CURRENT AI ACTIVITY", actStack);
+        actCard.Margin = new Thickness(0, 16, 0, 0);
+        Grid.SetRow(actCard, 1);
+        root.Children.Add(actCard);
 
-        // Recent Activity
+        // ---- Aktivitas terakhir ----
         _recentList = new StackPanel();
         var recentScroll = new ScrollViewer
         {
@@ -117,62 +105,8 @@ public sealed class OverviewPage : UserControl, IRoomPage
         };
         var recentCard = UiKit.Card("RECENT ACTIVITY", recentScroll);
         recentCard.Margin = new Thickness(0, 16, 0, 0);
-        Grid.SetRow(recentCard, 1);
-        leftCol.Children.Add(recentCard);
-
-        var rightCol = new Grid();
-        rightCol.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        rightCol.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        Grid.SetColumn(rightCol, 1);
-        lower.Children.Add(rightCol);
-
-        // Quick Actions
-        var qaStack = new StackPanel();
-        qaStack.Children.Add(QuickRow("◉", "Screenshot", (s, e) => QuickScreenshot()));
-        qaStack.Children.Add(QuickRow("❯", "Jalankan Perintah", (s, e) =>
-            (Application.Current.MainWindow as MainWindow)?.NavigateTo("console")));
-        qaStack.Children.Add(QuickRow("↻", "Jalankan Workflow", (s, e) =>
-            (Application.Current.MainWindow as MainWindow)?.NavigateTo("automation")));
-        _stopRowBtn = QuickRow("■", "Emergency Stop", (s, e) =>
-        {
-            var server = App.Host?.Server;
-            if (server != null) server.SetHalt(!server.InputHalted, "ui");
-            _ = RefreshAsync();
-        });
-        qaStack.Children.Add(_stopRowBtn);
-        rightCol.Children.Add(UiKit.Card("QUICK ACTIONS", qaStack));
-
-        // System Overview
-        var sysStack = new StackPanel();
-        string[] labels = { "CPU", "RAM", "GPU", "Disk", "Network" };
-        string[] colors = { "CrAccent", "CrSage", "CrGreen", "CrGold", "CrAccent" };
-        for (int i = 0; i < 5; i++)
-        {
-            var lr = new Grid { Margin = new Thickness(0, i == 0 ? 0 : 14, 0, 0) };
-            lr.Children.Add(new TextBlock
-            {
-                Text = labels[i],
-                FontSize = 11.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = UiKit.Res("CrMuted"),
-            });
-            _sysVals[i] = new TextBlock
-            {
-                Text = "—",
-                FontSize = 11.5,
-                FontWeight = FontWeights.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Right,
-            };
-            lr.Children.Add(_sysVals[i]);
-            sysStack.Children.Add(lr);
-            _sysBars[i] = UiKit.Bar(colors[i], 6);
-            _sysBars[i].Margin = new Thickness(0, 6, 0, 0);
-            sysStack.Children.Add(_sysBars[i]);
-        }
-        var sysCard = UiKit.Card("SYSTEM OVERVIEW", sysStack);
-        sysCard.Margin = new Thickness(0, 16, 0, 0);
-        Grid.SetRow(sysCard, 1);
-        rightCol.Children.Add(sysCard);
+        Grid.SetRow(recentCard, 2);
+        root.Children.Add(recentCard);
 
         Content = root;
 
@@ -180,7 +114,7 @@ public sealed class OverviewPage : UserControl, IRoomPage
         _timer.Tick += (s, e) => _ = RefreshAsync();
     }
 
-    private Border MetricCard(int col, string title, string colorKey, out TextBlock val, out TextBlock sub)
+    private Border MetricCard(int col, int total, string title, string colorKey, out TextBlock val, out TextBlock sub)
     {
         var stack = new StackPanel();
         var head = new StackPanel { Orientation = Orientation.Horizontal };
@@ -210,64 +144,14 @@ public sealed class OverviewPage : UserControl, IRoomPage
         {
             Style = (Style)Application.Current.FindResource("CrCardStyle"),
             Child = stack,
-            Margin = new Thickness(col == 0 ? 0 : 7, 0, col == 3 ? 0 : 7, 0),
+            Margin = new Thickness(col == 0 ? 0 : 7, 0, col == total - 1 ? 0 : 7, 0),
         };
         Grid.SetColumn(card, col);
         return card;
     }
 
-    private Button QuickRow(string glyph, string label, RoutedEventHandler onClick)
-    {
-        var sp = new StackPanel { Orientation = Orientation.Horizontal };
-        sp.Children.Add(new TextBlock
-        {
-            Text = glyph,
-            FontSize = 12,
-            Foreground = UiKit.Res("CrAccent"),
-            Width = 22,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        sp.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontSize = 11.5,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        var b = new Button
-        {
-            Content = sp,
-            Style = (Style)Application.Current.FindResource("CrButton"),
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(12, 7, 12, 7),
-            Margin = new Thickness(0, 0, 0, 8),
-        };
-        if (onClick != null) b.Click += onClick;
-        return b;
-    }
-
     public void OnShown() { _timer.Start(); _ = RefreshAsync(); }
     public void OnHidden() { _timer.Stop(); }
-
-    private void QuickScreenshot()
-    {
-        try
-        {
-            using (var bmp = NativeInput.CaptureScreenScaled(1920))
-            {
-                if (bmp == null) return;
-                string dir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-                string file = Path.Combine(dir,
-                    "MuseLink-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png");
-                bmp.Save(file, System.Drawing.Imaging.ImageFormat.Png);
-                _actDesc.Text = "Screenshot tersimpan: " + file;
-            }
-        }
-        catch (Exception ex)
-        {
-            _actDesc.Text = "Screenshot gagal: " + ex.Message;
-        }
-    }
 
     private async Task RefreshAsync()
     {
@@ -282,7 +166,7 @@ public sealed class OverviewPage : UserControl, IRoomPage
                 var health = server.BuildHealth();
                 var metrics = NativeInput.SystemMetrics();
                 string gpu = SysSensors.GpuText();
-                var ops = server.RecentOpsSnapshot(5);
+                var ops = server.RecentOpsSnapshot(6);
                 return new { health, metrics, gpu, ops };
             });
             var health = snap.health;
@@ -303,6 +187,12 @@ public sealed class OverviewPage : UserControl, IRoomPage
             ParseGpu(snap.gpu, out string temp, out int util);
             _gpuVal.Text = temp.Length > 0 ? temp + "°C" : "—";
             _gpuSub.Text = "GTX 1660 Super • " + (util >= 0 ? util + "%" : "—");
+            double diskPct = m.DiskTotalGb > 0
+                ? (m.DiskTotalGb - m.DiskFreeGb) * 100.0 / m.DiskTotalGb : -1;
+            _diskVal.Text = diskPct >= 0 ? (int)Math.Round(diskPct) + "%" : "—";
+            _diskSub.Text = m.DiskTotalGb > 0
+                ? "SSD • bebas " + (int)Math.Round(m.DiskFreeGb) + " GB"
+                : "SSD";
 
             // Panel aktivitas
             if (snap.ops.Count > 0)
@@ -374,30 +264,9 @@ public sealed class OverviewPage : UserControl, IRoomPage
             }
             if (snap.ops.Count == 0)
                 _recentList.Children.Add(UiKit.Muted("Belum ada operasi bridge pada sesi ini."));
-
-            // System Overview
-            SetSys(0, m.CpuPercent >= 0 ? m.CpuPercent + "%" : "—", m.CpuPercent);
-            SetSys(1, m.RamPercent >= 0 ? m.RamPercent + "%" : "—", m.RamPercent);
-            SetSys(2, util >= 0 ? util + "%" : "—", util);
-            double diskPct = m.DiskTotalGb > 0
-                ? (m.DiskTotalGb - m.DiskFreeGb) * 100.0 / m.DiskTotalGb : -1;
-            SetSys(3, diskPct >= 0 ? (int)Math.Round(diskPct) + "%" : "—", diskPct);
-            SetSys(4, respMs > 0 ? respMs + " ms" : "—",
-                respMs > 0 ? Math.Max(4, 100 - respMs / 10.0) : -1);
-
-            // Baris Emergency Stop di Quick Actions mengikuti keadaan
-            if (_stopRowBtn.Content is StackPanel sp && sp.Children.Count > 1
-                && sp.Children[1] is TextBlock lbl)
-                lbl.Text = halted ? "Lepas Emergency Stop" : "Emergency Stop";
         }
         catch { /* halaman pelengkap — gagal diam */ }
         finally { _busy = false; }
-    }
-
-    private void SetSys(int i, string val, double pct)
-    {
-        _sysVals[i].Text = val;
-        UiKit.SetBar(_sysBars[i], pct >= 0 ? pct : 0);
     }
 
     private static void ParseGpu(string gpuText, out string temp, out int util)

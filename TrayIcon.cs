@@ -26,6 +26,7 @@ public sealed class TrayIcon : IDisposable
     private const uint MfString = 0x0000;
     private const uint MfSeparator = 0x0800;
     private const uint MfChecked = 0x0008;
+    private const uint MfGrayed = 0x0001;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct NotifyIconData
@@ -149,6 +150,15 @@ public sealed class TrayIcon : IDisposable
         if (menu == IntPtr.Zero) return;
         try
         {
+            // Baris status non-aktif di kepala menu (v5.7.0):
+            // versi + keadaan bridge sekilas, tanpa membuka
+            // jendela — sesuai watak tray-first.
+            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            string statusLine = "MuseLink v" + (ver != null ? ver.ToString(3) : "?")
+                + (running ? " — Bridge Online" : " — Bridge Offline")
+                + (halted ? " • Stop aktif" : "");
+            AppendMenu(menu, MfString | MfGrayed, UIntPtr.Zero, statusLine);
+            AppendMenu(menu, MfSeparator, UIntPtr.Zero, null);
             AppendMenu(menu, MfString, (UIntPtr)1, "Buka MuseLink");
             AppendMenu(menu, MfString, (UIntPtr)2, running ? "Putuskan Akses" : "Sambungkan Akses");
             AppendMenu(menu, (uint)(MfString | (halted ? MfChecked : 0)), (UIntPtr)3,

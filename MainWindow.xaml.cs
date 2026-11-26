@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -13,54 +12,45 @@ using System.Windows.Threading;
 namespace Jembatan;
 
 /// <summary>
-/// Kerangka Control Room WPF — v5.3.0: tata letak dibangun ulang
-/// persis desain Figma "MuseLink — Futuristic AI Control Center":
-/// sidebar 240 (label MENU + kartu status dua baris), bar atas
-/// dengan badge status + chip pengguna, panel konteks kanan 300px
-/// (aktivitas Muse, aplikasi aktif, tugas, kejadian, info sistem)
-/// yang hidup dari data bridge/sensor asli. Server &amp; endpoint
-/// tidak berubah.
+/// Kerangka utama MuseLink — v5.7.0 Tray-First: sidebar 5
+/// halaman (Home, Activity, AI, Settings, About), bar atas
+/// ramping (judul + dua lencana status + tombol jendela), TANPA
+/// panel konteks kanan (duplikat Overview/Activity — dibuang
+/// atas prompt penyederhanaan user 26 Nov 2026). Server,
+/// endpoint &amp; protokol tidak berubah sama sekali.
 /// </summary>
 public partial class MainWindow : Window
 {
     private readonly Dictionary<string, string> _titles = new Dictionary<string, string>
     {
-        ["overview"] = "Overview",
-        ["console"] = "Muse Console",
-        ["desktop"] = "Desktop Control",
-        ["live"] = "Live Screen",
-        ["activity"] = "Activity Center",
-        ["automation"] = "Automation Center",
-        ["monitor"] = "System Monitor",
-        ["integrations"] = "Integrations",
+        ["home"] = "Home",
+        ["activity"] = "Activity",
+        ["ai"] = "AI",
         ["settings"] = "Settings",
+        ["about"] = "About",
     };
 
     private string _currentPage = "";
     private readonly Dictionary<string, UserControl> _pages = new Dictionary<string, UserControl>();
     private IRoomPage _currentRoomPage;
-    private int _tick;
-    private bool _panelBusy;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        // Perbaikan maximized (v5.6.0): jendela tanpa bingkai +
-        // WindowChrome memenuhi LAYAR PENUH saat maximized,
-        // sehingga isi bawah aplikasi tertutup taskbar Windows
-        // (terbukti di audit tampilan 26 Nov: tombol Kirim
-        // Console, kartu Active Window, tombol Ekspor Activity
-        // semuanya kepotong). WM_GETMINMAXINFO dibelokkan agar
-        // batas maximized = AREA KERJA monitor (di luar taskbar).
+        // Perbaikan maximized (v5.6.0, dipertahankan): jendela
+        // tanpa bingkai + WindowChrome memenuhi LAYAR PENUH saat
+        // maximized, sehingga isi bawah aplikasi tertutup taskbar
+        // Windows. WM_GETMINMAXINFO dibelokkan agar batas
+        // maximized = AREA KERJA monitor (di luar taskbar).
         SourceInitialized += (s, e) =>
         {
             var src = (HwndSource)PresentationSource.FromVisual(this);
             if (src != null) src.AddHook(WndProcHook);
         };
         var v = Assembly.GetExecutingAssembly().GetName().Version;
-        VersionText.Text = "v" + (v != null ? v.ToString(3) : "5.3.0");
-        NavOverview.IsChecked = true;
+        VersionText.Text = "v" + (v != null ? v.ToString(3) : "5.7.0");
+        NavHome.IsChecked = true;
 
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         timer.Tick += (s, e) => RefreshStatus();
@@ -78,18 +68,10 @@ public partial class MainWindow : Window
             }
         };
 
-        // Jalan otomatis (--auto): jendela tampil sebentar lalu
-        // sembunyi sendiri ke tray sesudah 6 detik.
-        if (Program.StartedAuto)
-        {
-            var autoHide = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
-            autoHide.Tick += (s, e) =>
-            {
-                autoHide.Stop();
-                if (IsVisible) Hide();
-            };
-            autoHide.Start();
-        }
+        // Startup otomatis (--auto): jendela TIDAK ditampilkan
+        // sama sekali (v5.7.0, instruksi Tray-First user) —
+        // App memang tidak memanggil Show() untuk mode ini,
+        // jadi blok sembunyi-otomatis lama tidak diperlukan.
     }
 
     // ---- WM_GETMINMAXINFO: hormati area kerja saat maximized ----
@@ -166,7 +148,7 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    /// <summary>Navigasi programatik (dipakai Quick Actions dsb.).</summary>
+    /// <summary>Navigasi programatik (dipakai tombol Lihat Detail dsb.).</summary>
     public void NavigateTo(string key)
     {
         foreach (var child in NavPanel.Children)
@@ -198,16 +180,12 @@ public partial class MainWindow : Window
         {
             page = key switch
             {
-                "overview" => new OverviewPage(),
-                "console" => new ConsolePage(),
-                "desktop" => new DesktopPage(),
-                "live" => new LivePage(),
+                "home" => new HomePage(),
                 "activity" => new ActivityPage(),
-                "automation" => new AutomationPage(),
-                "monitor" => new MonitorPage(),
-                "integrations" => new IntegrationsPage(),
+                "ai" => new AiPage(),
                 "settings" => new SettingsPage(),
-                _ => new OverviewPage(),
+                "about" => new AboutPage(),
+                _ => new HomePage(),
             };
             _pages[key] = page;
         }
@@ -233,136 +211,6 @@ public partial class MainWindow : Window
         SideClaudeText.Text = halted ? "Muse Terhenti (Stop)" : "Muse Online";
         MuseBadgeText.Text = halted ? "Emergency Stop" : "Muse Connected";
         HaltBanner.Visibility = halted ? Visibility.Visible : Visibility.Collapsed;
-
-        _tick++;
-        if (_tick % 4 == 1) _ = RefreshPanelAsync();
-    }
-
-    /// <summary>Isi panel konteks kanan dari data asli: operasi
-    /// bridge terakhir, jendela depan, dan sensor sistem. Pembacaan
-    /// berat (metrik ±250ms, nvidia-smi) di utas latar.</summary>
-    private async Task RefreshPanelAsync()
-    {
-        if (_panelBusy) return;
-        _panelBusy = true;
-        try
-        {
-            var server = App.Host?.Server;
-            if (server == null) return;
-            var snap = await Task.Run(() =>
-            {
-                var health = server.BuildHealth();
-                var metrics = NativeInput.SystemMetrics();
-                string gpu = SysSensors.GpuText();
-                var ops = server.RecentOpsSnapshot(4);
-                int winCount = 0;
-                try { winCount = NativeInput.ListWindows().Count; } catch { }
-                return new { health, metrics, gpu, ops, winCount };
-            });
-
-            var health = snap.health;
-            long uiOps = UiKit.GetLong(health, "uiOpsRunning");
-            bool halted = UiKit.GetBool(health, "inputHalted");
-            var ops = snap.ops;
-
-            if (ops.Count > 0)
-            {
-                var last = ops[0];
-                RpActTitle.Text = UiKit.FriendlyOp(last[1], last[2]);
-                RpActSub.Text = last[1] + " " + last[2] + " • " + last[3] + " • " + last[4] + " ms";
-            }
-            else
-            {
-                RpActTitle.Text = "Menunggu perintah";
-                RpActSub.Text = "Bridge • port " + AgentServer.Port;
-            }
-            RpActDot.Fill = (Brush)FindResource(halted ? "CrRed" : uiOps > 0 ? "CrAccent" : "CrGreen");
-            SetBar(RpActTrack, RpActFill, halted ? 100 : uiOps > 0 ? 58 : ops.Count > 0 ? 100 : 0);
-
-            string fg = UiKit.GetStr(health, "foreground");
-            RpAppTitle.Text = string.IsNullOrEmpty(fg) ? "—" : fg;
-            RpAppSub.Text = snap.winCount + " jendela terbuka di desktop";
-
-            RpTaskTitle.Text = uiOps > 0
-                ? uiOps + " operasi UI sedang berjalan"
-                : "Tidak ada tugas berjalan";
-            long uptime = UiKit.GetLong(health, "uptimeSec");
-            RpTaskSub.Text = halted
-                ? "Emergency Stop aktif — input ditahan"
-                : "Bridge siaga • uptime " + TimeSpan.FromSeconds(uptime).ToString(@"hh\:mm\:ss");
-
-            RpEvents.Children.Clear();
-            foreach (var op in ops)
-            {
-                var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var dot = new System.Windows.Shapes.Ellipse
-                {
-                    Width = 7, Height = 7,
-                    Fill = (Brush)FindResource(UiKit.StatusColor(op[3])),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                row.Children.Add(dot);
-                var label = new TextBlock
-                {
-                    Text = UiKit.FriendlyOp(op[1], op[2]),
-                    FontSize = 11.5,
-                    Margin = new Thickness(8, 0, 6, 0),
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                };
-                Grid.SetColumn(label, 1);
-                row.Children.Add(label);
-                var ago = new TextBlock
-                {
-                    Text = op[0],
-                    FontSize = 10.5,
-                    Foreground = (Brush)FindResource("CrFaint"),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                Grid.SetColumn(ago, 2);
-                row.Children.Add(ago);
-                RpEvents.Children.Add(row);
-            }
-            if (ops.Count == 0)
-                RpEvents.Children.Add(new TextBlock
-                {
-                    Text = "Belum ada kejadian.",
-                    FontSize = 11.5,
-                    Foreground = (Brush)FindResource("CrMuted"),
-                });
-
-            var m = snap.metrics;
-            RpCpuVal.Text = m.CpuPercent >= 0 ? m.CpuPercent + "%" : "—";
-            SetBar(RpCpuTrack, RpCpuFill, m.CpuPercent >= 0 ? m.CpuPercent : 0);
-            RpRamVal.Text = m.RamPercent >= 0 ? m.RamPercent + "%" : "—";
-            SetBar(RpRamTrack, RpRamFill, m.RamPercent >= 0 ? m.RamPercent : 0);
-            int gpuPct = ParseGpuUtil(snap.gpu);
-            RpGpuVal.Text = gpuPct >= 0 ? gpuPct + "%" : "—";
-            SetBar(RpGpuTrack, RpGpuFill, gpuPct >= 0 ? gpuPct : 0);
-        }
-        catch { /* panel konteks pelengkap — gagal diam */ }
-        finally { _panelBusy = false; }
-    }
-
-    private static int ParseGpuUtil(string gpuText)
-    {
-        // Format SysSensors.GpuText(): "41°C · 28%".
-        if (string.IsNullOrEmpty(gpuText)) return -1;
-        int dot = gpuText.IndexOf('·');
-        if (dot < 0) return -1;
-        string tail = gpuText.Substring(dot + 1).Trim().TrimEnd('%').Trim();
-        return int.TryParse(tail, out int v) ? v : -1;
-    }
-
-    private static void SetBar(Grid track, FrameworkElement fill, double pct)
-    {
-        if (pct < 0) pct = 0;
-        if (pct > 100) pct = 100;
-        track.ColumnDefinitions[0].Width = new GridLength(pct, GridUnitType.Star);
-        track.ColumnDefinitions[1].Width = new GridLength(100 - pct, GridUnitType.Star);
-        fill.Visibility = pct <= 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void ReleaseStop_Click(object sender, RoutedEventArgs e)

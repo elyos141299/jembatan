@@ -3,6 +3,50 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.7.0 — 2026-11-26
+
+Penyederhanaan UI **Tray-First** (prompt user di hari yang sama:
+"Simplify, don't rebuild" — MuseLink pada intinya aplikasi
+jembatan yang bersemayam di tray, bukan dashboard). Backend,
+endpoint, protokol & mesin AI TIDAK berubah sama sekali.
+
+### Berubah
+- **Navigasi 9 → 5 halaman:** Home, Activity, AI, Settings,
+  About. Halaman Desktop Control, Live Screen, System Monitor,
+  Automation & Integrations dihapus sebagai halaman (semua
+  fungsinya tetap tersedia lewat bridge; yang hilang hanya
+  etalase tampilannya).
+- **Panel konteks kanan dibuang** dari semua halaman (isinya
+  duplikat Overview/Activity). Bar atas dirampingkan: lonceng
+  notifikasi & chip pengguna display-only dihapus; tagline
+  sidebar menjadi "DESKTOP BRIDGE". Ukuran awal jendela
+  1200×780 (dari 1440×900).
+- **Home** = Overview dirampingkan: 5 kartu metrik (Muse,
+  Bridge, CPU, GPU, Disk), aktivitas AI saat ini, aktivitas
+  terakhir. Quick Actions & System Overview dibuang.
+- **AI** = Muse Console tanpa bilah percakapan contoh:
+  konsol perintah PowerShell utuh seperti sebelumnya, ditambah
+  panel status MESIN AI (sidecar diberi label jujur "Siaga —
+  menyala saat dipakai") & INTEGRASI (status aplikasi
+  terdeteksi, logika halaman Integrations lama, tanpa tombol
+  Configure palsu).
+- **Settings** hanya menyisakan kategori berisi nyata:
+  General (3 saklar asli, berlaku seketika — kolom nama/
+  bahasa/saklar Notifikasi display-only dan tombol Simpan
+  palsu dibuang), Desktop Bridge, Appearance. About menjadi
+  halaman utama tersendiri.
+- **Startup otomatis tidak lagi membuka jendela sama sekali**
+  (sebelumnya tampil ±6 detik lalu sembunyi): mode --auto
+  langsung bersemayam di tray.
+- **Menu tray** mendapat baris status non-aktif di kepala:
+  versi + "Bridge Online/Offline" (+ "Stop aktif").
+
+### Tetap (terverifikasi ulang)
+- Tombol X menyembunyikan ke tray; Keluar hanya lewat tray.
+- Start with Windows, Mode Administrator, Emergency Stop,
+  Verification/Recovery/Scheduler, media FFmpeg, OCR/deteksi
+  GPU, transkripsi Whisper — semua seperti 5.6.0.
+
 ## 5.6.0 — 2026-11-26
 
 Paket "upgrade yang bisa di-upgrade" (perintah user) + koreksi
