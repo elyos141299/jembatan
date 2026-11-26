@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -43,6 +45,19 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // Perbaikan maximized (v5.6.0): jendela tanpa bingkai +
+        // WindowChrome memenuhi LAYAR PENUH saat maximized,
+        // sehingga isi bawah aplikasi tertutup taskbar Windows
+        // (terbukti di audit tampilan 26 Nov: tombol Kirim
+        // Console, kartu Active Window, tombol Ekspor Activity
+        // semuanya kepotong). WM_GETMINMAXINFO dibelokkan agar
+        // batas maximized = AREA KERJA monitor (di luar taskbar).
+        SourceInitialized += (s, e) =>
+        {
+            var src = (HwndSource)PresentationSource.FromVisual(this);
+            if (src != null) src.AddHook(WndProcHook);
+        };
         var v = Assembly.GetExecutingAssembly().GetName().Version;
         VersionText.Text = "v" + (v != null ? v.ToString(3) : "5.3.0");
         NavOverview.IsChecked = true;
@@ -75,6 +90,72 @@ public partial class MainWindow : Window
             };
             autoHide.Start();
         }
+    }
+
+    // ---- WM_GETMINMAXINFO: hormati area kerja saat maximized ----
+    private const int WmGetMinMaxInfo = 0x0024;
+    private const int MonitorDefaultToNearest = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PointL { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RectL { public int Left; public int Top; public int Right; public int Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public PointL Reserved;
+        public PointL MaxSize;
+        public PointL MaxPosition;
+        public PointL MinTrackSize;
+        public PointL MaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int CbSize;
+        public RectL Monitor;
+        public RectL WorkArea;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo info);
+
+    private IntPtr WndProcHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WmGetMinMaxInfo)
+        {
+            var mmi = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+            IntPtr mon = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+            if (mon != IntPtr.Zero)
+            {
+                var mi = new MonitorInfo { CbSize = Marshal.SizeOf<MonitorInfo>() };
+                if (GetMonitorInfo(mon, ref mi))
+                {
+                    mmi.MaxPosition = new PointL
+                    {
+                        X = mi.WorkArea.Left - mi.Monitor.Left,
+                        Y = mi.WorkArea.Top - mi.Monitor.Top,
+                    };
+                    mmi.MaxSize = new PointL
+                    {
+                        X = mi.WorkArea.Right - mi.WorkArea.Left,
+                        Y = mi.WorkArea.Bottom - mi.WorkArea.Top,
+                    };
+                    mmi.MaxTrackSize = mmi.MaxSize;
+                    Marshal.StructureToPtr(mmi, lParam, true);
+                    handled = true;
+                }
+            }
+        }
+        return IntPtr.Zero;
     }
 
     /// <summary>Dipanggil ikon tray: tampilkan lagi jendela.</summary>

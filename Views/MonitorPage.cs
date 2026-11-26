@@ -26,8 +26,34 @@ public sealed class MonitorPage : UserControl, IRoomPage
     private readonly Grid[] _bars = new Grid[5];
     private readonly Canvas _chart;
     private readonly StackPanel _procRows;
-    private readonly Queue<int> _cpuHist = new Queue<int>();
-    private readonly Queue<int> _ramHist = new Queue<int>();
+    // Riwayat grafik DIBAGI semua instance dan diisi sampler
+    // latar (v5.6.0): sebelumnya antrean per-instance yang hanya
+    // terisi selama halaman ini terbuka — grafik selalu tampak
+    // kosong/rusak saat halaman baru dibuka (temuan audit
+    // tampilan 26 Nov). Kini cuplikan mengalir terus tiap 2 detik
+    // sejak halaman pertama kali ditampilkan.
+    private static readonly Queue<int> HistCpu = new Queue<int>();
+    private static readonly Queue<int> HistRam = new Queue<int>();
+    private static readonly object HistLock = new object();
+    private static System.Threading.Timer _sampler;
+
+    private static void EnsureSampler()
+    {
+        if (_sampler != null) return;
+        _sampler = new System.Threading.Timer(_ =>
+        {
+            try
+            {
+                var m = NativeInput.SystemMetrics();
+                lock (HistLock)
+                {
+                    if (m.CpuPercent >= 0) PushHist(HistCpu, m.CpuPercent);
+                    if (m.RamPercent >= 0) PushHist(HistRam, m.RamPercent);
+                }
+            }
+            catch { /* sampler latar — gagal diam */ }
+        }, null, 0, 2000);
+    }
     private readonly Dictionary<int, TimeSpan> _prevCpu = new Dictionary<int, TimeSpan>();
     private DateTime _prevWall = DateTime.MinValue;
     private readonly DispatcherTimer _timer;
@@ -124,6 +150,7 @@ public sealed class MonitorPage : UserControl, IRoomPage
 
     public void OnShown()
     {
+        EnsureSampler(); // v5.6.0: riwayat grafik mengalir di latar
         _timer.Start();
         _ = RefreshAsync();
         if (_cpuTemp == null)
@@ -186,9 +213,7 @@ public sealed class MonitorPage : UserControl, IRoomPage
             UiKit.SetBar(_bars[4], snap.respMs > 0 ? Math.Max(4, 100 - snap.respMs / 10.0) : 0);
             _subs[4].Text = "Tailscale relay • respons UI";
 
-            if (m.CpuPercent >= 0) PushHist(_cpuHist, m.CpuPercent);
-            if (m.RamPercent >= 0) PushHist(_ramHist, m.RamPercent);
-            DrawChart();
+            DrawChart(); // riwayat diisi sampler latar (v5.6.0)
 
             _procRows.Children.Clear();
             foreach (var p in snap.procs)
@@ -306,13 +331,15 @@ public sealed class MonitorPage : UserControl, IRoomPage
             };
             _chart.Children.Add(line);
         }
-        AddLine(_cpuHist, "CrAccent", w, h);
-        AddLine(_ramHist, "CrSage", w, h);
+        int[] cpuSnap, ramSnap;
+        lock (HistLock) { cpuSnap = HistCpu.ToArray(); ramSnap = HistRam.ToArray(); }
+        AddLine(cpuSnap, "CrAccent", w, h);
+        AddLine(ramSnap, "CrSage", w, h);
     }
 
-    private void AddLine(Queue<int> hist, string colorKey, double w, double h)
+    private void AddLine(int[] hist, string colorKey, double w, double h)
     {
-        if (hist.Count < 2) return;
+        if (hist.Length < 2) return;
         var pts = new PointCollection();
         int i = 0;
         foreach (var v in hist)

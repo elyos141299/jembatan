@@ -11,9 +11,9 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>5.5.0</Version>
-    <AssemblyVersion>5.5.0.0</AssemblyVersion>
-    <FileVersion>5.5.0.0</FileVersion>
+    <Version>5.6.0</Version>
+    <AssemblyVersion>5.6.0.0</AssemblyVersion>
+    <FileVersion>5.6.0.0</FileVersion>
     <!-- WebView2 (panel chat v2.2): loader native-nya harus ikut
          ter-extract dari berkas tunggal hasil publish, kalau tidak
          panel chat gagal jalan dari Jembatan.exe single-file. -->
@@ -63,6 +63,15 @@
     <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
     <!-- v3.0.1: suhu CPU (sensor ring-0) untuk baris rincian panel. -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+  </ItemGroup>
+
+  <!-- Scheduler Engine (v5.6.0): penyimpanan jadwal di SQLite
+       lewat Microsoft.Data.Sqlite (schedules.db di LocalAppData\
+       Jembatan). Mesin SQLite (SQLitePCLRaw e_sqlite3) ikut
+       ter-extract dari berkas tunggal lewat
+       IncludeNativeLibrariesForSelfExtract di atas. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

@@ -99,6 +99,11 @@ public sealed class AgentServer
     private readonly HashSet<ushort> _heldKeys = new HashSet<ushort>();
     private readonly object _heldLock = new object();
 
+    // Mesin jadwal (v5.6.0 — Scheduler Engine): thread penilik
+    // yang memeriksa jadwal tersimpan (Schedules/SQLite) dan
+    // menjalankan rutinitas yang jatuh tempo lewat /routines/run.
+    private volatile bool _schedOn;
+
     public AgentServer(IUiHost ui, Action<string> log, Action onActivity)
     {
         _ui = ui;
@@ -138,11 +143,24 @@ public sealed class AgentServer
             }
         }) { IsBackground = true, Name = "RelayWarmer" };
         warmer.Start();
+        // Mesin jadwal (v5.6.0): tilik tiap 20 detik; slot yang
+        // terlewat jauh (PC mati) dicatat "terlewat", tidak dikejar.
+        _schedOn = true;
+        var sched = new Thread(() =>
+        {
+            while (_schedOn)
+            {
+                SchedulerTick();
+                for (int i = 0; i < 20 && _schedOn; i++) Thread.Sleep(1000);
+            }
+        }) { IsBackground = true, Name = "Scheduler" };
+        sched.Start();
     }
 
     public void Stop()
     {
         _warmerOn = false;
+        _schedOn = false; // v5.6.0: mesin jadwal ikut berhenti
         EventLog.StopHooks(); // v3.9.0: lepas WinEventHook
         ReleaseHeldKeys(); // v3.6.0: jangan tinggalkan tombol tertahan
         try { _cts?.Cancel(); } catch { /* abaikan */ }
@@ -152,6 +170,255 @@ public sealed class AgentServer
         // PUTUSKAN / jendela ditutup = shell persisten ikut dimatikan.
         lock (_shellLock) { KillShell(); }
         AiBridge.Shutdown(); // v5.4.0: sidecar AI ikut mati bila kami yang memulai
+    }
+
+    private static double GetDouble(JsonElement root, string name, double fallback)
+    {
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(name, out var el))
+        {
+            if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out double d)) return d;
+            if (el.ValueKind == JsonValueKind.String &&
+                double.TryParse(el.GetString(), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double ds)) return ds;
+        }
+        return fallback;
+    }
+
+    /// <summary>
+    /// Satu putaran mesin jadwal (v5.6.0): untuk tiap jadwal aktif
+    /// yang slotnya jatuh tempo — jalankan rutinitasnya lewat
+    /// /routines/run. Aturan aman: input ter-halt → lewati putaran;
+    /// input sedang disewa → tunda ke putaran berikut; slot lewat
+    /// lebih dari 15 menit (PC mati/bridge berhenti) → dicatat
+    /// "terlewat" dan dilompati ke slot berikutnya, tidak dikejar.
+    /// </summary>
+    private void SchedulerTick()
+    {
+        try
+        {
+            if (_inputHalted) return;
+            var now = DateTime.Now;
+            foreach (var s in Schedules.List())
+            {
+                if (!_schedOn) return;
+                if (!s.Enabled) continue;
+                if (!DateTime.TryParse(s.NextRun, out var next)) continue;
+                if (now < next) continue;
+                if ((now - next).TotalMinutes > 15)
+                {
+                    string nx = Schedules.ComputeNext(s.Kind, s.At, s.Day, s.Minutes, now);
+                    Schedules.UpdateRun(s.Name, s.LastRun, "terlewat", nx);
+                    _log($"jadwal '{s.Name}' terlewat (slot {s.NextRun}) — lompat ke {nx}");
+                    continue;
+                }
+                if (!string.IsNullOrEmpty(ActiveLeaseOwner())) continue; // tunda
+                if (!Routines.TryGet(s.Routine, out _))
+                {
+                    string nx = Schedules.ComputeNext(s.Kind, s.At, s.Day, s.Minutes, now);
+                    Schedules.UpdateRun(s.Name, s.LastRun, "rutinitas hilang", nx);
+                    _log($"jadwal '{s.Name}': rutinitas '{s.Routine}' tidak ditemukan — dilewati");
+                    continue;
+                }
+                _log($"jadwal '{s.Name}' menjalankan rutinitas '{s.Routine}'");
+                var resp = Route(new Request
+                {
+                    Method = "POST", Path = "/routines/run", Query = "",
+                    Body = "{\"name\":" + JsonSerializer.Serialize(s.Routine) + "}",
+                });
+                if (resp.Status == 429) continue; // balapan sewa — coba putaran berikut
+                string status = resp.Status == 200 ? "sukses" : "gagal";
+                string nx2 = Schedules.ComputeNext(s.Kind, s.At, s.Day, s.Minutes, DateTime.Now);
+                Schedules.UpdateRun(s.Name, Schedules.Iso(DateTime.Now), status, nx2);
+                _log($"jadwal '{s.Name}' selesai: {status} (HTTP {resp.Status})");
+            }
+        }
+        catch { /* mesin jadwal tidak boleh menjatuhkan server */ }
+    }
+
+    /// <summary>
+    /// Jalankan satu aksi batch sebagai sub-permintaan internal
+    /// (dipakai jalur utama /batch dan jalur fallback Recovery).
+    /// Mengembalikan (status HTTP, hasil terurai).
+    /// </summary>
+    private (int Status, object Parsed) RunBatchAction(JsonElement act, string doName)
+    {
+        var subReq = new Request
+        {
+            Method = "POST",
+            Path = "/" + doName.Replace('_', '/'),
+            Query = "",
+            Body = act.GetRawText(),
+        };
+        if (doName == "ocr")
+        {
+            subReq.Method = "GET";
+            subReq.Query = "x=" + GetInt(act, "x", 0) +
+                           "&y=" + GetInt(act, "y", 0) +
+                           "&w=" + GetInt(act, "w", 0) +
+                           "&h=" + GetInt(act, "h", 0);
+            subReq.Body = "";
+        }
+        Response subResp;
+        try { subResp = Route(subReq); }
+        catch (Exception ex)
+        {
+            return (500, new Dictionary<string, object>
+            {
+                ["ok"] = false, ["error"] = ex.Message,
+            });
+        }
+        object parsed;
+        string rawText = Encoding.UTF8.GetString(subResp.BodyBytes);
+        try
+        {
+            using (var rd = JsonDocument.Parse(rawText))
+                parsed = rd.RootElement.Clone();
+        }
+        catch { parsed = rawText; }
+        return (subResp.Status, parsed);
+    }
+
+    /// <summary>
+    /// Verification Engine (v5.6.0): polling satu kondisi desktop
+    /// sampai terbukti atau timeout. Kind: text (OCR wilayah),
+    /// uia (nama elemen), value (nilai elemen bernama), window
+    /// (judul jendela), process (proses jalan/hilang), stable
+    /// (layar tidak berubah selama stableMs), file (berkas ada,
+    /// opsional minSize). Mesin yang sama dipakai /verify dan
+    /// field "verify" per aksi di /batch.
+    /// </summary>
+    private bool VerifyPoll(JsonElement verify, Action heartbeat, out string detail)
+    {
+        string kind = GetString(verify, "kind", "text");
+        int timeoutMs = GetInt(verify, "timeoutMs", 3000);
+        if (timeoutMs < 250) timeoutMs = 250;
+        if (timeoutMs > 30000) timeoutMs = 30000;
+        detail = "";
+        var sw = Stopwatch.StartNew();
+        string lastHash = null;
+        long stableSince = -1;
+        while (true)
+        {
+            try { heartbeat?.Invoke(); } catch { /* denyut sewa — abaikan */ }
+            bool met = false;
+            try { met = EvalVerifyOnce(kind, verify, ref lastHash, ref stableSince, sw, out detail); }
+            catch { /* kondisi belum terbaca — lanjut polling */ }
+            if (met) return true;
+            if (sw.ElapsedMilliseconds >= timeoutMs) return false;
+            Thread.Sleep(250);
+        }
+    }
+
+    private bool EvalVerifyOnce(string kind, JsonElement v,
+        ref string lastHash, ref long stableSince, Stopwatch sw, out string detail)
+    {
+        detail = "";
+        string text = GetString(v, "text", "");
+        switch (kind)
+        {
+            case "text":
+            {
+                var scr = NativeInput.PrimaryBounds();
+                int x = GetInt(v, "x", 0), y = GetInt(v, "y", 0);
+                int w = GetInt(v, "w", 0), h = GetInt(v, "h", 0);
+                var region = (w > 0 && h > 0) ? new Rectangle(x, y, w, h) : scr;
+                using (var bmp = CaptureRegionBitmap(region, 0, out var eff))
+                {
+                    var rr = OcrReader.Read(bmp, eff.X, eff.Y);
+                    detail = rr.Text == null ? "" :
+                        (rr.Text.Length > 80 ? rr.Text.Substring(0, 80) : rr.Text);
+                    return rr.Text != null &&
+                        rr.Text.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+            }
+            case "uia":
+            {
+                var items = OnUi(() => UiaScan.ScanForeground(200));
+                foreach (var it in items)
+                    if (it.Name.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0)
+                    { detail = it.Name; return true; }
+                detail = "elemen tak ditemukan";
+                return false;
+            }
+            case "value":
+            {
+                string name = GetString(v, "name", text);
+                string want = GetString(v, "value", "");
+                bool exact = GetBool(v, "exact", false);
+                var items = OnUi(() => UiaScan.ScanForeground(300));
+                foreach (var it in items)
+                {
+                    if (it.Name.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    detail = it.Value ?? "";
+                    return exact
+                        ? string.Equals((it.Value ?? "").Trim(), want.Trim(), StringComparison.OrdinalIgnoreCase)
+                        : (it.Value ?? "").IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+                detail = "elemen tak ditemukan";
+                return false;
+            }
+            case "window":
+            {
+                var wins = OnUi(NativeInput.ListWindows);
+                foreach (var win in wins)
+                    if (win.Title.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0)
+                    { detail = win.Title; return true; }
+                detail = "jendela tak ditemukan";
+                return false;
+            }
+            case "process":
+            {
+                string pname = GetString(v, "process", text);
+                if (pname.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    pname = pname.Substring(0, pname.Length - 4);
+                bool exists = false;
+                try { exists = Process.GetProcessesByName(pname).Length > 0; } catch { }
+                detail = exists ? "proses berjalan" : "proses tidak ada";
+                return GetBool(v, "gone", false) ? !exists : exists;
+            }
+            case "stable":
+            {
+                int stableMs = GetInt(v, "stableMs", 600);
+                var scr = NativeInput.PrimaryBounds();
+                int x = GetInt(v, "x", 0), y = GetInt(v, "y", 0);
+                int w = GetInt(v, "w", 0), h = GetInt(v, "h", 0);
+                var region = (w > 0 && h > 0) ? new Rectangle(x, y, w, h) : scr;
+                string hash;
+                using (var bmp = CaptureRegionBitmap(region, 320, out var eff2))
+                using (var ms = new MemoryStream())
+                {
+                    bmp.Save(ms, ImageFormat.Jpeg);
+                    var bytes = ms.ToArray();
+                    using (var md5 = MD5.Create())
+                        hash = Convert.ToBase64String(md5.ComputeHash(bytes));
+                }
+                if (hash == lastHash)
+                {
+                    if (stableSince < 0) stableSince = sw.ElapsedMilliseconds;
+                    detail = "layar stabil";
+                    return sw.ElapsedMilliseconds - stableSince >= stableMs;
+                }
+                lastHash = hash;
+                stableSince = -1;
+                detail = "layar masih berubah";
+                return false;
+            }
+            case "file":
+            {
+                string path = GetString(v, "path", "");
+                if (path.Length == 0) { detail = "path kosong"; return false; }
+                if (!File.Exists(path)) { detail = "berkas belum ada"; return false; }
+                long len = 0;
+                try { len = new FileInfo(path).Length; } catch { }
+                detail = "berkas ada (" + len + " byte)";
+                int minSize = GetInt(v, "minSize", 0);
+                return minSize <= 0 || len >= minSize;
+            }
+            default:
+                detail = "kind verify tak dikenal: " + kind;
+                return false;
+        }
     }
 
     /// <summary>Lepas semua tombol yang ditahan /keydown (v3.6.0).</summary>
@@ -1215,6 +1482,22 @@ public sealed class AgentServer
                 });
             }
 
+            if (req.Method == "GET" && req.Path == "/schedules")
+            {
+                // Daftar jadwal tersimpan (v5.6.0 — Scheduler
+                // Engine), lengkap dengan slot berikutnya dan
+                // catatan jalan terakhir.
+                _onActivity();
+                var daftarJ = new List<object>();
+                foreach (var rowJ in Schedules.List())
+                    daftarJ.Add(Schedules.RowJson(rowJ));
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["schedules"] = daftarJ,
+                });
+            }
+
             if (req.Method == "GET" && req.Path == "/state")
             {
                 _onActivity();
@@ -2113,6 +2396,210 @@ public sealed class AgentServer
                             catch { /* respons batch bukan JSON — teruskan apa adanya */ }
                             return respBatch;
                         }
+                        case "/verify":
+                        {
+                            // Verification Engine mandiri (v5.6.0):
+                            // buktikan satu kondisi desktop sekarang
+                            // juga — {kind, text/process/path/value,
+                            // timeoutMs} atau dibungkus {"verify":{…}}.
+                            // Mesin yang sama dengan field "verify"
+                            // per aksi di /batch.
+                            JsonElement vRoot = root;
+                            if (root.TryGetProperty("verify", out var vWrap) &&
+                                vWrap.ValueKind == JsonValueKind.Object) vRoot = vWrap;
+                            var swV = Stopwatch.StartNew();
+                            bool met = VerifyPoll(vRoot, null, out string det);
+                            _log($"verify {GetString(vRoot, "kind", "text")}: {(met ? "TERPENUHI" : "tidak terbukti")} ({swV.ElapsedMilliseconds}ms)");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["met"] = met,
+                                ["kind"] = GetString(vRoot, "kind", "text"),
+                                ["detail"] = det ?? "",
+                                ["waitedMs"] = (int)swV.ElapsedMilliseconds,
+                            });
+                        }
+                        case "/schedules/save":
+                        {
+                            // Simpan jadwal (v5.6.0 — Scheduler
+                            // Engine): {name, routine, kind:
+                            // daily|weekly|interval|once, at, day,
+                            // minutes, enabled}. Tersimpan di SQLite
+                            // (Schedules); slot berikutnya dihitung
+                            // sekarang dan dikembalikan.
+                            string nama = GetString(root, "name", "").Trim();
+                            if (!ValidRoutineName(nama))
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "nama jadwal tidak sah (1-40 huruf/angka/spasi/_/-)",
+                                }, 400);
+                            string routine = GetString(root, "routine", "").Trim();
+                            if (!Routines.TryGet(routine, out _))
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "rutinitas '" + routine + "' tidak ditemukan",
+                                }, 400);
+                            string kind = GetString(root, "kind", "").Trim().ToLowerInvariant();
+                            string at = GetString(root, "at", "").Trim();
+                            int day = GetInt(root, "day", -1);
+                            int minutes = GetInt(root, "minutes", 0);
+                            string errPola = null;
+                            switch (kind)
+                            {
+                                case "daily":
+                                    if (!Schedules.TryHm(at, out var hmD)) errPola = "at wajib format HH:mm";
+                                    else at = hmD.Hours.ToString("D2") + ":" + hmD.Minutes.ToString("D2");
+                                    break;
+                                case "weekly":
+                                    if (!Schedules.TryHm(at, out var hmW)) errPola = "at wajib format HH:mm";
+                                    else at = hmW.Hours.ToString("D2") + ":" + hmW.Minutes.ToString("D2");
+                                    if (day < 0 || day > 6) errPola = "day wajib 0-6 (0=Minggu)";
+                                    break;
+                                case "interval":
+                                    if (minutes < 1 || minutes > 10080) errPola = "minutes wajib 1-10080";
+                                    break;
+                                case "once":
+                                    if (!DateTime.TryParse(at, out var tOnce)) errPola = "at wajib tanggal-waktu ISO";
+                                    else if (tOnce <= DateTime.Now) errPola = "jadwal sekali di masa lalu tidak bisa disimpan";
+                                    else at = Schedules.Iso(tOnce);
+                                    break;
+                                default:
+                                    errPola = "kind wajib daily|weekly|interval|once";
+                                    break;
+                            }
+                            if (errPola != null)
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false, ["error"] = errPola,
+                                }, 400);
+                            var lama = Schedules.Get(nama);
+                            var baris = new Schedules.Row
+                            {
+                                Name = nama,
+                                Routine = routine,
+                                Kind = kind,
+                                At = at,
+                                Day = day,
+                                Minutes = minutes,
+                                Enabled = GetBool(root, "enabled", lama == null || lama.Enabled),
+                                LastRun = lama != null ? lama.LastRun : "",
+                                LastStatus = lama != null ? lama.LastStatus : "",
+                                NextRun = Schedules.ComputeNext(kind, at, day, minutes, DateTime.Now),
+                            };
+                            Schedules.Save(baris);
+                            _onActivity();
+                            _log($"jadwal '{nama}' disimpan ({kind} → rutinitas '{routine}', berikutnya {baris.NextRun})");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["name"] = nama,
+                                ["nextRun"] = baris.NextRun,
+                            });
+                        }
+                        case "/schedules/delete":
+                        {
+                            string nama = GetString(root, "name", "").Trim();
+                            bool ada = Schedules.Delete(nama);
+                            _onActivity();
+                            _log($"jadwal '{nama}' dihapus: {ada}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["deleted"] = ada,
+                            });
+                        }
+                        case "/schedules/toggle":
+                        {
+                            string nama = GetString(root, "name", "").Trim();
+                            bool enabled = GetBool(root, "enabled", true);
+                            bool ada = Schedules.SetEnabled(nama, enabled);
+                            _onActivity();
+                            _log($"jadwal '{nama}' {(enabled ? "diaktifkan" : "dimatikan")}: {ada}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = true,
+                                ["found"] = ada,
+                                ["enabled"] = enabled,
+                            });
+                        }
+                        case "/media/probe":
+                        {
+                            // Probe metadata berkas media (v5.6.0).
+                            string path = GetString(root, "path", "").Trim();
+                            if (path.Length == 0 || !File.Exists(path))
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false, ["error"] = "berkas tidak ditemukan: " + path,
+                                }, 400);
+                            var hasil = MediaTools.Probe(path);
+                            return Response.JsonObject(hasil,
+                                hasil.TryGetValue("ok", out var okP) && okP is bool bP && bP ? 200 : 400);
+                        }
+                        case "/media/thumb":
+                        {
+                            // Thumbnail satu bingkai (v5.6.0):
+                            // {path, atSec, out}.
+                            string path = GetString(root, "path", "").Trim();
+                            string outP = GetString(root, "out", "").Trim();
+                            if (path.Length == 0 || !File.Exists(path) || outP.Length == 0)
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false, ["error"] = "path/out wajib dan berkas masukan harus ada",
+                                }, 400);
+                            int toMs = GetInt(root, "timeoutMs", 120000);
+                            if (toMs < 5000) toMs = 5000;
+                            if (toMs > 300000) toMs = 300000;
+                            var hasil = MediaTools.Thumb(path, GetDouble(root, "atSec", 1), outP, toMs);
+                            return Response.JsonObject(hasil,
+                                hasil.TryGetValue("ok", out var okT) && okT is bool bT && bT ? 200 : 400);
+                        }
+                        case "/media/trim":
+                        {
+                            // Potong berkas media (v5.6.0): {path,
+                            // start, duration|end, out, copy}.
+                            string path = GetString(root, "path", "").Trim();
+                            string outP = GetString(root, "out", "").Trim();
+                            double start = GetDouble(root, "start", 0);
+                            double dur = GetDouble(root, "duration", 0);
+                            if (dur <= 0)
+                            {
+                                double end = GetDouble(root, "end", 0);
+                                if (end > start) dur = end - start;
+                            }
+                            if (path.Length == 0 || !File.Exists(path) || outP.Length == 0 || dur <= 0)
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false, ["error"] = "path/out wajib, berkas harus ada, duration (atau end) harus > start",
+                                }, 400);
+                            int toMs = GetInt(root, "timeoutMs", 120000);
+                            if (toMs < 5000) toMs = 5000;
+                            if (toMs > 300000) toMs = 300000;
+                            var hasil = MediaTools.Trim(path, start, dur, outP,
+                                GetBool(root, "copy", false), toMs);
+                            return Response.JsonObject(hasil,
+                                hasil.TryGetValue("ok", out var okTr) && okTr is bool bTr && bTr ? 200 : 400);
+                        }
+                        case "/media/convert":
+                        {
+                            // Konversi berkas media (v5.6.0):
+                            // {path, out} — codec menurut ekstensi
+                            // tujuan (.wav = PCM siap Whisper).
+                            string path = GetString(root, "path", "").Trim();
+                            string outP = GetString(root, "out", "").Trim();
+                            if (path.Length == 0 || !File.Exists(path) || outP.Length == 0)
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false, ["error"] = "path/out wajib dan berkas masukan harus ada",
+                                }, 400);
+                            int toMs = GetInt(root, "timeoutMs", 120000);
+                            if (toMs < 5000) toMs = 5000;
+                            if (toMs > 300000) toMs = 300000;
+                            var hasil = MediaTools.Convert(path, outP, toMs);
+                            return Response.JsonObject(hasil,
+                                hasil.TryGetValue("ok", out var okC) && okC is bool bC && bC ? 200 : 400);
+                        }
                         case "/batch":
                         {
                             // Rangkaian aksi dalam SATU panggilan
@@ -2219,6 +2706,41 @@ public sealed class AgentServer
                                     if (stopOnError) break;
                                     continue;
                                 }
+                                // Verification + Recovery (v5.6.0):
+                                // field opsional per aksi — "verify"
+                                // (kondisi yang harus terbukti sesudah
+                                // aksi jalan), "retry" {times, delayMs}
+                                // (ulang aksi+verifikasi dengan jeda
+                                // membesar), "fallback" (aksi cadangan
+                                // bila percobaan terakhir tetap gagal).
+                                JsonElement verifyEl = default;
+                                bool hasVerify = action.TryGetProperty("verify", out verifyEl) &&
+                                                   verifyEl.ValueKind == JsonValueKind.Object;
+                                int retryTimes = 0;
+                                int retryDelayMs = 500;
+                                if (action.TryGetProperty("retry", out var retryEl) &&
+                                    retryEl.ValueKind == JsonValueKind.Object)
+                                {
+                                    retryTimes = GetInt(retryEl, "times", 0);
+                                    if (retryTimes < 0) retryTimes = 0;
+                                    if (retryTimes > 5) retryTimes = 5;
+                                    retryDelayMs = GetInt(retryEl, "delayMs", 500);
+                                    if (retryDelayMs < 0) retryDelayMs = 0;
+                                    if (retryDelayMs > 10000) retryDelayMs = 10000;
+                                }
+                                JsonElement fallbackEl = default;
+                                bool hasFallback = action.TryGetProperty("fallback", out fallbackEl) &&
+                                                     fallbackEl.ValueKind == JsonValueKind.Object;
+                                int attempts = 0;
+                                bool okFinal = false;
+                                bool recovered = false;
+                                bool? verified = null;
+                                string verifyDetail = null;
+                                int lastStatus = 0;
+                                object lastParsed = null;
+                                while (true)
+                                {
+                                    attempts++;
                                 // "uia_click" diterima sebagai alias /uia/click.
                                 string subPath = "/" + doName.Replace('_', '/');
                                 var subReq = new Request
@@ -2260,14 +2782,66 @@ public sealed class AgentServer
                                         parsed = rd.RootElement.Clone();
                                 }
                                 catch { parsed = rawText; }
-                                results.Add(new Dictionary<string, object>
+                                lastStatus = subResp.Status;
+                                lastParsed = parsed;
+                                bool stepOk = subResp.Status < 400;
+                                if (hasVerify)
+                                {
+                                    bool metV = VerifyPoll(verifyEl, () => TouchLease(leaseOwner), out string detV);
+                                    verified = metV;
+                                    verifyDetail = detV;
+                                    stepOk = stepOk && metV;
+                                }
+                                if (stepOk) { okFinal = true; break; }
+                                if (attempts > retryTimes) break;
+                                if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
+                                retryDelayMs = Math.Min(retryDelayMs * 2, 10000);
+                                TouchLease(leaseOwner);
+                                }
+                                // Recovery: aksi cadangan dicoba sekali
+                                // bila aksi utama tetap gagal sesudah
+                                // semua percobaan ulang (BUKAN undo —
+                                // hanya jalan pintas pemulihan).
+                                if (!okFinal && hasFallback)
+                                {
+                                    string fbName = GetString(fallbackEl, "do", "");
+                                    if (fbName != "" && fbName != "batch" && fbName != "sleep")
+                                    {
+                                        var fb = RunBatchAction(fallbackEl, fbName);
+                                        bool fbOk = fb.Status < 400;
+                                        if (fbOk && fallbackEl.TryGetProperty("verify", out var fbVerify) &&
+                                            fbVerify.ValueKind == JsonValueKind.Object)
+                                        {
+                                            bool metF = VerifyPoll(fbVerify, () => TouchLease(leaseOwner), out string detF);
+                                            verified = metF;
+                                            verifyDetail = detF;
+                                            fbOk = metF;
+                                        }
+                                        if (fbOk)
+                                        {
+                                            recovered = true;
+                                            okFinal = true;
+                                            lastStatus = fb.Status;
+                                            lastParsed = fb.Parsed;
+                                        }
+                                    }
+                                }
+                                var hasilAksi = new Dictionary<string, object>
                                 {
                                     ["do"] = doName,
-                                    ["status"] = subResp.Status,
-                                    ["result"] = parsed,
-                                });
+                                    ["status"] = lastStatus,
+                                    ["result"] = lastParsed,
+                                };
+                                if (retryTimes > 0) hasilAksi["attempts"] = attempts;
+                                if (hasVerify)
+                                {
+                                    hasilAksi["verified"] = verified ?? false;
+                                    if (verifyDetail != null) hasilAksi["verifyDetail"] = verifyDetail;
+                                }
+                                if (recovered) hasilAksi["recovered"] = true;
+                                results.Add(hasilAksi);
                                 doneCount++;
-                                if (subResp.Status >= 400 && stopOnError) break;
+                                if (!okFinal && stopOnError) break;
                             }
                             _onActivity();
                             _log($"batch: {doneCount} aksi dijalankan");
@@ -5689,6 +6263,8 @@ public sealed class AgentServer
             ["eventsLastSeq"] = EventLog.LastSeq,
             ["foreground"] = fgTitle,
             ["ai"] = AiBridge.HealthInfo(), // v5.4.0: status sidecar AI visual (GPU)
+            ["media"] = MediaTools.HealthInfo(), // v5.6.0: FFmpeg untuk /media/*
+            ["scheduler"] = Schedules.HealthInfo(), // v5.6.0: ringkasan mesin jadwal
         };
     }
 

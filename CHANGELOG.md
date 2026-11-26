@@ -3,6 +3,69 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.6.0 — 2026-11-26
+
+Paket "upgrade yang bisa di-upgrade" (perintah user) + koreksi
+audit tampilan di hari yang sama: tiga engine baru di server
+(Verification, Recovery, Scheduler), perkakas media FFmpeg,
+penyimpanan SQLite, dan ikon aplikasi BARU menggantikan logo
+lama di semua permukaan Windows.
+
+### Baru / berubah
+- **Verification Engine** — field opsional per aksi di /batch:
+  `"verify":{kind, ...}` membuktikan hasil aksi sebelum dianggap
+  berhasil (kind: text=OCR wilayah, uia=nama elemen, value=nilai
+  elemen bernama, window=judul jendela, process=proses
+  jalan/hilang, stable=layar diam selama stableMs, file=berkas
+  ada/minSize). Hasil per langkah kini membawa `verified` +
+  `verifyDetail`. Endpoint mandiri **POST /verify** memakai
+  mesin yang sama. Rutinitas otomatis ikut terverifikasi karena
+  /routines/run berjalan di atas /batch.
+- **Recovery Engine** — field `"retry":{times, delayMs}` per
+  aksi (aksi+verifikasi diulang, jeda membesar ×2) dan
+  `"fallback":{aksi}` (aksi cadangan dicoba sekali bila tetap
+  gagal; hasilnya ditandai `recovered:true`). Jujur: ini jalan
+  pintas pemulihan, BUKAN undo.
+- **Scheduler Engine** — jadwal tersimpan menjalankan rutinitas
+  bernama: pola daily (HH:mm), weekly (hari + HH:mm), interval
+  (tiap N menit), once (tanggal-waktu). Endpoint GET /schedules,
+  POST /schedules/save|delete|toggle. Aturan aman: slot lewat
+  >15 menit (PC mati) dicatat "terlewat" dan dilompati, tidak
+  dikejar; input ter-halt/ tersewa → ditunda. /health melaporkan
+  `scheduler` (jumlah, aktif, slot terdekat).
+- **Penyimpanan SQLite** — jadwal disimpan di
+  %LOCALAPPDATA%\Jembatan\schedules.db lewat
+  Microsoft.Data.Sqlite (keputusan tool ronde ini: SQLite =
+  jalur upgrade penyimpanan terstruktur; JSON Routines tetap).
+- **Perkakas media FFmpeg** — POST /media/probe (metadata
+  ffprobe), /media/thumb (satu bingkai → gambar), /media/trim
+  (potong; copy tanpa encode atau H.264/AAC), /media/convert
+  (menurut ekstensi tujuan; .wav = PCM 16 kHz mono siap
+  Whisper). Proses berargumen rapi tanpa shell, berbatas waktu.
+  /health melaporkan `media` (ffmpeg/ffprobe/versi).
+- **ripgrep di PC** — dipasang via WinGet bersamaan ronde ini
+  (pencarian teks dalam berkas secepat Everything untuk nama).
+
+### Koreksi tampilan (audit 26 Nov)
+- **Ikon aplikasi BARU** — icon.ico digambar ulang persis spec
+  logo Figma (rangka cyan tegak + rangka violet 45° + titik
+  emas di atas ubin gelap #1A2330), 8 ukuran digambar native
+  (16–256). Karena tray mengambil ikon dari exe dan pintasan
+  desktop + ikon setup mengikuti berkas yang sama, SATU
+  penggantian ini memperbarui tray, taskbar, desktop, dan
+  setup sekaligus — sebelumnya semuanya masih logo rantai
+  ungu-lavender lama (temuan user sendiri).
+- **Maximized tidak lagi tertutup taskbar** — WM_GETMINMAXINFO
+  dibelokkan ke area kerja monitor; isi bawah Console/Desktop/
+  Activity yang dulu kepotong kini tampil penuh.
+- **Grafik System Monitor mengalir terus** — riwayat CPU/RAM
+  kini diisi sampler latar bersama (tiap 2 dtk) sejak halaman
+  pertama dibuka, bukan hanya selama halaman tampil; grafik
+  tidak lagi tampak kosong.
+- Nama perangkat "余呉" di Settings BUKAN bug: nama Windows PC
+  ini memang dua karakter itu (terverifikasi dari
+  MachineName/hostname) — aplikasi menampilkannya dengan benar.
+
 ## 5.5.0 — 2026-11-26
 
 Paket "semua" (perintah user): empat upgrade visual/suara GPU
