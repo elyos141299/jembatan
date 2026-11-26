@@ -422,6 +422,33 @@ public static class NativeInput
     /// False + error bila perangkat sintetis gagal dibuat
     /// atau suntikan ditolak sistem.
     /// </summary>
+    private static uint _penFrameId;
+
+    private static bool InjectPenFrame(uint flags, int x, int y, uint pressure)
+    {
+        var info = new PointerPenInfo
+        {
+            PointerInfo = new PointerInfo
+            {
+                PointerType = PtPen,
+                PointerId = 1,
+                FrameId = ++_penFrameId,
+                PointerFlags = flags,
+                PtPixelLocation = new PointNative { X = x, Y = y },
+                PtPixelLocationRaw = new PointNative { X = x, Y = y },
+                DwTime = (uint)(Environment.TickCount64 & 0xFFFFFFFF),
+                HistoryCount = 1,
+            },
+            PenFlags = PenFlagNone,
+            PenMask = PenMaskPressure,
+            Pressure = pressure,
+            Rotation = 0,
+            TiltX = 0,
+            TiltY = 0,
+        };
+        return InjectSyntheticPointerInput(_penDevice, new[] { info }, 1);
+    }
+
     public static bool PenStroke(IReadOnlyList<(int X, int Y, int Pressure)> pts, int stepMs, out string error)
     {
         error = "";
@@ -437,6 +464,22 @@ public static class NativeInput
                 return false;
             }
         }
+        // v5.11.1: bingkai HOVER pembuka di titik pertama
+        // (pena "mendekat" dulu sebelum menyentuh) + cap
+        // waktu & nomor bingkai yang hidup di semua
+        // bingkai — di v5.11.0 keduanya nol sehingga
+        // Krita menggabung seluruh goresan jadi satu
+        // kejadian (palet pop-up + satu titik liar).
+        var first = pts[0];
+        for (int h = 0; h < 2; h++)
+        {
+            if (!InjectPenFrame(PfInRange | PfPrimary | PfUpdate, first.X, first.Y, 0))
+            {
+                error = "InjectSyntheticPointerInput gagal di hover pembuka (err " + Marshal.GetLastWin32Error() + ")";
+                return false;
+            }
+            if (stepMs > 0) Thread.Sleep(stepMs);
+        }
         for (int i = 0; i < pts.Count; i++)
         {
             var p = pts[i];
@@ -445,30 +488,17 @@ public static class NativeInput
             if (i == 0) flags = PfNew | PfInRange | PfInContact | PfFirstButton | PfPrimary | PfDown;
             else if (i == pts.Count - 1) flags = PfInRange | PfPrimary | PfUp;
             else flags = PfInRange | PfInContact | PfFirstButton | PfPrimary | PfUpdate;
-            var info = new PointerPenInfo
-            {
-                PointerInfo = new PointerInfo
-                {
-                    PointerType = PtPen,
-                    PointerId = 1,
-                    PointerFlags = flags,
-                    PtPixelLocation = new PointNative { X = p.X, Y = p.Y },
-                    PtPixelLocationRaw = new PointNative { X = p.X, Y = p.Y },
-                },
-                PenFlags = PenFlagNone,
-                PenMask = PenMaskPressure,
-                Pressure = (uint)(flags == (PfInRange | PfPrimary | PfUp) ? 0 : pressure),
-                Rotation = 0,
-                TiltX = 0,
-                TiltY = 0,
-            };
-            if (!InjectSyntheticPointerInput(_penDevice, new[] { info }, 1))
+            uint pr = i == pts.Count - 1 ? 0u : (uint)pressure;
+            if (!InjectPenFrame(flags, p.X, p.Y, pr))
             {
                 error = "InjectSyntheticPointerInput gagal di titik " + i + " (err " + Marshal.GetLastWin32Error() + ")";
                 return false;
             }
             if (stepMs > 0 && i < pts.Count - 1) Thread.Sleep(stepMs);
         }
+        // Bingkai hover penutup: pena terangkat & menjauh.
+        var lastPt = pts[pts.Count - 1];
+        InjectPenFrame(PfInRange | PfPrimary | PfUpdate, lastPt.X, lastPt.Y, 0);
         return true;
     }
 

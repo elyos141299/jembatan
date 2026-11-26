@@ -4740,21 +4740,56 @@ public sealed class AgentServer
                             bool keepClip = GetBool(root, "keepClipboard", false);
                             OnUi(() =>
                             {
-                                System.Windows.IDataObject savedClip = null;
+                                // Potret clipboard PER FORMAT
+                                // (v5.11.1): objek IDataObject
+                                // mentah dari GetDataObject tidak
+                                // andal dipasang ulang (terbukti
+                                // clipboard jadi KOSONG sesudah
+                                // restore di v5.11.0) — simpan
+                                // DATA konkretnya, prioritas
+                                // FileDrop > gambar > teks.
+                                System.Collections.Specialized.StringCollection savedFiles = null;
+                                System.Windows.Media.Imaging.BitmapSource savedImage = null;
+                                string savedText = null;
+                                bool hasSaved = false;
                                 if (!keepClip)
                                 {
-                                    try { savedClip = System.Windows.Clipboard.GetDataObject(); }
-                                    catch { savedClip = null; }
+                                    try
+                                    {
+                                        if (System.Windows.Clipboard.ContainsFileDropList())
+                                        {
+                                            savedFiles = System.Windows.Clipboard.GetFileDropList();
+                                            hasSaved = savedFiles != null && savedFiles.Count > 0;
+                                        }
+                                        else if (System.Windows.Clipboard.ContainsImage())
+                                        {
+                                            savedImage = System.Windows.Clipboard.GetImage();
+                                            hasSaved = savedImage != null;
+                                        }
+                                        else if (System.Windows.Clipboard.ContainsText())
+                                        {
+                                            savedText = System.Windows.Clipboard.GetText();
+                                            hasSaved = savedText != null;
+                                        }
+                                    }
+                                    catch { hasSaved = false; }
                                 }
                                 SetClipboardText(text);
                                 NativeInput.PressKey("^v"); // Ctrl+V di jendela yang sedang fokus
-                                if (savedClip != null)
+                                if (hasSaved)
                                 {
                                     // Beri aplikasi tujuan waktu
                                     // membaca clipboard sebelum
                                     // isinya dipulihkan.
                                     Thread.Sleep(250);
-                                    try { System.Windows.Clipboard.SetDataObject(savedClip, true); }
+                                    try
+                                    {
+                                        var data = new System.Windows.DataObject();
+                                        if (savedFiles != null) data.SetFileDropList(savedFiles);
+                                        else if (savedImage != null) data.SetImage(savedImage);
+                                        else data.SetText(savedText);
+                                        System.Windows.Clipboard.SetDataObject(data, true);
+                                    }
                                     catch { /* clipboard gagal dipulihkan — tempel tetap sah */ }
                                 }
                                 return true;

@@ -11,9 +11,9 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>5.11.0</Version>
-    <AssemblyVersion>5.11.0.0</AssemblyVersion>
-    <FileVersion>5.11.0.0</FileVersion>
+    <Version>5.11.1</Version>
+    <AssemblyVersion>5.11.1.0</AssemblyVersion>
+    <FileVersion>5.11.1.0</FileVersion>
     <!-- Loader native (SQLite dsb.) harus ikut ter-extract dari
          berkas tunggal hasil publish. Paket WebView2 DICABUT di
          v5.8.0 (perintah user: tampilan v1 tanpa WebView2) —

@@ -3,6 +3,26 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.11.1 — 2026-11-26
+
+Dua obat dari baterai tes v5.11.0 (approv user "Gas
+v5.11.1" 26 Nov 2026):
+- /paste: pemulihan clipboard kini POTRET PER FORMAT
+  (FileDrop > gambar > teks, data konkret disimpan lalu
+  dipasang ulang sebagai DataObject baru). Cara lama
+  (memasang ulang objek IDataObject mentah) terbukti
+  membuat clipboard KOSONG sesudah tempel.
+- /penstroke: semua bingkai pena kini membawa cap waktu
+  (DwTime) & nomor bingkai (FrameId) yang hidup, plus
+  bingkai hover pembuka/penutup. Di 5.11.0 keduanya nol
+  sehingga Krita menggabung satu goresan jadi satu
+  kejadian (palet pop-up + satu titik liar, tanpa garis).
+- Catatan vonis baterai tes: kerusakan huruf acak /type
+  pada teks panjang terbukti berasal dari tumpukan teks
+  Notepad Win11 (teks sama PERSIS ke omnibox Chrome &
+  via /paste) — bukan cacat pengiriman; untuk teks
+  persis ke editor TSF gunakan /paste.
+
 ## 5.11.0 — 2026-11-26
 
 "Upgrade Tangan: Tiga Jalur Kendali + Tekanan Kuas"
