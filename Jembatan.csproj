@@ -11,18 +11,15 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>5.7.1</Version>
-    <AssemblyVersion>5.7.1.0</AssemblyVersion>
-    <FileVersion>5.7.1.0</FileVersion>
-    <!-- WebView2 (panel chat v2.2): loader native-nya harus ikut
-         ter-extract dari berkas tunggal hasil publish, kalau tidak
-         panel chat gagal jalan dari Jembatan.exe single-file. -->
+    <Version>5.8.0</Version>
+    <AssemblyVersion>5.8.0.0</AssemblyVersion>
+    <FileVersion>5.8.0.0</FileVersion>
+    <!-- Loader native (SQLite dsb.) harus ikut ter-extract dari
+         berkas tunggal hasil publish. Paket WebView2 DICABUT di
+         v5.8.0 (perintah user: tampilan v1 tanpa WebView2) —
+         kode sudah tidak memakainya sejak shell WPF v5.0. -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
-  </ItemGroup>
 
   <!-- Sidecar AI visual (v5.4.0): skrip Python pendamping
        (YOLO + EasyOCR di GPU) ikut terbit di samping exe;

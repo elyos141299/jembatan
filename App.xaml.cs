@@ -21,10 +21,10 @@ public sealed class WpfUiHost : IUiHost
 
     public void SetTheme(string choice)
     {
-        // Control Room v5 gelap secara rancangan (brief: tema Dark) —
-        // permintaan tema dari bridge dicatat, tampilan tetap gelap.
+        // Jendela klasik v1 gelap secara rancangan — permintaan
+        // tema dari bridge dicatat, tampilan tetap gelap.
         UiThemeState.IsDark = true;
-        App.Host?.Log("Tema diminta dari bridge: " + choice + " — Control Room tetap gelap.");
+        App.Host?.Log("Tema diminta dari bridge: " + choice + " — tampilan tetap gelap.");
     }
 
     public void ApplyKeepAwake(bool on) => App.Host?.ApplyKeepAwake(on);
@@ -70,16 +70,20 @@ public partial class App : Application
         _tray = new TrayIcon
         {
             StateProvider = () => (Host.Server.IsRunning, Host.Server.InputHalted),
+            SettingsProvider = () => (Host.AutoStartEnabled, Settings.AdminMode, Settings.KeepAwake),
         };
         _tray.OpenRequested += () => win.ShowFromTray();
         _tray.ToggleServerRequested += () => Host.ToggleServer();
         _tray.ToggleStopRequested += () => Host.Server.SetHalt(!Host.Server.InputHalted, "tray");
+        _tray.ToggleAutoStartRequested += () => Host.ApplyAutoStart(!Host.AutoStartEnabled);
+        _tray.ToggleAdminModeRequested += () => Host.ApplyAdminMode(!Settings.AdminMode);
+        _tray.ToggleKeepAwakeRequested += () => Host.ApplyKeepAwake(!Settings.KeepAwake);
         _tray.ExitRequested += ExitApp;
 
         Host.Start();
         var asmVer = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         Host.Log("MuseLink v" + (asmVer != null ? asmVer.ToString(3) : "?")
-            + " dimulai (UI WPF — Tray-First)"
+            + " dimulai (jendela klasik v1 — tray-first)"
             + (Program.StartedAuto ? ", mulai otomatis — jendela tetap di tray." : "."));
         if (Program.ElevationDeclined)
             Host.Log("Mode Administrator ditolak — jalan sebagai pengguna biasa.");

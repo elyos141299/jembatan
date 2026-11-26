@@ -174,33 +174,9 @@ internal static class Settings
         }
     }
 
-    private const string ChatZoomValueName = "ChatZoomPercent";
-
-    /// <summary>Zoom panel chat WebView2 dalam persen (v3.1.0). Bawaan 100, rentang 50–200.</summary>
-    public static int ChatZoomPercent
-    {
-        get
-        {
-            try
-            {
-                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
-                {
-                    if (key?.GetValue(ChatZoomValueName) is int v)
-                        return Math.Min(200, Math.Max(50, v));
-                }
-            }
-            catch { /* anggap bawaan */ }
-            return 100;
-        }
-        set
-        {
-            using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
-            {
-                key?.SetValue(ChatZoomValueName,
-                    Math.Min(200, Math.Max(50, value)), RegistryValueKind.DWord);
-            }
-        }
-    }
+    // Pengaturan zoom panel chat WebView2 (v3.1.0) DICABUT di
+    // v5.8.0 bersama paket WebView2 itu sendiri — panel chat
+    // sudah lama tiada dan aplikasi kini bebas WebView2.
 
     /// <summary>Panel kendali di samping rel terbuka? (v3.0.0) Bawaan terbuka.</summary>
     public static bool PanelOpen

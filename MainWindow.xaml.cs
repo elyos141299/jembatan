@@ -1,237 +1,127 @@
 using System;
-using System.Collections.Generic;
-using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Jembatan;
 
 /// <summary>
-/// Kerangka utama MuseLink — v5.7.0 Tray-First: sidebar 5
-/// halaman (Home, Activity, AI, Settings, About), bar atas
-/// ramping (judul + dua lencana status + tombol jendela), TANPA
-/// panel konteks kanan (duplikat Overview/Activity — dibuang
-/// atas prompt penyederhanaan user 26 Nov 2026). Server,
-/// endpoint &amp; protokol tidak berubah sama sekali.
+/// Jendela MuseLink v5.8.0 — kembali ke tampilan Jembatan v1
+/// (perintah user 26 Nov 2026: "persis seperti pertama kali,
+/// tanpa WebView2"): SATU jendela gelap berisi judul, baris
+/// status, baris port, log aktivitas monospace real-time, dan
+/// tombol PUTUSKAN/SAMBUNGKAN selebar jendela. Tanpa sidebar,
+/// tanpa halaman, tanpa panel. Shell Control Room v5.0–5.7
+/// dipensiunkan; backend &amp; tray tidak berubah.
+/// Warna disampel dari screenshot asli v1: latar #0D1117,
+/// panel log #161B22, hijau #2EA043, merah tombol #B9372D.
+/// Judul jendela &amp; judul besar: "MuseLink" (ketetapan user
+/// saat approv rencana, 26 Nov 14:28).
 /// </summary>
 public partial class MainWindow : Window
 {
-    private readonly Dictionary<string, string> _titles = new Dictionary<string, string>
-    {
-        ["home"] = "Home",
-        ["activity"] = "Activity",
-        ["ai"] = "AI",
-        ["settings"] = "Settings",
-        ["about"] = "About",
-    };
+    private static readonly Brush Green = new SolidColorBrush(Color.FromRgb(0x2E, 0xA0, 0x43));
+    private static readonly Brush Amber = new SolidColorBrush(Color.FromRgb(0xD2, 0x99, 0x22));
+    private static readonly Brush Red = new SolidColorBrush(Color.FromRgb(0xF8, 0x51, 0x49));
 
-    private string _currentPage = "";
-    private readonly Dictionary<string, UserControl> _pages = new Dictionary<string, UserControl>();
-    private IRoomPage _currentRoomPage;
+    private readonly DispatcherTimer _timer;
+    private int _logShown;      // baris log cincin yang sudah ditampilkan
+    private bool _logPrimed;    // pengisian awal selesai?
 
     public MainWindow()
     {
         InitializeComponent();
-
-        // Perbaikan maximized (v5.6.0, dipertahankan): jendela
-        // tanpa bingkai + WindowChrome memenuhi LAYAR PENUH saat
-        // maximized, sehingga isi bawah aplikasi tertutup taskbar
-        // Windows. WM_GETMINMAXINFO dibelokkan agar batas
-        // maximized = AREA KERJA monitor (di luar taskbar).
-        SourceInitialized += (s, e) =>
-        {
-            var src = (HwndSource)PresentationSource.FromVisual(this);
-            if (src != null) src.AddHook(WndProcHook);
-        };
-        var v = Assembly.GetExecutingAssembly().GetName().Version;
-        VersionText.Text = "v" + (v != null ? v.ToString(3) : "5.7.0");
-        NavHome.IsChecked = true;
-
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        timer.Tick += (s, e) => RefreshStatus();
-        timer.Start();
-        RefreshStatus();
-
-        // Perilaku MuseLink sejak lama: tombol X hanya
-        // menyembunyikan ke tray; keluar hanya lewat menu tray.
+        PortText.Text = "Port " + AgentServer.Port
+            + " • Hanya bisa dijangkau lewat jaringan Tailscale kamu — tidak terbuka ke internet.";
         Closing += (s, e) =>
         {
-            if (!App.Exiting)
-            {
-                e.Cancel = true;
-                Hide();
-            }
+            // X = sembunyi ke tray; keluar sungguhan hanya lewat
+            // menu tray (App.ExitApp) — perilaku sejak v2.3.1.
+            if (!App.Exiting) { e.Cancel = true; Hide(); }
         };
-
-        // Startup otomatis (--auto): jendela TIDAK ditampilkan
-        // sama sekali (v5.7.0, instruksi Tray-First user) —
-        // App memang tidak memanggil Show() untuk mode ini,
-        // jadi blok sembunyi-otomatis lama tidak diperlukan.
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _timer.Tick += (s, e) => RefreshAll();
+        _timer.Start();
+        RefreshAll();
     }
 
-    // ---- WM_GETMINMAXINFO: hormati area kerja saat maximized ----
-    private const int WmGetMinMaxInfo = 0x0024;
-    private const int MonitorDefaultToNearest = 2;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct PointL { public int X; public int Y; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RectL { public int Left; public int Top; public int Right; public int Bottom; }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MinMaxInfo
-    {
-        public PointL Reserved;
-        public PointL MaxSize;
-        public PointL MaxPosition;
-        public PointL MinTrackSize;
-        public PointL MaxTrackSize;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MonitorInfo
-    {
-        public int CbSize;
-        public RectL Monitor;
-        public RectL WorkArea;
-        public uint Flags;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo info);
-
-    private IntPtr WndProcHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (msg == WmGetMinMaxInfo)
-        {
-            var mmi = Marshal.PtrToStructure<MinMaxInfo>(lParam);
-            IntPtr mon = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
-            if (mon != IntPtr.Zero)
-            {
-                var mi = new MonitorInfo { CbSize = Marshal.SizeOf<MonitorInfo>() };
-                if (GetMonitorInfo(mon, ref mi))
-                {
-                    mmi.MaxPosition = new PointL
-                    {
-                        X = mi.WorkArea.Left - mi.Monitor.Left,
-                        Y = mi.WorkArea.Top - mi.Monitor.Top,
-                    };
-                    mmi.MaxSize = new PointL
-                    {
-                        X = mi.WorkArea.Right - mi.WorkArea.Left,
-                        Y = mi.WorkArea.Bottom - mi.WorkArea.Top,
-                    };
-                    mmi.MaxTrackSize = mmi.MaxSize;
-                    Marshal.StructureToPtr(mmi, lParam, true);
-                    handled = true;
-                }
-            }
-        }
-        return IntPtr.Zero;
-    }
-
-    /// <summary>Dipanggil ikon tray: tampilkan lagi jendela.</summary>
+    /// <summary>Tampilkan jendela dari tray (berlaku juga walau
+    /// belum pernah ditampilkan — start --auto v5.7.0).</summary>
     public void ShowFromTray()
     {
         Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
+        RefreshAll();
     }
 
-    /// <summary>Navigasi programatik (dipakai tombol Lihat Detail dsb.).</summary>
-    public void NavigateTo(string key)
+    private void ToggleBtn_Click(object sender, RoutedEventArgs e)
+        => App.Host?.ToggleServer();
+
+    private void RefreshAll()
     {
-        foreach (var child in NavPanel.Children)
+        try
         {
-            if (child is RadioButton rb && rb.Tag is string tag && tag == key)
+            var host = App.Host;
+            if (host == null) return;
+            var server = host.Server;
+            bool running = server != null && server.IsRunning;
+            bool halted = server != null && server.InputHalted;
+
+            if (halted)
             {
-                rb.IsChecked = true;
-                return;
+                StatusBox.Fill = Amber;
+                StatusText.Text = "Emergency Stop aktif — Muse terhubung, masukan diblokir";
             }
-        }
-        ShowPage(key);
-    }
-
-    private void Nav_Checked(object sender, RoutedEventArgs e)
-    {
-        if (sender is RadioButton rb && rb.Tag is string key)
-            ShowPage(key);
-    }
-
-    private void ShowPage(string key)
-    {
-        if (key == _currentPage) return;
-        _currentRoomPage?.OnHidden();
-        _currentPage = key;
-        string title = _titles.TryGetValue(key, out var t) ? t : key;
-        PageTitle.Text = title;
-        CrumbText.Text = "MuseLink / " + title;
-        if (!_pages.TryGetValue(key, out var page))
-        {
-            page = key switch
+            else if (running)
             {
-                "home" => new HomePage(),
-                "activity" => new ActivityPage(),
-                "ai" => new AiPage(),
-                "settings" => new SettingsPage(),
-                "about" => new AboutPage(),
-                _ => new HomePage(),
-            };
-            _pages[key] = page;
+                StatusBox.Fill = Green;
+                string last = host.LastActivity == DateTime.MinValue
+                    ? "—" : host.LastActivity.ToString("HH:mm:ss");
+                StatusText.Text = "Muse terhubung • aktivitas terakhir " + last;
+            }
+            else
+            {
+                StatusBox.Fill = Red;
+                StatusText.Text = "Muse terputus — bridge berhenti";
+            }
+
+            ToggleBtn.Content = running ? "PUTUSKAN" : "SAMBUNGKAN";
+            ToggleBtn.Style = (Style)FindResource(running ? "BtnRed" : "BtnGreen");
+
+            RefreshLog(host);
         }
-        PageHost.Content = page;
-        _currentRoomPage = page as IRoomPage;
-        _currentRoomPage?.OnShown();
+        catch { /* pelengkap tampilan — jangan jatuhkan aplikasi */ }
     }
 
-    private void RefreshStatus()
+    private void RefreshLog(AppHost host)
     {
-        var host = App.Host;
-        if (host == null) return;
-        var server = host.Server;
-
-        bool running = server.IsRunning;
-        BridgeDot.Fill = (Brush)FindResource(running ? "CrGreen" : "CrRed");
-        SideBridgeText.Text = running ? "Bridge Connected" : "Bridge Offline";
-        BridgeBadgeDot.Fill = (Brush)FindResource(running ? "CrGreen" : "CrRed");
-        BridgeBadgeText.Text = running ? "Bridge Online" : "Bridge Offline";
-
-        bool halted = server.InputHalted;
-        ClaudeDot.Fill = (Brush)FindResource(halted ? "CrRed" : "CrSage");
-        SideClaudeText.Text = halted ? "Muse Terhenti (Stop)" : "Muse Online";
-        MuseBadgeText.Text = halted ? "Emergency Stop" : "Muse Connected";
-        HaltBanner.Visibility = halted ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void ReleaseStop_Click(object sender, RoutedEventArgs e)
-    {
-        // Pelepasan memang hanya boleh dari aplikasi (aturan server).
-        App.Host?.Server.SetHalt(false, "ui");
-        RefreshStatus();
-    }
-
-    private void TopBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ChangedButton == MouseButton.Left && e.ClickCount == 1)
+        var lines = host.RecentLogLines(300);
+        if (!_logPrimed || lines.Count < _logShown)
         {
-            try { DragMove(); } catch { /* abaikan */ }
+            // Isi awal / cincin terpotong: tulis ulang seluruhnya.
+            LogBox.Clear();
+            foreach (var line in lines) LogBox.AppendText(Render(line));
+            _logPrimed = true;
         }
+        else
+        {
+            for (int i = _logShown; i < lines.Count; i++)
+                LogBox.AppendText(Render(lines[i]));
+        }
+        _logShown = lines.Count;
+        // Ikut turun hanya bila user memang sedang di bawah.
+        if (LogBox.ExtentHeight <= LogBox.ViewportHeight
+            || LogBox.VerticalOffset + LogBox.ViewportHeight >= LogBox.ExtentHeight - 48)
+            LogBox.ScrollToEnd();
     }
 
-    private void MinButton_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-
-    private void MaxButton_Click(object sender, RoutedEventArgs e) =>
-        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+    /// <summary>Baris cincin "HH:mm:ss\tisi" → "[HH:mm:ss] isi".</summary>
+    private static string Render(string line)
+    {
+        int tab = line.IndexOf('\t');
+        if (tab > 0)
+            return "[" + line.Substring(0, tab) + "] " + line.Substring(tab + 1) + "\n";
+        return line + "\n";
+    }
 }

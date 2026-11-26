@@ -7,7 +7,9 @@ namespace Jembatan;
 /// <summary>
 /// Ikon tray MuseLink lewat Win32 Shell_NotifyIcon langsung
 /// (tanpa WinForms): klik ganda membuka jendela, klik kanan menu
-/// asli (Buka / Putuskan-Sambungkan / Emergency Stop / Keluar).
+/// asli (Buka / Putuskan-Sambungkan / Emergency Stop / tiga
+/// saklar pengaturan bercentang / Keluar). Sejak v5.8.0 saklar
+/// pengaturan tinggal di sini — jendela kembali sepolos v1.
 /// Pesan tray diterima lewat HwndSource tersembunyi milik utas UI.
 /// </summary>
 public sealed class TrayIcon : IDisposable
@@ -78,10 +80,17 @@ public sealed class TrayIcon : IDisposable
     public event Action OpenRequested;
     public event Action ToggleServerRequested;
     public event Action ToggleStopRequested;
+    public event Action ToggleAutoStartRequested;
+    public event Action ToggleAdminModeRequested;
+    public event Action ToggleKeepAwakeRequested;
     public event Action ExitRequested;
 
     /// <summary>Keadaan terkini untuk label menu: (bridgeJalan, haltAktif).</summary>
     public Func<(bool running, bool halted)> StateProvider;
+
+    /// <summary>Keadaan tiga saklar pengaturan untuk tanda
+    /// centang menu: (jalanOtomatis, modeAdmin, cegahTidur).</summary>
+    public Func<(bool autoStart, bool adminMode, bool keepAwake)> SettingsProvider;
 
     public TrayIcon()
     {
@@ -164,7 +173,17 @@ public sealed class TrayIcon : IDisposable
             AppendMenu(menu, (uint)(MfString | (halted ? MfChecked : 0)), (UIntPtr)3,
                 halted ? "Lepas Emergency Stop" : "Emergency Stop");
             AppendMenu(menu, MfSeparator, UIntPtr.Zero, null);
-            AppendMenu(menu, MfString, (UIntPtr)4, "Keluar");
+            // Saklar pengaturan (v5.8.0 — pindahan dari halaman
+            // Settings yang dipensiunkan bersama shell v5).
+            var (autoStart, adminMode, keepAwake) = SettingsProvider?.Invoke() ?? (false, false, false);
+            AppendMenu(menu, (uint)(MfString | (autoStart ? MfChecked : 0)), (UIntPtr)5,
+                "Jalan otomatis saat Windows menyala");
+            AppendMenu(menu, (uint)(MfString | (adminMode ? MfChecked : 0)), (UIntPtr)6,
+                "Mode Administrator");
+            AppendMenu(menu, (uint)(MfString | (keepAwake ? MfChecked : 0)), (UIntPtr)7,
+                "Cegah PC tidur");
+            AppendMenu(menu, MfSeparator, UIntPtr.Zero, null);
+            AppendMenu(menu, MfString, (UIntPtr)8, "Keluar");
 
             GetCursorPos(out var pt);
             SetForegroundWindow(_sink.Handle);
@@ -175,7 +194,10 @@ public sealed class TrayIcon : IDisposable
                 case 1: OpenRequested?.Invoke(); break;
                 case 2: ToggleServerRequested?.Invoke(); break;
                 case 3: ToggleStopRequested?.Invoke(); break;
-                case 4: ExitRequested?.Invoke(); break;
+                case 5: ToggleAutoStartRequested?.Invoke(); break;
+                case 6: ToggleAdminModeRequested?.Invoke(); break;
+                case 7: ToggleKeepAwakeRequested?.Invoke(); break;
+                case 8: ExitRequested?.Invoke(); break;
             }
         }
         finally { DestroyMenu(menu); }

@@ -3,6 +3,32 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.8.0 — 2026-11-26
+
+Kembali ke tampilan Jembatan v1 (perintah user: "persis
+seperti pertama kali namun tanpa WebView2", judul jendela
+"MuseLink"). Shell Control Room/Tray-First v5.0–5.7
+dipensiunkan:
+
+- Jendela SATU, gelap, title bar standar Windows: judul
+  "MuseLink", baris status (kotak warna + "Muse terhubung •
+  aktivitas terakhir HH:MM:SS"), baris port persis v1, log
+  aktivitas monospace real-time ([HH:MM:SS] pesan), tombol
+  PUTUSKAN/SAMBUNGKAN selebar jendela. Warna disampel dari
+  screenshot asli v1 (#0D1117 / #161B22 / #2EA043 / #B9372D).
+- 5 halaman WPF (Home, Activity, AI, Settings, About) +
+  UiKit + tema Control Room dihapus. Konsol dalam aplikasi
+  ikut pensiun; jalur bridge untuk agent tidak berubah.
+- Tiga saklar pengaturan (jalan otomatis, Mode Administrator,
+  cegah PC tidur) PINDAH ke menu tray sebagai item bercentang
+  — jendela v1 memang tanpa saklar, pengaturan tetap terjangkau.
+- Paket Microsoft.Web.WebView2 DICABUT dari proyek (kode
+  sudah tidak memakainya; sisa referensi warisan) + pengaturan
+  zoom panel chat dibersihkan. Aplikasi kini bebas WebView2.
+- Backend nol sentuh: server, semua engine, endpoint,
+  tray-first (start --auto tanpa jendela, X sembunyi ke tray),
+  dan Exit final v5.7.1 dipertahankan persis.
+
 ## 5.7.1 — 2026-11-26
 
 Perbaikan Exit (temuan tes Tray-First di hari yang sama):
