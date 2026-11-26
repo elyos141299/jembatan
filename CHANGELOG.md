@@ -3,6 +3,69 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.3.0 — 2026-11-26
+
+Tata letak dibangun ulang PERSIS desain Figma "MuseLink —
+Futuristic AI Control Center" (v5.2 baru mengganti warna/font;
+user meminta komposisi halamannya juga sama). Sesuai perintah
+user, tombol/elemen Figma yang fiturnya belum ada TETAP tampil —
+fiturnya menyusul. Server & endpoint tidak berubah.
+
+### Kerangka
+- Sidebar 240: label MENU, 9 menu bernama Figma (Overview, Muse
+  Console, Desktop Control, Live Screen, Activity Center,
+  Automation Center, System Monitor, Integrations, Settings),
+  kartu status dua baris (Bridge Connected • Tailscale /
+  Muse Online • versi).
+- Bar atas: judul + breadcrumb, badge Muse Connected (ungu) &
+  Bridge Online (hijau), lonceng, chip pengguna Elyos —
+  Administrator. Tombol Emergency Stop besar di bar atas hilang;
+  fungsinya hidup di Quick Actions Overview, Console (Stop), dan
+  Settings → Desktop Bridge.
+- Panel konteks kanan 300px di semua layar (Current Activity,
+  Active Application, Current Task, Recent Events, System
+  Information) — diisi data asli bridge & sensor.
+- Jendela bawaan 1440×900 (kanvas Figma).
+
+### Halaman
+- Overview: 4 kartu metrik Figma, Current AI Activity (progress
+  + langkah + Lihat Detail/Hentikan), Quick Actions berfungsi
+  (Screenshot menyimpan PNG, navigasi, Emergency Stop), Recent
+  Activity linimasa, System Overview 5 bilah.
+- Muse Console (dulu Command Center): bilah percakapan + chat
+  ala Figma; kolom input tetap menjalankan PowerShell asli dan
+  hasilnya tampil sebagai kartu Command Execution. Daftar
+  percakapan masih contoh desain.
+- Desktop Control: kartu Mouse/Keyboard/Application/Desktop
+  Information + Active Window ala Figma; Fokus/Minimize/Tutup
+  berfungsi. Tiga tombol klik mouse masih contoh desain.
+- Live Screen (BARU): pratinjau desktop asli per 2 dtk, chip
+  resolusi/refresh rate (DEVMODE)/capture/latency/aplikasi
+  aktif, Ambil Screenshot menyimpan PNG.
+- Activity Center: gabungan Activity + System Logs — cari +
+  chip filter, linimasa gabungan operasi bridge & EventLog,
+  detail kejadian, Salin Detail & Ekspor Log berfungsi.
+- Automation Center: kartu workflow dari rutinitas tersimpan
+  asli (editor menampilkan langkah dari JSON; Hapus berfungsi);
+  contoh Figma berbadge "Contoh" bila kosong. Tombol putar/
+  jeda/stop, + Workflow, Simpan, Uji Jalan masih contoh desain.
+- System Monitor (BARU): 5 kartu metrik, grafik CPU/RAM 60
+  cuplikan, daftar proses teratas dengan %CPU per proses.
+- Integrations (dulu Connections): 6 kartu aplikasi; status
+  Terhubung diuji dari proses berjalan/gh di PATH; Test
+  Connection & Buka berfungsi; Configure contoh desain.
+- Settings: daftar 9 kategori Figma; General berisi 3 saklar
+  asli (Jalan otomatis, Cegah tidur, Mode Administrator) +
+  saklar Notifikasi, bahasa, dan tema contoh desain; isi
+  Permissions & Connections dilipat ke Desktop Bridge
+  (Putuskan/Sambungkan + Emergency Stop berfungsi); About asli;
+  kategori lain panel judul (isi menyusul).
+
+### Dihapus
+- Halaman CommandPage, ConnectionsPage, LogsPage, SecurityPage
+  (isinya terserap ke Console, Integrations, Activity Center,
+  dan Settings → Desktop Bridge).
+
 ## 5.2.0 — 2026-11-26
 
 Tema "Futuristic AI Control Center" — penerapan desain Figma

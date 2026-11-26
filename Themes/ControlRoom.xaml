@@ -172,6 +172,62 @@
     </Style>
 
     <!-- Kotak centang gelap (v5.1) -->
+    <!-- Saklar gaya Figma (v5.3.0): rel 40x20 membulat; AKTIF =
+         rel cyan + kenop putih di kanan; MATI = rel elevated +
+         kenop redup di kiri. Dipakai Settings model Figma. -->
+    <Style x:Key="CrToggle" TargetType="CheckBox">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <Grid Width="40" Height="20" Background="Transparent">
+                        <Border x:Name="Track" Background="{StaticResource CrElevated}"
+                                BorderBrush="{StaticResource CrBorder}" BorderThickness="1"
+                                CornerRadius="10"/>
+                        <Ellipse x:Name="Knob" Width="14" Height="14"
+                                 Fill="{StaticResource CrMuted}"
+                                 HorizontalAlignment="Left" Margin="3,0,0,0"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Track" Property="Background" Value="{StaticResource CrAccent}"/>
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+                            <Setter TargetName="Knob" Property="Fill" Value="#FFFFFF"/>
+                            <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                            <Setter TargetName="Knob" Property="Margin" Value="0,0,3,0"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Tombol garis bahaya (v5.3.0): Hentikan / Stop / Tutup ala
+         Figma — latar warna dasar, garis + teks merah. -->
+    <Style x:Key="CrDangerOutline" TargetType="Button" BasedOn="{StaticResource CrButton}">
+        <Setter Property="Background" Value="{StaticResource CrBg}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrRed}"/>
+        <Setter Property="Foreground" Value="{StaticResource CrRed}"/>
+    </Style>
+
+    <!-- Chip filter (v5.3.0, Activity Center ala Figma): pil
+         elevated; varian aktif berisian cyan. -->
+    <Style x:Key="CrChip" TargetType="Button" BasedOn="{StaticResource CrButton}">
+        <Setter Property="Padding" Value="14,7"/>
+        <Setter Property="Background" Value="{StaticResource CrElevated}"/>
+        <Setter Property="Foreground" Value="{StaticResource CrMuted}"/>
+        <Setter Property="FontSize" Value="11.5"/>
+    </Style>
+    <Style x:Key="CrChipActive" TargetType="Button" BasedOn="{StaticResource CrChip}">
+        <Setter Property="Background" Value="{StaticResource CrAccent}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+        <Setter Property="Foreground" Value="#0B0E13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+
     <Style x:Key="CrCheckBox" TargetType="CheckBox">
         <Setter Property="Foreground" Value="{StaticResource CrText}"/>
         <Setter Property="FontSize" Value="13.5"/>

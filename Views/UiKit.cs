@@ -184,4 +184,157 @@ public static class UiKit
         if (!d.TryGetValue(key, out var v) || v == null) return 0;
         try { return Convert.ToInt64(v); } catch { return 0; }
     }
+
+    // ---------- Komponen gaya Figma (v5.3.0) ----------
+
+    /// <summary>Warna mentah dari sumber daya "CrXColor".</summary>
+    public static System.Windows.Media.Color ResColor(string key)
+        => (System.Windows.Media.Color)Application.Current.FindResource(key);
+
+    /// <summary>Label seksi kecil ala Figma (huruf kapital redup).</summary>
+    public static TextBlock SectionLabel(string text)
+        => new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Res("CrFaint"),
+        };
+
+    /// <summary>Titik status bundar.</summary>
+    public static System.Windows.Shapes.Ellipse Dot(string colorKey, double size = 8)
+        => new System.Windows.Shapes.Ellipse
+        {
+            Width = size,
+            Height = size,
+            Fill = Res(colorKey),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+    /// <summary>Lencana pil bertinta warna (latar transparan warna
+    /// aksen + teks berwarna) ala badge Figma. Teksnya bisa diubah
+    /// lewat SetBadgeText().</summary>
+    public static Border Badge(string text, string colorKey)
+    {
+        string colorRes = colorKey == "CrSage" ? "CrSageColor"
+            : colorKey == "CrGreen" ? "CrGreenColor"
+            : colorKey == "CrGold" ? "CrGoldColor"
+            : colorKey == "CrRed" ? "CrRedColor"
+            : colorKey == "CrMuted" ? "CrMutedColor"
+            : colorKey == "CrFaint" ? "CrFaintColor" : "CrAccentColor";
+        var c = ResColor(colorRes);
+        var bg = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x24, c.R, c.G, c.B));
+        var tb = new TextBlock
+        {
+            Text = text,
+            FontSize = 10.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(c),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        return new Border
+        {
+            Background = bg,
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(9, 3, 9, 3),
+            Child = tb,
+            Tag = tb,
+        };
+    }
+
+    /// <summary>Ubah teks lencana yang dibuat Badge().</summary>
+    public static void SetBadgeText(Border badge, string text)
+    {
+        if (badge.Tag is TextBlock tb) tb.Text = text;
+    }
+
+    /// <summary>Bilah kemajuan: rel elevated + isian berwarna.
+    /// Atur persennya lewat SetBar().</summary>
+    public static Grid Bar(string colorKey, double height)
+    {
+        var track = new Grid { Height = height };
+        track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0, GridUnitType.Star) });
+        track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100, GridUnitType.Star) });
+        var bg = new Border
+        {
+            Background = Res("CrElevated"),
+            CornerRadius = new CornerRadius(height / 2),
+        };
+        Grid.SetColumnSpan(bg, 2);
+        track.Children.Add(bg);
+        var fill = new Border
+        {
+            Background = Res(colorKey),
+            CornerRadius = new CornerRadius(height / 2),
+        };
+        track.Children.Add(fill);
+        track.Tag = fill;
+        return track;
+    }
+
+    /// <summary>Atur persen bilah yang dibuat Bar() (0-100).</summary>
+    public static void SetBar(Grid track, double pct)
+    {
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        track.ColumnDefinitions[0].Width = new GridLength(pct, GridUnitType.Star);
+        track.ColumnDefinitions[1].Width = new GridLength(100 - pct, GridUnitType.Star);
+        if (track.Tag is Border fill) fill.Visibility = pct <= 0 ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Tombol garis bahaya (Hentikan/Stop/Tutup).</summary>
+    public static Button DangerBtn(string text, RoutedEventHandler onClick)
+    {
+        var b = new Button
+        {
+            Content = text,
+            Style = (Style)Application.Current.FindResource("CrDangerOutline"),
+            Padding = new Thickness(16, 7, 16, 7),
+        };
+        if (onClick != null) b.Click += onClick;
+        return b;
+    }
+
+    /// <summary>Saklar gaya Figma (CrToggle).</summary>
+    public static CheckBox Toggle(bool on)
+        => new CheckBox
+        {
+            Style = (Style)Application.Current.FindResource("CrToggle"),
+            IsChecked = on,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+    /// <summary>Nama ramah operasi bridge untuk linimasa.</summary>
+    public static string FriendlyOp(string method, string path)
+    {
+        switch (path)
+        {
+            case "/exec": return "Perintah dijalankan";
+            case "/screenshot": case "/frame": return "Screenshot diambil";
+            case "/click": return "Klik dieksekusi";
+            case "/type": return "Teks diketik";
+            case "/key": return "Tombol ditekan";
+            case "/move": return "Mouse digerakkan";
+            case "/open": return "Aplikasi dibuka";
+            case "/health": return "Pemeriksaan kesehatan";
+            case "/ping": return "Ping bridge";
+            default:
+                if (path != null && path.StartsWith("/routines")) return "Workflow dijalankan";
+                if (path != null && path.StartsWith("/window")) return "Jendela diatur";
+                if (path != null && path.StartsWith("/uia")) return "Elemen UI dioperasikan";
+                return (method ?? "") + " " + (path ?? "");
+        }
+    }
+
+    /// <summary>Kunci warna titik dari kode status HTTP.</summary>
+    public static string StatusColor(string status)
+    {
+        if (int.TryParse(status, out int s))
+        {
+            if (s >= 200 && s < 300) return "CrGreen";
+            if (s >= 400 && s < 500) return "CrGold";
+            if (s >= 500) return "CrRed";
+        }
+        return "CrAccent";
+    }
 }
