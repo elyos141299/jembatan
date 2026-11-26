@@ -3,6 +3,33 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.2.0 — 2026-11-26
+
+Tema "Futuristic AI Control Center" — penerapan desain Figma
+yang disetujui user (jalur palet penuh). Murni tampilan: server,
+endpoint, dan perilaku aplikasi tidak berubah.
+
+### Diubah
+- **Palet warna diganti total** dari color styles Figma: latar
+  #0B0E13, surface #121821, elevated #1A2330, border #1E2A3D,
+  aksen cyan #36D9F5 + violet #9274FF, sukses #38D996,
+  peringatan #F5B94C, bahaya #F06475, teks #F0F5FA / #8998A9.
+  Nama token lama dipertahankan (CrSage = violet, CrGold =
+  amber) agar tidak ada halaman yang perlu ditulis ulang.
+- **Font aplikasi kini Inter** (tertanam, lisensi OFL) dengan
+  cadangan Segoe UI.
+- Tombol kini berisian elevated dengan garis aksen cyan saat
+  hover; item navigasi aktif berlatar elevated; kotak centang
+  terisi cyan dengan centang gelap saat aktif; sorotan item
+  dropdown memakai elevated. Perbaikan v5.1 (dropdown gelap,
+  kotak centang gelap) dipertahankan.
+- Kartu: radius 12, padding 16.
+
+### Ditambahkan
+- Gaya `CrPrimaryButton` (isian cyan, teks gelap) + pabrik
+  `UiKit.PrimaryBtn`; dipakai tombol "Jalankan" di Command
+  Center.
+
 ## 3.11.0 — 2026-11-26
 
 "Satpam Input" — Desktop State Awareness tahap 4, terakhir

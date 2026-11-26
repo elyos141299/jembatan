@@ -5,7 +5,7 @@
         Width="1280" Height="800" MinWidth="900" MinHeight="600"
         Background="{StaticResource CrBg}"
         Foreground="{StaticResource CrText}"
-        FontFamily="Segoe UI"
+        FontFamily="/Jembatan;component/Fonts/#Inter, Segoe UI"
         WindowStyle="None"
         WindowStartupLocation="CenterScreen">
     <WindowChrome.WindowChrome>

@@ -1,27 +1,32 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- Token Control Room (dari RoomTheme WinForms yang dihapus —
-         palet gelap + aksen Pasangan 4 yang dikunci user). -->
-    <Color x:Key="CrBgColor">#131316</Color>
-    <Color x:Key="CrSidebarColor">#17171B</Color>
-    <Color x:Key="CrPanelColor">#1B1B20</Color>
-    <Color x:Key="CrCardColor">#212129</Color>
-    <Color x:Key="CrBorderColor">#2C2C36</Color>
-    <Color x:Key="CrTextColor">#ECECF1</Color>
-    <Color x:Key="CrMutedColor">#A6A6B0</Color>
-    <Color x:Key="CrFaintColor">#6E6E78</Color>
-    <Color x:Key="CrAccentColor">#8B6CC1</Color>
-    <Color x:Key="CrSageColor">#9CAF88</Color>
-    <Color x:Key="CrGoldColor">#F2D492</Color>
-    <Color x:Key="CrGreenColor">#5BBB63</Color>
-    <Color x:Key="CrRedColor">#C4453C</Color>
-    <Color x:Key="CrStopFillColor">#8C2B23</Color>
+    <!-- Token Control Room — palet "Futuristic AI Control Center"
+         (v5.2, dari color styles Figma yang disetujui user; menggantikan
+         Pasangan 4). Nama kunci lama dipertahankan agar halaman tidak
+         berubah: CrSage kini = aksen violet, CrGold = amber peringatan.
+         CrFaint & CrStopFill adalah turunan redup dari palet yang sama. -->
+    <Color x:Key="CrBgColor">#0B0E13</Color>
+    <Color x:Key="CrSidebarColor">#0B0E13</Color>
+    <Color x:Key="CrPanelColor">#121821</Color>
+    <Color x:Key="CrCardColor">#121821</Color>
+    <Color x:Key="CrElevatedColor">#1A2330</Color>
+    <Color x:Key="CrBorderColor">#1E2A3D</Color>
+    <Color x:Key="CrTextColor">#F0F5FA</Color>
+    <Color x:Key="CrMutedColor">#8998A9</Color>
+    <Color x:Key="CrFaintColor">#5B6B7E</Color>
+    <Color x:Key="CrAccentColor">#36D9F5</Color>
+    <Color x:Key="CrSageColor">#9274FF</Color>
+    <Color x:Key="CrGoldColor">#F5B94C</Color>
+    <Color x:Key="CrGreenColor">#38D996</Color>
+    <Color x:Key="CrRedColor">#F06475</Color>
+    <Color x:Key="CrStopFillColor">#6E2A35</Color>
 
     <SolidColorBrush x:Key="CrBg" Color="{StaticResource CrBgColor}"/>
     <SolidColorBrush x:Key="CrSidebar" Color="{StaticResource CrSidebarColor}"/>
     <SolidColorBrush x:Key="CrPanel" Color="{StaticResource CrPanelColor}"/>
     <SolidColorBrush x:Key="CrCard" Color="{StaticResource CrCardColor}"/>
+    <SolidColorBrush x:Key="CrElevated" Color="{StaticResource CrElevatedColor}"/>
     <SolidColorBrush x:Key="CrBorder" Color="{StaticResource CrBorderColor}"/>
     <SolidColorBrush x:Key="CrText" Color="{StaticResource CrTextColor}"/>
     <SolidColorBrush x:Key="CrMuted" Color="{StaticResource CrMutedColor}"/>
@@ -63,13 +68,13 @@
         <Setter Property="Background" Value="{StaticResource CrCard}"/>
         <Setter Property="BorderBrush" Value="{StaticResource CrBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="10"/>
-        <Setter Property="Padding" Value="14"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="16"/>
     </Style>
 
     <!-- Tombol dasar -->
     <Style x:Key="CrButton" TargetType="Button">
-        <Setter Property="Background" Value="{StaticResource CrCard}"/>
+        <Setter Property="Background" Value="{StaticResource CrElevated}"/>
         <Setter Property="Foreground" Value="{StaticResource CrText}"/>
         <Setter Property="BorderBrush" Value="{StaticResource CrBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
@@ -87,7 +92,10 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="{StaticResource CrPanel}"/>
+                            <Setter Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter Property="Opacity" Value="0.85"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.45"/>
@@ -96,6 +104,15 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <!-- Tombol aksi utama: isian cyan, teks gelap (v5.2, dari
+         spesimen Button Primary di Design System Figma). -->
+    <Style x:Key="CrPrimaryButton" TargetType="Button" BasedOn="{StaticResource CrButton}">
+        <Setter Property="Background" Value="{StaticResource CrAccent}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CrAccent}"/>
+        <Setter Property="Foreground" Value="#0B0E13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
 
     <!-- Tombol Emergency Stop -->
@@ -132,7 +149,7 @@
                             <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrPanel}"/>
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrElevated}"/>
                             <Setter TargetName="AccentBar" Property="Opacity" Value="1"/>
                             <Setter Property="Foreground" Value="{StaticResource CrText}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
@@ -164,16 +181,17 @@
                 <ControlTemplate TargetType="CheckBox">
                     <StackPanel Orientation="Horizontal">
                         <Border x:Name="Box" Width="18" Height="18" CornerRadius="4"
-                                Background="{StaticResource CrPanel}" BorderBrush="{StaticResource CrBorder}"
+                                Background="{StaticResource CrBg}" BorderBrush="{StaticResource CrBorder}"
                                 BorderThickness="1" VerticalAlignment="Top" Margin="0,1,10,0">
                             <Path x:Name="Check" Data="M 3.5 9.5 L 7.5 13 L 14 5.5"
-                                  Stroke="{StaticResource CrText}" StrokeThickness="2" Visibility="Collapsed"/>
+                                  Stroke="#0B0E13" StrokeThickness="2" Visibility="Collapsed"/>
                         </Border>
                         <ContentPresenter VerticalAlignment="Center"/>
                     </StackPanel>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="Box" Property="Background" Value="{StaticResource CrAccent}"/>
                             <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource CrAccent}"/>
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -198,10 +216,10 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsHighlighted" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrElevated}"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrCard}"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource CrElevated}"/>
                             <Setter Property="FontWeight" Value="SemiBold"/>
                         </Trigger>
                     </ControlTemplate.Triggers>

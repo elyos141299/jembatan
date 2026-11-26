@@ -43,7 +43,7 @@ public sealed class CommandPage : UserControl, IRoomPage
         };
         Grid.SetColumn(_input, 0);
         inputRow.Children.Add(_input);
-        _runBtn = UiKit.Btn("Jalankan", (s, e) => _ = RunAsync());
+        _runBtn = UiKit.PrimaryBtn("Jalankan", (s, e) => _ = RunAsync());
         _runBtn.Margin = new Thickness(10, 0, 0, 0);
         Grid.SetColumn(_runBtn, 1);
         inputRow.Children.Add(_runBtn);

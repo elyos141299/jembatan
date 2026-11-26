@@ -117,6 +117,19 @@ public static class UiKit
         return b;
     }
 
+    /// <summary>Tombol aksi utama (isian cyan) untuk tindakan
+    /// paling penting di halamannya (v5.2).</summary>
+    public static Button PrimaryBtn(string text, RoutedEventHandler onClick)
+    {
+        var b = new Button
+        {
+            Content = text,
+            Style = (Style)Application.Current.FindResource("CrPrimaryButton"),
+        };
+        b.Click += onClick;
+        return b;
+    }
+
     public static TextBox Input(string text = "")
     {
         return new TextBox
