@@ -11,9 +11,9 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>5.3.1</Version>
-    <AssemblyVersion>5.3.1.0</AssemblyVersion>
-    <FileVersion>5.3.1.0</FileVersion>
+    <Version>5.4.0</Version>
+    <AssemblyVersion>5.4.0.0</AssemblyVersion>
+    <FileVersion>5.4.0.0</FileVersion>
     <!-- WebView2 (panel chat v2.2): loader native-nya harus ikut
          ter-extract dari berkas tunggal hasil publish, kalau tidak
          panel chat gagal jalan dari Jembatan.exe single-file. -->
@@ -22,6 +22,13 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!-- Sidecar AI visual (v5.4.0): skrip Python pendamping
+       (YOLO + EasyOCR di GPU) ikut terbit di samping exe;
+       AiBridge menyalinnya ke AI-Tools\sidecar\ saat dipakai. -->
+  <ItemGroup>
+    <None Include="ai_sidecar.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- Font Inter tertanam (v5.2, lisensi OFL — Fonts/LICENSE.txt):

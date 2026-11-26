@@ -3,6 +3,36 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.4.0 — 2026-11-26
+
+Visual GPU (perintah user: "visual harus dari GPU"). Mesin AI
+lokal yang terpasang di PC (Python venv `AI-Tools`: YOLO +
+faster-whisper + EasyOCR di atas torch CUDA / GTX 1660 Super)
+kini tersambung ke MuseLink lewat sidecar HTTP lokal.
+
+### Baru
+- **POST /detect** — deteksi objek YOLO11n di GPU atas wilayah
+  layar `{x,y,w,h}` (bawaan: seluruh layar). Balikan: daftar
+  `{label, conf, x, y, w, h}` dalam koordinat LAYAR + `ms`
+  inferensi. Lapisan tambahan untuk Visual Grounding; tombol UI
+  tetap urusan UIA/OCR (YOLO bawaan mengenali objek dunia nyata).
+- **GET /ocr?engine=gpu** — OCR EasyOCR (id+en) di GPU lewat
+  sidecar; format respons sama persis dengan mesin lain
+  (`mode: "gpu"`). Sidecar gagal -> jatuh ke mesin bawaan dan
+  mode dilaporkan apa adanya.
+- **AiBridge + ai_sidecar.py** — sidecar Python (127.0.0.1:8770)
+  memuat model SEKALI ke VRAM (±15-30 dtk pada panggilan AI
+  pertama), dimulai malas oleh MuseLink, dimatikan bersama
+  server bila MuseLink yang memulainya. Skrip sidecar terbit
+  di samping exe dan disalin ke `AI-Tools\sidecar\` saat dipakai.
+- **/health** kini memuat kunci `ai`: `{installed, sidecar,
+  device: "cuda"}` (status sidecar di-cache 10 detik).
+
+### Tetap
+- Tangkapan layar sudah DXGI-first (GPU) dengan cadangan GDI —
+  tidak berubah. Endpoint lama & tampilan aplikasi: nol
+  perubahan.
+
 ## 5.3.1 — 2026-11-26
 
 Perbaikan crash: membuka Muse Console (dan halaman lain yang

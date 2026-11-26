@@ -151,6 +151,7 @@ public sealed class AgentServer
         IsRunning = false;
         // PUTUSKAN / jendela ditutup = shell persisten ikut dimatikan.
         lock (_shellLock) { KillShell(); }
+        AiBridge.Shutdown(); // v5.4.0: sidecar AI ikut mati bila kami yang memulai
     }
 
     /// <summary>Lepas semua tombol yang ditahan /keydown (v3.6.0).</summary>
@@ -1833,6 +1834,10 @@ public sealed class AgentServer
                 string engineParam = GetQueryParam(req.Query, "engine") ?? "";
                 bool tessOn = engineParam == "tesseract";
                 bool engineAuto = engineParam == "auto";
+                // Mesin GPU (v5.4.0): ?engine=gpu membaca lewat
+                // EasyOCR di sidecar AI (GPU); gagal -> jatuh ke
+                // mesin bawaan secara jujur (mode tetap "normal").
+                bool gpuOn = engineParam == "gpu";
                 OcrReader.Result hasil;
                 string modeDipakai = "normal";
                 using (var bmp = CaptureRegionBitmap(wilayah, 0, out var eff))
@@ -1840,7 +1845,17 @@ public sealed class AgentServer
                     wilayah = eff;
                     try
                     {
-                        if (tessOn)
+                        if (gpuOn)
+                        {
+                            var gA = AiBridge.OcrResult(bmp, eff.X, eff.Y, out var gErr);
+                            if (gA != null) { hasil = gA; modeDipakai = "gpu"; }
+                            else
+                            {
+                                _log("OCR GPU gagal (" + gErr + ") — jatuh ke mesin bawaan");
+                                hasil = OcrReader.Read(bmp, eff.X, eff.Y);
+                            }
+                        }
+                        else if (tessOn)
                         {
                             hasil = OcrReader.ReadTesseract(bmp, eff.X, eff.Y);
                             modeDipakai = "tesseract";
@@ -1920,6 +1935,65 @@ public sealed class AgentServer
                     var root = doc.RootElement;
                     switch (req.Path)
                     {
+                        case "/detect":
+                        {
+                            // Deteksi objek YOLO di GPU (v5.4.0):
+                            // {x?,y?,w?,h?} wilayah layar (bawaan:
+                            // seluruh layar utama) diteruskan ke
+                            // sidecar AI visual; koordinat hasil
+                            // dikembalikan sebagai koordinat LAYAR.
+                            _onActivity();
+                            int dx = GetInt(root, "x", 0), dy = GetInt(root, "y", 0);
+                            int dw = GetInt(root, "w", 0), dh = GetInt(root, "h", 0);
+                            var scrD = NativeInput.PrimaryBounds();
+                            var mintaD = (dw > 0 && dh > 0) ? new Rectangle(dx, dy, dw, dh) : scrD;
+                            try
+                            {
+                                using var bmpD = CaptureRegionBitmap(mintaD, 0, out var effD);
+                                var rawD = AiBridge.DetectJson(bmpD, out var dErr);
+                                if (rawD == null)
+                                    return Response.Json("{\"ok\":false,\"error\":\"deteksi GPU tidak tersedia: " +
+                                        dErr.Replace("\\", " ").Replace("\"", " ") + "\"}");
+                                using var docD = JsonDocument.Parse(rawD);
+                                var dets = new List<Dictionary<string, object>>();
+                                if (docD.RootElement.TryGetProperty("detections", out var dArr))
+                                {
+                                    foreach (var d in dArr.EnumerateArray())
+                                    {
+                                        dets.Add(new Dictionary<string, object>
+                                        {
+                                            ["label"] = d.TryGetProperty("label", out var lb) ? lb.GetString() : "",
+                                            ["conf"] = d.TryGetProperty("conf", out var cf) ? cf.GetDouble() : 0,
+                                            ["x"] = effD.X + (d.TryGetProperty("x", out var ex2) ? ex2.GetInt32() : 0),
+                                            ["y"] = effD.Y + (d.TryGetProperty("y", out var ey2) ? ey2.GetInt32() : 0),
+                                            ["w"] = d.TryGetProperty("w", out var ew2) ? ew2.GetInt32() : 0,
+                                            ["h"] = d.TryGetProperty("h", out var eh2) ? eh2.GetInt32() : 0,
+                                        });
+                                    }
+                                }
+                                long msD = docD.RootElement.TryGetProperty("ms", out var msEl) ? msEl.GetInt64() : -1;
+                                _log($"Detect GPU wilayah {effD.X},{effD.Y} {effD.Width}x{effD.Height}: {dets.Count} objek");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true,
+                                    ["engine"] = "yolo11n-gpu",
+                                    ["ms"] = msD,
+                                    ["detections"] = dets,
+                                    ["region"] = new Dictionary<string, object>
+                                    {
+                                        ["x"] = effD.X, ["y"] = effD.Y,
+                                        ["w"] = effD.Width, ["h"] = effD.Height,
+                                    },
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                _log("Detect gagal: " + ex.Message);
+                                return Response.Json("{\"ok\":false,\"error\":\"" +
+                                    ex.Message.Replace("\\", " ").Replace("\"", " ") + "\"}", 500);
+                            }
+                        }
+
                         case "/routines/save":
                         {
                             // Simpan rutinitas bernama (v2.7.0):
@@ -5454,6 +5528,7 @@ public sealed class AgentServer
             ["shellAlive"] = shellAlive,
             ["eventsLastSeq"] = EventLog.LastSeq,
             ["foreground"] = fgTitle,
+            ["ai"] = AiBridge.HealthInfo(), // v5.4.0: status sidecar AI visual (GPU)
         };
     }
 
