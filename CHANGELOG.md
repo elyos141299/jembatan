@@ -3,6 +3,36 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.14.0 — 2026-11-26
+
+"Upgrade Semua" (pilihan user; UI nomor 4 di-skip user):
+
+- **Mesin pemulihan /act:** endpoint tangga lintas-jalur —
+  (1) UIA jendela depan, (2) UIA3 lintas jendela,
+  (3) visual /locate, (4) OCR murni; tiap anak tangga
+  diverifikasi expectText di sekitar titik aksi bila
+  diminta; semua percobaan dilaporkan apa adanya.
+  (Retry+verify+fallback per aksi /batch sudah ada sejak
+  v5.6.0 — /act menutup separuh yang belum ada: gugur
+  LINTAS JALUR otomatis.) /act bisa dipakai di /batch
+  sebagai {"do":"act"}.
+- **/uia3 (permukaan FlaUI lintas jendela):** FlaUI.UIA3
+  sudah menjadi mesin /uia sejak v2.4.0; yang baru:
+  /uia3/find & /uia3/act memindai SEMUA jendela tingkat
+  atas (filter window/process, tunggu-coba-ulang) —
+  elemen di jendela latar kini bisa ditemukan & diaksi
+  tanpa mengangkat jendelanya.
+- **Playwright (/pw/*):** sidecar Python pw_sidecar.py
+  (venv AI-Tools, pola AiBridge; HTTP 127.0.0.1:8771)
+  mengendarai Chrome TERPASANG dengan PROFIL OTOMASI
+  SENDIRI (%LOCALAPPDATA%\Jembatan\pw-profile — profil
+  harian tidak disentuh). Endpoint: /pw/open, /pw/goto,
+  /pw/click (teks/selector), /pw/fill, /pw/text, /pw/wait,
+  /pw/screenshot, /pw/close, GET /pw/state. Butuh paket
+  pip "playwright" di venv AI-Tools (tanpa unduh browser —
+  memakai Chrome terpasang). Installer kini memaketkan
+  pw_sidecar.py di samping exe.
+
 ## 5.13.0 — 2026-11-26
 
 "Refleks & Arbitrase" (perintah user "push sampai mentok"

@@ -30,6 +30,7 @@ Source: "..\publish\tesseract\*"; DestDir: "{app}\tesseract"; Flags: ignoreversi
 ; v5.4.1: skrip sidecar AI visual (GPU) wajib ikut terpasang di
 ; samping exe — AiBridge menyalinnya ke AI-Tools\sidecar\.
 Source: "..\publish\ai_sidecar.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\publish\pw_sidecar.py"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\MuseLink"; Filename: "{app}\Jembatan.exe"

@@ -11,9 +11,9 @@
     <RootNamespace>Jembatan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>5.13.0</Version>
-    <AssemblyVersion>5.13.0.0</AssemblyVersion>
-    <FileVersion>5.13.0.0</FileVersion>
+    <Version>5.14.0</Version>
+    <AssemblyVersion>5.14.0.0</AssemblyVersion>
+    <FileVersion>5.14.0.0</FileVersion>
     <!-- Loader native (SQLite dsb.) harus ikut ter-extract dari
          berkas tunggal hasil publish. Paket WebView2 DICABUT di
          v5.8.0 (perintah user: tampilan v1 tanpa WebView2) —
@@ -26,6 +26,7 @@
        AiBridge menyalinnya ke AI-Tools\sidecar\ saat dipakai. -->
   <ItemGroup>
     <None Include="ai_sidecar.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="pw_sidecar.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- Font Inter tertanam (v5.2, lisensi OFL — Fonts/LICENSE.txt):

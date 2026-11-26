@@ -362,6 +362,11 @@ public static class UiaScan
         public string ElementType = "";
         public string Value = "";
         public string Error = "";
+        // Titik tengah elemen (v5.14.0 — untuk verifikasi
+        // tangga /act) + judul jendela pemilik (lintas jendela).
+        public int CenterX;
+        public int CenterY;
+        public string WindowTitle = "";
     }
 
     /// <summary>
@@ -424,6 +429,13 @@ public static class UiaScan
                 if (el == null) { oc.Error = "elemen tidak ditemukan"; return oc; }
                 oc.ElementName = el.Name ?? "";
                 oc.ElementType = el.ControlType.ToString();
+                try
+                {
+                    var rr = el.BoundingRectangle;
+                    oc.CenterX = (int)(rr.Left + rr.Width / 2);
+                    oc.CenterY = (int)(rr.Top + rr.Height / 2);
+                }
+                catch { /* elemen tanpa kotak batas — titik 0 */ }
                 switch ((action ?? "invoke").Trim().ToLowerInvariant())
                 {
                     case "invoke":
@@ -487,5 +499,113 @@ public static class UiaScan
             oc.Error = ex.GetType().Name;
             return oc;
         }
+    }
+
+    // ---------- Pencarian LINTAS JENDELA (v5.14.0 — /uia3) ----------
+    // /uia & Act biasa hanya memindai JENDELA DEPAN. Jalur ini
+    // memindai SEMUA jendela tingkat atas lewat desktop UIA —
+    // modus gagalnya berbeda (elemen di jendela latar tetap
+    // ketemu), makanya ia anak tangga sendiri di tangga /act.
+
+    /// <summary>Satu temuan lintas jendela.</summary>
+    public sealed class CrossHit
+    {
+        public string Name = "";
+        public string Type = "";
+        public string AutomationId = "";
+        public string WindowTitle = "";
+        public string Process = "";
+        public Rectangle Rect;
+        public int CenterX => Rect.Left + Rect.Width / 2;
+        public int CenterY => Rect.Top + Rect.Height / 2;
+    }
+
+    private static bool WindowMatches(AutomationElement win, string windowTitle, string processName, out string title, out string proc)
+    {
+        title = "";
+        proc = "";
+        try { title = win.Name ?? ""; } catch { }
+        try
+        {
+            int pid = win.Properties.ProcessId.Value;
+            proc = System.Diagnostics.Process.GetProcessById(pid).ProcessName ?? "";
+        }
+        catch { }
+        if (!string.IsNullOrWhiteSpace(windowTitle) &&
+            title.IndexOf(windowTitle, StringComparison.OrdinalIgnoreCase) < 0) return false;
+        if (!string.IsNullOrWhiteSpace(processName) &&
+            proc.IndexOf(processName, StringComparison.OrdinalIgnoreCase) < 0) return false;
+        return true;
+    }
+
+    /// <summary>Cari elemen di semua jendela (coba ulang sampai
+    /// timeoutMs — elemen bisa baru muncul). Maks 20 temuan.</summary>
+    public static List<CrossHit> FindAcrossWindows(string nameQuery, string automationId,
+        string windowTitle, string processName, int timeoutMs)
+    {
+        var hasil = new List<CrossHit>();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            hasil.Clear();
+            try
+            {
+                var desktop = SharedAutomation.GetDesktop();
+                foreach (var win in desktop.FindAllChildren())
+                {
+                    if (!WindowMatches(win, windowTitle, processName, out string wTitle, out string wProc)) continue;
+                    AutomationElement[] descs;
+                    try { descs = win.FindAllDescendants(); } catch { continue; }
+                    foreach (var e in descs)
+                    {
+                        try
+                        {
+                            if (!Interesting.Contains(e.ControlType)) continue;
+                            if (e.IsOffscreen) continue;
+                            var r = e.BoundingRectangle;
+                            if (r.Width <= 0 || r.Height <= 0) continue;
+                            string nm = e.Name ?? "";
+                            string aid = "";
+                            try { aid = e.AutomationId ?? ""; } catch { }
+                            bool cocok;
+                            if (!string.IsNullOrWhiteSpace(automationId)) cocok = aid == automationId;
+                            else if (!string.IsNullOrWhiteSpace(nameQuery)) cocok = nm.IndexOf(nameQuery, StringComparison.OrdinalIgnoreCase) >= 0;
+                            else cocok = true;
+                            if (!cocok) continue;
+                            hasil.Add(new CrossHit
+                            {
+                                Name = nm,
+                                Type = e.ControlType.ToString(),
+                                AutomationId = aid,
+                                WindowTitle = wTitle,
+                                Process = wProc,
+                                Rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height),
+                            });
+                            if (hasil.Count >= 20) return hasil;
+                        }
+                        catch { /* elemen hilang di tengah pindai */ }
+                    }
+                }
+            }
+            catch { /* desktop belum siap — coba lagi sampai batas */ }
+            if (hasil.Count > 0 || sw.ElapsedMilliseconds >= timeoutMs) return hasil;
+            Thread.Sleep(200);
+        }
+    }
+
+    /// <summary>Temukan elemen lintas jendela lalu operasikan
+    /// lewat Act berbasis titik (memakai ulang seluruh logika
+    /// pola Act yang sudah terbukti).</summary>
+    public static ActOutcome ActAcrossWindows(string nameQuery, string automationId,
+        string windowTitle, string processName, string action, string text, int timeoutMs)
+    {
+        var hits = FindAcrossWindows(nameQuery, automationId, windowTitle, processName, timeoutMs);
+        if (hits.Count == 0)
+            return new ActOutcome { Error = "elemen tidak ditemukan di jendela mana pun" };
+        var h = hits[0];
+        var oc = Act(h.CenterX, h.CenterY, "", "", -1, action, text);
+        oc.WindowTitle = h.WindowTitle;
+        if (oc.CenterX == 0 && oc.CenterY == 0) { oc.CenterX = h.CenterX; oc.CenterY = h.CenterY; }
+        return oc;
     }
 }

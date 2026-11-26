@@ -193,6 +193,7 @@ public sealed class AgentServer
         // PUTUSKAN / jendela ditutup = shell persisten ikut dimatikan.
         lock (_shellLock) { KillShell(); }
         AiBridge.Shutdown(); // v5.4.0: sidecar AI ikut mati bila kami yang memulai
+        PwBridge.Shutdown(); // v5.14.0: sidecar Playwright juga
     }
 
     private static double GetDouble(JsonElement root, string name, double fallback)
@@ -1826,6 +1827,20 @@ public sealed class AgentServer
                     ["leased"] = pemilik != null,
                     ["owner"] = pemilik,
                     ["remainingSec"] = sisa,
+                });
+            }
+
+            if (req.Method == "GET" && req.Path == "/pw/state")
+            {
+                // Playwright (v5.14.0): keadaan pendamping —
+                // terpasang? sehat? profil otomasi di mana.
+                return Response.JsonObject(new Dictionary<string, object>
+                {
+                    ["ok"] = true,
+                    ["installed"] = PwBridge.Installed,
+                    ["healthy"] = PwBridge.Healthy(),
+                    ["profile"] = PwBridge.ProfileDir,
+                    ["lastError"] = PwBridge.LastError,
                 });
             }
 
@@ -4824,6 +4839,206 @@ public sealed class AgentServer
                                 ["rule"] = RuleJson(tersimpan),
                             });
                         }
+                        case "/uia3/find":
+                        case "/uia3/act":
+                        {
+                            // UIA3 lintas jendela (v5.14.0): FlaUI
+                            // memang mesin /uia sejak v2.4.0 — yang
+                            // baru di sini PERMUKAANNYA: pencarian
+                            // di SEMUA jendela (bukan hanya depan)
+                            // + tunggu-coba-ulang, modus gagal yang
+                            // berbeda dari pindai jendela depan.
+                            string q3 = GetString(root, "text", "");
+                            string aid3 = GetString(root, "automationId", "");
+                            string win3 = GetString(root, "window", "");
+                            string proc3 = GetString(root, "process", "");
+                            int tmo3 = GetInt(root, "timeoutMs", 3000);
+                            if (tmo3 < 0) tmo3 = 0;
+                            if (tmo3 > 20000) tmo3 = 20000;
+                            if (req.Path == "/uia3/find")
+                            {
+                                var hits3 = OnUi(() => UiaScan.FindAcrossWindows(q3, aid3, win3, proc3, tmo3));
+                                var daftar3 = new List<Dictionary<string, object>>();
+                                foreach (var h in hits3)
+                                {
+                                    daftar3.Add(new Dictionary<string, object>
+                                    {
+                                        ["name"] = h.Name, ["type"] = h.Type,
+                                        ["automationId"] = h.AutomationId,
+                                        ["window"] = h.WindowTitle, ["process"] = h.Process,
+                                        ["x"] = h.Rect.X, ["y"] = h.Rect.Y,
+                                        ["w"] = h.Rect.Width, ["h"] = h.Rect.Height,
+                                        ["cx"] = h.CenterX, ["cy"] = h.CenterY,
+                                    });
+                                }
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true, ["count"] = daftar3.Count, ["hits"] = daftar3,
+                                });
+                            }
+                            string act3 = GetString(root, "action", "invoke");
+                            string val3 = GetString(root, "value", "");
+                            var oc3 = OnUi(() => UiaScan.ActAcrossWindows(q3, aid3, win3, proc3, act3, val3, tmo3));
+                            _onActivity();
+                            _log($"uia3 {act3} '{q3}': {(oc3.Ok ? "OK" : oc3.Error)}");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = oc3.Ok,
+                                ["element"] = oc3.ElementName,
+                                ["type"] = oc3.ElementType,
+                                ["window"] = oc3.WindowTitle,
+                                ["value"] = oc3.Value,
+                                ["error"] = oc3.Ok ? "" : oc3.Error,
+                            }, oc3.Ok ? 200 : 422);
+                        }
+                        case "/act":
+                        {
+                            // Mesin pemulihan (v5.14.0): tangga
+                            // lintas-jalur — coba UIA depan, lalu
+                            // UIA3 lintas jendela, lalu visual
+                            // /locate, terakhir OCR murni; tiap
+                            // anak tangga diverifikasi (expectText
+                            // muncul di sekitar titik aksi) bila
+                            // diminta. Semua percobaan dilaporkan.
+                            string target = GetString(root, "text", "").Trim();
+                            if (target.Length < 1)
+                                return Response.Json("{\"ok\":false,\"error\":\"text wajib diisi\"}", 400);
+                            string actAction = GetString(root, "action", "invoke");
+                            string actValue = GetString(root, "value", "");
+                            string expect = GetString(root, "expectText", "");
+                            string winF = GetString(root, "window", "");
+                            int verifyMs = GetInt(root, "verifyTimeoutMs", 4000);
+                            if (verifyMs < 500) verifyMs = 500;
+                            if (verifyMs > 15000) verifyMs = 15000;
+                            var attempts = new List<Dictionary<string, object>>();
+                            // Anak tangga 1: UIA jendela depan.
+                            var ocA = OnUi(() => UiaScan.Act(null, null, "", target, -1, actAction, actValue));
+                            bool okA = ocA.Ok && VerifyAct(ocA.CenterX, ocA.CenterY, expect, verifyMs);
+                            attempts.Add(new Dictionary<string, object>
+                            {
+                                ["rung"] = "uia", ["ok"] = okA,
+                                ["detail"] = ocA.Ok ? (okA ? "aksi + verifikasi lulus" : "aksi jalan, verifikasi gagal") : ocA.Error,
+                            });
+                            if (okA)
+                            {
+                                _onActivity();
+                                _log($"act '{target}' berhasil di anak tangga uia");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true, ["rung"] = "uia",
+                                    ["element"] = ocA.ElementName, ["verified"] = !string.IsNullOrWhiteSpace(expect),
+                                    ["attempts"] = attempts,
+                                });
+                            }
+                            // Anak tangga 2: UIA3 lintas jendela.
+                            var ocB = OnUi(() => UiaScan.ActAcrossWindows(target, "", winF, "", actAction, actValue, 3000));
+                            bool okB = ocB.Ok && VerifyAct(ocB.CenterX, ocB.CenterY, expect, verifyMs);
+                            attempts.Add(new Dictionary<string, object>
+                            {
+                                ["rung"] = "uia3", ["ok"] = okB,
+                                ["detail"] = ocB.Ok ? (okB ? "aksi + verifikasi lulus" : "aksi jalan, verifikasi gagal") : ocB.Error,
+                            });
+                            if (okB)
+                            {
+                                _onActivity();
+                                _log($"act '{target}' berhasil di anak tangga uia3 ({ocB.WindowTitle})");
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = true, ["rung"] = "uia3",
+                                    ["element"] = ocB.ElementName, ["window"] = ocB.WindowTitle,
+                                    ["verified"] = !string.IsNullOrWhiteSpace(expect),
+                                    ["attempts"] = attempts,
+                                });
+                            }
+                            // Anak tangga 3 & 4: visual /locate
+                            // (rantai penuh), lalu OCR murni —
+                            // klik koordinat kandidat pertama.
+                            foreach (var (rungName, locMode) in new[] { ("locate", ""), ("ocr", "ocr") })
+                            {
+                                string locBody = locMode == ""
+                                    ? "{\"text\":" + JsonSerializer.Serialize(target) + "}"
+                                    : "{\"text\":" + JsonSerializer.Serialize(target) + ",\"mode\":\"ocr\"}";
+                                var locResp = Route(new Request { Method = "POST", Path = "/locate", Query = "", Body = locBody });
+                                int hx = 0, hy = 0;
+                                bool ada = false;
+                                string viaLoc = "";
+                                try
+                                {
+                                    using var dokL = JsonDocument.Parse(Encoding.UTF8.GetString(locResp.BodyBytes));
+                                    if (dokL.RootElement.TryGetProperty("candidates", out var cands) &&
+                                        cands.ValueKind == JsonValueKind.Array && cands.GetArrayLength() > 0)
+                                    {
+                                        var c0 = cands[0];
+                                        hx = c0.TryGetProperty("cx", out var exx) ? exx.GetInt32() : 0;
+                                        hy = c0.TryGetProperty("cy", out var eyy) ? eyy.GetInt32() : 0;
+                                        viaLoc = c0.TryGetProperty("via", out var evv) ? evv.GetString() ?? "" : "";
+                                        ada = hx > 0 || hy > 0;
+                                    }
+                                }
+                                catch { /* respons locate tak terbaca — anak tangga gagal */ }
+                                if (!ada)
+                                {
+                                    attempts.Add(new Dictionary<string, object>
+                                    {
+                                        ["rung"] = rungName, ["ok"] = false, ["detail"] = "target tidak ditemukan",
+                                    });
+                                    continue;
+                                }
+                                int fx = hx, fy = hy;
+                                OnUi(() => { NativeInput.Click(fx, fy, "left"); return true; });
+                                bool okV = VerifyAct(fx, fy, expect, verifyMs);
+                                attempts.Add(new Dictionary<string, object>
+                                {
+                                    ["rung"] = rungName, ["ok"] = okV,
+                                    ["detail"] = "klik " + fx + "," + fy + " via " + viaLoc + (okV ? "" : " — verifikasi gagal"),
+                                });
+                                if (okV)
+                                {
+                                    _onActivity();
+                                    _log($"act '{target}' berhasil di anak tangga {rungName} ({fx},{fy})");
+                                    return Response.JsonObject(new Dictionary<string, object>
+                                    {
+                                        ["ok"] = true, ["rung"] = rungName,
+                                        ["x"] = fx, ["y"] = fy, ["via"] = viaLoc,
+                                        ["verified"] = !string.IsNullOrWhiteSpace(expect),
+                                        ["attempts"] = attempts,
+                                    });
+                                }
+                            }
+                            _log($"act '{target}' GAGAL di semua anak tangga");
+                            return Response.JsonObject(new Dictionary<string, object>
+                            {
+                                ["ok"] = false,
+                                ["error"] = "semua anak tangga gagal",
+                                ["code"] = "act_failed",
+                                ["attempts"] = attempts,
+                            }, 422);
+                        }
+                        case "/pw/open":
+                        case "/pw/goto":
+                        case "/pw/click":
+                        case "/pw/fill":
+                        case "/pw/text":
+                        case "/pw/wait":
+                        case "/pw/screenshot":
+                        case "/pw/close":
+                        {
+                            // Playwright (v5.14.0): teruskan ke
+                            // sidecar Python (Chrome terpasang,
+                            // profil otomasi sendiri). Kegagalan
+                            // sidecar = 502 jujur; pemanggil boleh
+                            // mundur ke /browser (CDP dasar).
+                            string pwRaw = PwBridge.Call(req.Path.Substring(3), req.Body, out var pwErr);
+                            if (pwRaw == null)
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = pwErr,
+                                    ["code"] = "pw_unavailable",
+                                }, 502);
+                            _onActivity();
+                            return Response.Json(pwRaw);
+                        }
                         case "/task/start":
                         case "/task/note":
                         case "/task/done":
@@ -6798,6 +7013,18 @@ public sealed class AgentServer
     // Tunggu teks muncul di sekitar titik (OCR wilayah, polling
     // 250ms) — dipakai verifikasi aksi (v3.5.0, Action
     // Verification). Pola sama dengan verifikasi /click v2.6.4.
+    /// <summary>
+    /// Verifikasi anak tangga /act (v5.14.0): tanpa expectText
+    /// = lulus langsung; dengan expectText = teks harus muncul
+    /// di sekitar titik aksi (OCR, pola WaitTextNear /click).
+    /// </summary>
+    private bool VerifyAct(int cx, int cy, string expect, int timeoutMs)
+    {
+        if (string.IsNullOrWhiteSpace(expect)) return true;
+        if (cx <= 0 && cy <= 0) return false;
+        return WaitTextNear(cx, cy, expect, timeoutMs, 500, out _);
+    }
+
     private bool WaitTextNear(int cx, int cy, string text, int timeoutMs, int radius, out int waitedMs)
     {
         if (radius < 100) radius = 100;
@@ -7249,6 +7476,10 @@ public sealed class AgentServer
         // pada lease & Emergency Stop yang sama.
         "/browser/goto", "/browser/click", "/browser/setvalue", "/browser/eval",
         "/penstroke",
+        // v5.14.0: tangga /act, aksi /uia3, dan perintah
+        // Playwright yang mengubah halaman.
+        "/act", "/uia3/act",
+        "/pw/open", "/pw/goto", "/pw/click", "/pw/fill", "/pw/close",
     };
 
     /// <summary>Pemilik lease aktif, atau null. Lease lewat TTL
@@ -7435,6 +7666,13 @@ public sealed class AgentServer
             {
                 ["rules"] = ReflexEngine.Counts().rules,
                 ["fires"] = ReflexEngine.Counts().fires,
+            },
+            // Playwright (v5.14.0): pendamping terpasang?
+            // (kesehatan penuh di GET /pw/state — /health
+            // tidak memanggil jaringan sidecar.)
+            ["pw"] = new Dictionary<string, object>
+            {
+                ["installed"] = PwBridge.Installed,
             },
             ["ui"] = new Dictionary<string, object>
             {
