@@ -3,6 +3,18 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.17.0 — 2026-11-27
+
+Perbaikan dari temuan program eksperimen (Ronde 8):
+- /uia/find & /uia3/find: tiap elemen kini membawa bidang
+  "offscreen" (nilai IsOffscreen UIA apa adanya) — pemanggil
+  bisa menilai keterlihatan elemen dari data, bukan menebak
+  dari koordinat (latar: tombol dialog hantu Notepad Win11
+  yang berulang hampir menyesatkan klik, Ronde 3/6/8).
+- /frame: parameter preset=status — setara w=640&q=50
+  untuk cek status cepat; parameter w/q eksplisit tetap
+  menang bila diberikan.
+
 ## 5.16.0 — 2026-11-27
 
 Perbaikan dari temuan program eksperimen (Ronde 6):

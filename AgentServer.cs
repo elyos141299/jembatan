@@ -2017,8 +2017,15 @@ public sealed class AgentServer
                 // PNG layar penuh /screenshot untuk lingkaran
                 // lihat-klik yang rapat. BitBlt tidak butuh thread UI
                 // (pelajaran dari /stream v2.1).
-                int fw = ParseClamp(GetQueryParam(req.Query, "w"), 1280, 320, 1920);
-                int fq = ParseClamp(GetQueryParam(req.Query, "q"), 70, 30, 95);
+                // Preset (v5.17.0): ?preset=status setara
+                // w=640&q=50 — bingkai cek status cepat (muatan
+                // kecil, tuas kecepatan terbesar menurut audit
+                // Ronde 4). Parameter w/q eksplisit tetap menang:
+                // ParseClamp hanya memakai bawaan preset bila
+                // w/q tidak diberikan.
+                bool presetStatus = GetQueryParam(req.Query, "preset") == "status";
+                int fw = ParseClamp(GetQueryParam(req.Query, "w"), presetStatus ? 640 : 1280, 320, 1920);
+                int fq = ParseClamp(GetQueryParam(req.Query, "q"), presetStatus ? 50 : 70, 30, 95);
                 // Format PNG tanpa hilang (v3.5.0): ?fmt=png — teks
                 // kecil (panel Figma dsb.) terbaca tajam, tidak blur
                 // JPEG. Muatan lebih besar; pakai untuk wilayah.
@@ -4236,6 +4243,7 @@ public sealed class AgentServer
                                     ["cx"] = it.CenterX,
                                     ["cy"] = it.CenterY,
                                     ["enabled"] = it.Enabled,
+                                    ["offscreen"] = it.Offscreen,
                                 });
                             }
                             _log($"uia find '{fName}'/'{fType}': {hasil.cocok.Count} cocok" + (hasil.clicked ? ", pertama diklik" : ""));
@@ -4894,6 +4902,7 @@ public sealed class AgentServer
                                         ["x"] = h.Rect.X, ["y"] = h.Rect.Y,
                                         ["w"] = h.Rect.Width, ["h"] = h.Rect.Height,
                                         ["cx"] = h.CenterX, ["cy"] = h.CenterY,
+                                        ["offscreen"] = h.Offscreen,
                                     });
                                 }
                                 return Response.JsonObject(new Dictionary<string, object>

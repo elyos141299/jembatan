@@ -37,6 +37,12 @@ public static class UiaScan
         public string Type = "";
         public Rectangle Rect;
         public bool Enabled;
+        // Nilai IsOffscreen UIA apa adanya (v5.17.0): hasil
+        // pindai memang sudah melewati saringan offscreen, jadi
+        // di hasil /uia/find bidang ini terbaca false — ia
+        // diekspos agar pemanggil melihat nilai mentah UIA,
+        // bukan menebak keterlihatan dari koordinat.
+        public bool Offscreen;
         // Profil aksesibilitas penuh (v3.5.0 — Accessibility
         // Intelligence): nilai, keadaan, pola yang didukung, dan
         // identitas stabil elemen.
@@ -140,7 +146,8 @@ public static class UiaScan
                     try
                     {
                         if (!Interesting.Contains(el.ControlType)) continue;
-                        if (el.IsOffscreen) continue;
+                        bool off = el.IsOffscreen;
+                        if (off) continue;
                         var r = el.BoundingRectangle;
                         if (r.Width <= 0 || r.Height <= 0) continue;
                         var item = new Item
@@ -149,6 +156,7 @@ public static class UiaScan
                             Type = el.ControlType.ToString(),
                             Rect = r,
                             Enabled = el.IsEnabled,
+                            Offscreen = off,
                         };
                         FillDetails(el, item);
                         _last.Add(item);
@@ -184,7 +192,8 @@ public static class UiaScan
                     try
                     {
                         if (!Interesting.Contains(el.ControlType)) continue;
-                        if (el.IsOffscreen) continue;
+                        bool off = el.IsOffscreen;
+                        if (off) continue;
                         var r = el.BoundingRectangle;
                         if (r.Width <= 0 || r.Height <= 0) continue;
                         var item = new Item
@@ -193,6 +202,7 @@ public static class UiaScan
                             Type = el.ControlType.ToString(),
                             Rect = r,
                             Enabled = el.IsEnabled,
+                            Offscreen = off,
                         };
                         FillDetails(el, item);
                         hasil.Add(item);
@@ -403,7 +413,8 @@ public static class UiaScan
                         try
                         {
                             if (!Interesting.Contains(e.ControlType)) continue;
-                            if (e.IsOffscreen) continue;
+                            bool off = e.IsOffscreen;
+                            if (off) continue;
                             var r = e.BoundingRectangle;
                             if (r.Width <= 0 || r.Height <= 0) continue;
                             cands.Add(e);
@@ -516,6 +527,9 @@ public static class UiaScan
         public string WindowTitle = "";
         public string Process = "";
         public Rectangle Rect;
+        // Nilai IsOffscreen UIA apa adanya (v5.17.0) — lihat
+        // catatan di Item.Offscreen.
+        public bool Offscreen;
         public int CenterX => Rect.Left + Rect.Width / 2;
         public int CenterY => Rect.Top + Rect.Height / 2;
     }
@@ -561,7 +575,8 @@ public static class UiaScan
                         try
                         {
                             if (!Interesting.Contains(e.ControlType)) continue;
-                            if (e.IsOffscreen) continue;
+                            bool off = e.IsOffscreen;
+                            if (off) continue;
                             var r = e.BoundingRectangle;
                             if (r.Width <= 0 || r.Height <= 0) continue;
                             string nm = e.Name ?? "";
@@ -585,6 +600,7 @@ public static class UiaScan
                                 WindowTitle = wTitle,
                                 Process = wProc,
                                 Rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height),
+                                Offscreen = off,
                             });
                             if (hasil.Count >= 20) return hasil;
                         }
