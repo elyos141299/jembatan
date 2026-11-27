@@ -1353,7 +1353,8 @@ public static class NativeInput
             SendKeysSyntax(k);
             return;
         }
-        throw new ArgumentException("nama tombol tidak dikenal: " + keys);
+        throw new ArgumentException("nama tombol tidak dikenal: " + keys +
+            " — petunjuk: nama tombol juga bisa dikirim lewat mode scan, mis. {\"keys\":\"ctrl+add\",\"scan\":true}");
     }
 
     // Pengurai sintaks SendKeys -> SendInput (v5.0.0). Modifier
@@ -1389,7 +1390,8 @@ public static class NativeInput
                     string name = s.Substring(i + 1, close - i - 1);
                     if (name.Length == 1) TypeUnicode(name);
                     else if (SpecialKeys.TryGetValue(name, out ushort vk)) TapKey(vk);
-                    else throw new ArgumentException("nama tombol tidak dikenal: " + name);
+                    else throw new ArgumentException("nama tombol tidak dikenal: " + name +
+                        " — petunjuk: nama tombol juga bisa dikirim lewat mode scan, mis. {\"keys\":\"ctrl+add\",\"scan\":true}");
                     i = close + 1;
                     ReleaseMods(mods);
                     continue;
@@ -1552,6 +1554,14 @@ public static class NativeInput
             { "CAPSLOCK", 0x14 },
             { "NUMLOCK", 0x90 },
             { "SCROLLLOCK", 0x91 },
+            // v5.15.0: tombol numpad — dulu hanya dikenal
+            // pengurai mode scan (VkFromName); parser kurung
+            // menolaknya (^{ADD} -> 400, temuan Ronde 4).
+            { "ADD", 0x6B },
+            { "SUBTRACT", 0x6D },
+            { "MULTIPLY", 0x6A },
+            { "DIVIDE", 0x6F },
+            { "DECIMAL", 0x6E },
             { "PRTSC", 0x2C },
             { "F1", 0x70 }, { "F2", 0x71 }, { "F3", 0x72 }, { "F4", 0x73 },
             { "F5", 0x74 }, { "F6", 0x75 }, { "F7", 0x76 }, { "F8", 0x77 },

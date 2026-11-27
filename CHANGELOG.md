@@ -3,6 +3,25 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.15.0 — 2026-11-27
+
+Perbaikan dari temuan program eksperimen (Ronde 2 & 4):
+- /key: kamus tombol mode VK kini mengenal numpad ADD
+  (0x6B), SUBTRACT (0x6D), MULTIPLY (0x6A), DIVIDE (0x6F),
+  DECIMAL (0x6E) — `^{ADD}` dulu ditolak 400 padahal mode
+  scan bisa. Pesan error nama tak dikenal kini menyebut
+  alternatif mode scan ({"keys":"ctrl+add","scan":true}).
+- /locate: anak tangga baru "uia3" di antara UIA jendela
+  depan dan OCR — memindai SEMUA jendela (mesin /uia3/find)
+  sehingga ikon taskbar (Start, File Explorer, Chrome) dan
+  elemen jendela latar kini ketemu dari server langsung;
+  dulu hanya bisa lewat fallback di sisi agent.
+- /pw/open tanpa url: ditolak 400 di server dengan pesan
+  "url wajib diisi" — dulu pesan baru muncul dari sidecar
+  sesudah Chrome diluncurkan.
+- /pw/screenshot: param path yang diabaikan kini dicatat
+  di respons ("note") — hasil tetap base64 inline.
+
 ## 5.14.1 — 2026-11-26
 
 Perbaikan dari baterai gerbang 5.14.0 (ronde yang sama):

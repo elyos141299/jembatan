@@ -119,8 +119,14 @@ class Browser:
             return {"ok": True, "found": True}
         if cmd == "screenshot":
             png = page.screenshot(type="png")
-            return {"ok": True, "png": base64.b64encode(png).decode("ascii"),
-                    "url": page.url, "title": page.title()}
+            hasil = {"ok": True, "png": base64.b64encode(png).decode("ascii"),
+                     "url": page.url, "title": page.title()}
+            # v5.15.0: param path dulu diabaikan diam-diam —
+            # kini dicatat terang-terangan di respons.
+            if arg.get("path"):
+                hasil["note"] = ("param path diabaikan - hasil screenshot "
+                                 "berupa base64 inline di bidang png")
+            return hasil
         raise ValueError("perintah tidak dikenal: " + cmd)
 
 

@@ -3813,6 +3813,27 @@ public sealed class AgentServer
                                 }
                                 if (hits.Count > 0) viaUsed = "uia";
                             }
+                            if (hits.Count == 0 && (mode == "auto" || mode == "uia3"))
+                            {
+                                // Anak tangga UIA lintas jendela
+                                // (v5.15.0): pindai depan di atas
+                                // hanya melihat jendela aktif —
+                                // ikon taskbar (Start, File
+                                // Explorer, Chrome) & elemen di
+                                // jendela latar lolos dari sana
+                                // (temuan Ronde 2h/4-1). Pakai
+                                // mesin /uia3/find yang sama:
+                                // semua jendela tingkat atas,
+                                // elemen bernama memuat query.
+                                var cross = OnUi(() => UiaScan.FindAcrossWindows(q, "", "", "", 1500));
+                                foreach (var it in cross)
+                                {
+                                    if (it.Rect.Width <= 0 || it.Rect.Height <= 0) continue;
+                                    hits.Add(new LocateHit { Via = "uia3", Text = it.Name, Type = it.Type, Rect = it.Rect });
+                                    if (hits.Count >= 10) break;
+                                }
+                                if (hits.Count > 0) viaUsed = "uia3";
+                            }
                             if (hits.Count == 0 && (mode == "auto" || mode == "ocr"))
                             {
                                 var bounds = NativeInput.PrimaryBounds();
@@ -5028,6 +5049,18 @@ public sealed class AgentServer
                             // profil otomasi sendiri). Kegagalan
                             // sidecar = 502 jujur; pemanggil boleh
                             // mundur ke /browser (CDP dasar).
+                            // v5.15.0: /pw/open tanpa url ditolak
+                            // di sini — dulu pesannya baru muncul
+                            // dari sidecar SESUDAH Chrome
+                            // diluncurkan (lambat & membingungkan).
+                            if (req.Path == "/pw/open" &&
+                                string.IsNullOrWhiteSpace(GetString(root, "url", "")))
+                                return Response.JsonObject(new Dictionary<string, object>
+                                {
+                                    ["ok"] = false,
+                                    ["error"] = "url wajib diisi untuk /pw/open",
+                                    ["code"] = "url_required",
+                                }, 400);
                             string pwRaw = PwBridge.Call(req.Path.Substring(3), req.Body, out var pwErr);
                             if (pwRaw == null)
                                 return Response.JsonObject(new Dictionary<string, object>
