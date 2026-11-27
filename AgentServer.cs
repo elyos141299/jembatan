@@ -4882,6 +4882,12 @@ public sealed class AgentServer
                             // + tunggu-coba-ulang, modus gagal yang
                             // berbeda dari pindai jendela depan.
                             string q3 = GetString(root, "text", "");
+                            // v5.18.0: "name" diterima sebagai
+                            // alias "text" (konvensi /uia/find) —
+                            // dulu diam-diam diabaikan sehingga
+                            // saringan nama tidak berlaku sama
+                            // sekali (temuan Ronde 9).
+                            if (q3.Length == 0) q3 = GetString(root, "name", "");
                             string aid3 = GetString(root, "automationId", "");
                             string win3 = GetString(root, "window", "");
                             string proc3 = GetString(root, "process", "");
@@ -4934,6 +4940,13 @@ public sealed class AgentServer
                             // anak tangga diverifikasi (expectText
                             // muncul di sekitar titik aksi) bila
                             // diminta. Semua percobaan dilaporkan.
+                            // v5.18.0: tangga BERHENTI di anak
+                            // tangga pertama yang benar-benar
+                            // bertindak tetapi gagal verifikasi
+                            // (kode "acted_unverified") — dulu
+                            // tangga terus naik dan mengulang
+                            // aksi yang sama (Ronde 9: satu
+                            // checkbox ter-toggle 4x).
                             string target = GetString(root, "text", "").Trim();
                             if (target.Length < 1)
                                 return Response.Json("{\"ok\":false,\"error\":\"text wajib diisi\"}", 400);
@@ -4945,6 +4958,20 @@ public sealed class AgentServer
                             if (verifyMs < 500) verifyMs = 500;
                             if (verifyMs > 15000) verifyMs = 15000;
                             var attempts = new List<Dictionary<string, object>>();
+                            // Pembangun respons pengaman v5.18.0:
+                            // aksi sudah terlanjur dijalankan di
+                            // satu anak tangga tetapi verifikasi
+                            // gagal — laporkan apa adanya dan
+                            // jangan bertindak lagi.
+                            Func<string, Dictionary<string, object>> actedResp =
+                                (rungName) => new Dictionary<string, object>
+                                {
+                                    ["ok"] = false, ["acted"] = true, ["rung"] = rungName,
+                                    ["code"] = "acted_unverified",
+                                    ["error"] = "aksi sudah dijalankan di anak tangga " + rungName +
+                                        " tetapi verifikasi gagal; tangga dihentikan agar aksi tidak terulang",
+                                    ["attempts"] = attempts,
+                                };
                             // Anak tangga 1: UIA jendela depan.
                             var ocA = OnUi(() => UiaScan.Act(null, null, "", target, -1, actAction, actValue));
                             bool okA = ocA.Ok && VerifyAct(ocA.CenterX, ocA.CenterY, expect, verifyMs);
@@ -4963,6 +4990,13 @@ public sealed class AgentServer
                                     ["element"] = ocA.ElementName, ["verified"] = !string.IsNullOrWhiteSpace(expect),
                                     ["attempts"] = attempts,
                                 });
+                            }
+                            if (ocA.Ok)
+                            {
+                                _log($"act '{target}' berhenti di uia: aksi jalan, verifikasi gagal");
+                                var respA = actedResp("uia");
+                                respA["element"] = ocA.ElementName;
+                                return Response.JsonObject(respA, 422);
                             }
                             // Anak tangga 2: UIA3 lintas jendela.
                             var ocB = OnUi(() => UiaScan.ActAcrossWindows(target, "", winF, "", actAction, actValue, 3000));
@@ -4983,6 +5017,14 @@ public sealed class AgentServer
                                     ["verified"] = !string.IsNullOrWhiteSpace(expect),
                                     ["attempts"] = attempts,
                                 });
+                            }
+                            if (ocB.Ok)
+                            {
+                                _log($"act '{target}' berhenti di uia3: aksi jalan, verifikasi gagal");
+                                var respB = actedResp("uia3");
+                                respB["element"] = ocB.ElementName;
+                                respB["window"] = ocB.WindowTitle;
+                                return Response.JsonObject(respB, 422);
                             }
                             // Anak tangga 3 & 4: visual /locate
                             // (rantai penuh), lalu OCR murni —
@@ -5038,6 +5080,14 @@ public sealed class AgentServer
                                         ["attempts"] = attempts,
                                     });
                                 }
+                                // Klik fisik SUDAH terjadi di titik
+                                // ini; verifikasi yang gagal bukan
+                                // alasan mengklik lagi dari anak
+                                // tangga berikutnya (v5.18.0).
+                                _log($"act '{target}' berhenti di {rungName}: klik jalan, verifikasi gagal");
+                                var respV = actedResp(rungName);
+                                respV["x"] = fx; respV["y"] = fy; respV["via"] = viaLoc;
+                                return Response.JsonObject(respV, 422);
                             }
                             _log($"act '{target}' GAGAL di semua anak tangga");
                             return Response.JsonObject(new Dictionary<string, object>

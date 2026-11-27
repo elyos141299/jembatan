@@ -3,6 +3,24 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.18.0 — 2026-11-27
+
+Perbaikan dari temuan program eksperimen (Ronde 9):
+- /act: tangga pemulihan kini BERHENTI di anak tangga pertama
+  yang benar-benar bertindak tetapi gagal verifikasi, dan
+  melapor dengan kode baru "acted_unverified" (bidang acted:
+  true + anak tangga + attempts). Dulu tangga terus naik dan
+  mengulang aksi yang sama lewat jalur lain — terbukti satu
+  checkbox ter-toggle 4x dalam satu panggilan /act saat
+  expectText tidak pernah cocok. Perilaku saat verifikasi
+  lulus atau saat tidak ada anak tangga yang bertindak tidak
+  berubah.
+- /uia3/find & /uia3/act: parameter "name" kini diterima
+  sebagai alias "text" (konvensi /uia/find). Dulu "name"
+  diam-diam diabaikan sehingga pencarian berjalan TANPA
+  saringan nama sama sekali. Parameter "text" tetap menang
+  bila keduanya diberikan.
+
 ## 5.17.0 — 2026-11-27
 
 Perbaikan dari temuan program eksperimen (Ronde 8):
