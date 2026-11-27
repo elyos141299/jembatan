@@ -2428,15 +2428,20 @@ public sealed class AgentServer
                             // seluruh layar utama) diteruskan ke
                             // sidecar AI visual; koordinat hasil
                             // dikembalikan sebagai koordinat LAYAR.
+                            // {imgsz?} (v5.19.0): ukuran inferensi
+                            // YOLO, di-clamp 320..1920; tanpa param
+                            // perilaku lama (bawaan sidecar 640).
                             _onActivity();
                             int dx = GetInt(root, "x", 0), dy = GetInt(root, "y", 0);
                             int dw = GetInt(root, "w", 0), dh = GetInt(root, "h", 0);
+                            int dImg = GetInt(root, "imgsz", 0);
+                            if (dImg > 0) dImg = Math.Clamp(dImg, 320, 1920);
                             var scrD = NativeInput.PrimaryBounds();
                             var mintaD = (dw > 0 && dh > 0) ? new Rectangle(dx, dy, dw, dh) : scrD;
                             try
                             {
                                 using var bmpD = CaptureRegionBitmap(mintaD, 0, out var effD);
-                                var rawD = AiBridge.DetectJson(bmpD, out var dErr);
+                                var rawD = AiBridge.DetectJson(bmpD, dImg, out var dErr);
                                 if (rawD == null)
                                     return Response.Json("{\"ok\":false,\"error\":\"deteksi GPU tidak tersedia: " +
                                         dErr.Replace("\\", " ").Replace("\"", " ") + "\"}");
@@ -2458,8 +2463,9 @@ public sealed class AgentServer
                                     }
                                 }
                                 long msD = docD.RootElement.TryGetProperty("ms", out var msEl) ? msEl.GetInt64() : -1;
+                                long imgD = docD.RootElement.TryGetProperty("imgsz", out var imgEl) ? imgEl.GetInt64() : 0;
                                 _log($"Detect GPU wilayah {effD.X},{effD.Y} {effD.Width}x{effD.Height}: {dets.Count} objek");
-                                return Response.JsonObject(new Dictionary<string, object>
+                                var respD = new Dictionary<string, object>
                                 {
                                     ["ok"] = true,
                                     ["engine"] = "yolo-gpu",
@@ -2471,7 +2477,9 @@ public sealed class AgentServer
                                         ["x"] = effD.X, ["y"] = effD.Y,
                                         ["w"] = effD.Width, ["h"] = effD.Height,
                                     },
-                                });
+                                };
+                                if (imgD > 0) respD["imgsz"] = imgD;
+                                return Response.JsonObject(respD);
                             }
                             catch (Exception ex)
                             {

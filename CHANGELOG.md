@@ -3,6 +3,22 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.19.0 — 2026-11-27
+
+Perbaikan dari temuan program eksperimen (Ronde 9 butir 3,
+berakar dari Ronde 6):
+- /detect: parameter opsional "imgsz" — ukuran inferensi YOLO
+  (di-clamp 320..1920 di server maupun sidecar) diteruskan
+  sampai ke pemanggilan predict di sidecar AI. Tanpa parameter,
+  payload dan perilaku persis seperti sebelumnya (bawaan
+  Ultralytics 640, parameter tidak dikirim sama sekali).
+  Respons kini mencantumkan "imgsz" efektif bila parameter
+  diberikan. Latar: pada 640, objek kecil di wilayah besar
+  tenggelam (sembilan foto anjing di layar penuh semuanya
+  terbaca "cow" pada pengukuran Ronde 10); imgsz lebih besar
+  memberi peluang kelas yang benar dengan harga waktu
+  inferensi yang lebih lama.
+
 ## 5.18.0 — 2026-11-27
 
 Perbaikan dari temuan program eksperimen (Ronde 9):

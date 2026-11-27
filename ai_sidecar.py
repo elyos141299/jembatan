@@ -5,7 +5,7 @@
 # Server HTTP lokal 127.0.0.1:8770 yang memuat YOLO (deteksi
 # objek) + EasyOCR (OCR) SEKALI ke VRAM GPU lalu melayani:
 #   GET  /health             -> status + device + model
-#   POST /detect {image}     -> daftar objek + kotak (koord. gambar)
+#   POST /detect {image, imgsz?} -> daftar objek + kotak (koord. gambar)
 #   POST /ocr    {image}     -> teks + kata + kotak (koord. gambar)
 #   POST /transcribe {audio} -> teks transkrip (Whisper, GPU;
 #                               model dimuat malas saat pertama)
@@ -195,7 +195,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send({"ok": True, "detections": boxes,
                                        "ms": int((time.time() - t) * 1000)})
                 if self.path == "/detect":
-                    r = _yolo.predict(arr, device=0, verbose=False)[0]
+                    # imgsz opsional (v5.19.0): ukuran inferensi
+                    # YOLO dari pemanggil. Tanpa param -> predict
+                    # dipanggil persis seperti dulu (bawaan
+                    # Ultralytics 640). Nilai sah di-clamp
+                    # 320..1920; yang bukan int positif diabaikan.
+                    kw = {}
+                    imgsz = req.get("imgsz")
+                    if isinstance(imgsz, int) and not isinstance(imgsz, bool) and imgsz > 0:
+                        kw["imgsz"] = max(320, min(1920, imgsz))
+                    r = _yolo.predict(arr, device=0, verbose=False, **kw)[0]
                     dets = []
                     for b in r.boxes:
                         x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
@@ -205,8 +214,11 @@ class Handler(BaseHTTPRequestHandler):
                             "x": int(x1), "y": int(y1),
                             "w": int(x2 - x1), "h": int(y2 - y1),
                         })
-                    return self._send({"ok": True, "detections": dets,
-                                       "ms": int((time.time() - t) * 1000)})
+                    resp = {"ok": True, "detections": dets,
+                            "ms": int((time.time() - t) * 1000)}
+                    if kw:
+                        resp["imgsz"] = kw["imgsz"]
+                    return self._send(resp)
                 if self.path == "/ocr":
                     words = []
                     texts = []

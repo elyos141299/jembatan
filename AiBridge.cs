@@ -142,7 +142,23 @@ public static class AiBridge
     /// <summary>Deteksi objek YOLO di GPU. Mengembalikan JSON
     /// mentah sidecar (detections berkoordinat GAMBAR) atau null.</summary>
     public static string DetectJson(Bitmap bmp, out string error)
-        => Call("/detect", bmp, out error);
+        => DetectJson(bmp, 0, out error);
+
+    /// <summary>Deteksi objek YOLO dengan ukuran inferensi
+    /// tertentu (v5.19.0): imgsz > 0 diteruskan ke sidecar;
+    /// imgsz <= 0 -> payload & perilaku lama persis (sidecar
+    /// memakai bawaan Ultralytics).</summary>
+    public static string DetectJson(Bitmap bmp, int imgsz, out string error)
+    {
+        if (imgsz <= 0) return Call("/detect", bmp, out error);
+        string b64;
+        using (var ms = new MemoryStream())
+        {
+            bmp.Save(ms, ImageFormat.Png);
+            b64 = Convert.ToBase64String(ms.ToArray());
+        }
+        return CallJson("/detect", "{\"image\":\"" + b64 + "\",\"imgsz\":" + imgsz + "}", out error);
+    }
 
     /// <summary>Satu hasil deteksi (koordinat sudah LAYAR).</summary>
     public sealed class AiDetection
