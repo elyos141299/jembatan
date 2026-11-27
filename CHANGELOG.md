@@ -3,6 +3,29 @@
 Semua perubahan penting per versi. Catatan pengembang yang lebih
 rinci (terutama versi ≤ 3.3.2) ada di README.md.
 
+## 5.16.0 — 2026-11-27
+
+Perbaikan dari temuan program eksperimen (Ronde 6):
+- Makro: kejadian VK_PACKET hasil ketikan /type kini direkam
+  BESERTA karakter Unicodenya (dari scan code hook) dan
+  diputar ulang sebagai input Unicode — dulu makro semacam
+  itu diputar tanpa mengetik apa pun, gagal diam-diam.
+  Makro lama (VK murni / VK_PACKET tanpa karakter) diputar
+  persis seperti sebelumnya.
+- Refleks pemicu window: perubahan JUDUL pada jendela yang
+  sudah dikenal kini dinilai ulang — model tab Windows 11
+  (berkas dibuka jadi tab di jendela lama, hwnd tetap) dulu
+  tidak pernah memicu aturan. Cooldown per aturan tetap
+  menahan banjir; catatan log membedakan "judul berubah"
+  dari "jendela baru".
+- /health: bidang ai.whisperReady — model Whisper di
+  sidecar sudah termuat atau belum (dilaporkan sidecar di
+  /health-nya), agar agent tidak menebak dari 503 pada
+  transkrip pertama.
+- Scheduler: jeda tilik 20 → 5 detik — jadwal "once" yang
+  terukur telat 21 detik di Ronde 6 kini terpicu dalam
+  hitungan detik.
+
 ## 5.15.0 — 2026-11-27
 
 Perbaikan dari temuan program eksperimen (Ronde 2 & 4):

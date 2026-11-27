@@ -34,6 +34,7 @@ public static class AiBridge
     private static string _lastError = "";
     private static DateTime _cacheAt = DateTime.MinValue;
     private static bool _cacheHealthy;
+    private static bool _whisperReady; // dari /health sidecar terakhir ("whisper")
 
     public static string AiToolsDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AI-Tools");
@@ -55,18 +56,25 @@ public static class AiBridge
             using var cts = new CancellationTokenSource(900);
             using var req = new HttpRequestMessage(HttpMethod.Get, Base + "/health");
             using var resp = Http.Send(req, cts.Token);
-            if (!resp.IsSuccessStatusCode) return false;
+            if (!resp.IsSuccessStatusCode) { _whisperReady = false; return false; }
             try
             {
                 var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 using var doc = JsonDocument.Parse(body);
                 if (doc.RootElement.TryGetProperty("model", out var m))
                     _modelName = m.GetString() ?? "";
+                // v5.16.0: sidecar melaporkan model Whisper sudah
+                // termuat atau belum ("whisper": true/false) —
+                // simpan agar /health bisa menandainya dan agent
+                // tidak menebak dari 503 transkrip pertama.
+                if (doc.RootElement.TryGetProperty("whisper", out var wp) &&
+                    (wp.ValueKind == JsonValueKind.True || wp.ValueKind == JsonValueKind.False))
+                    _whisperReady = wp.GetBoolean();
             }
-            catch { /* nama model saja; abaikan */ }
+            catch { /* nama model & status whisper saja; abaikan */ }
             return true;
         }
-        catch { return false; }
+        catch { _whisperReady = false; return false; }
     }
 
     /// <summary>Pastikan sidecar hidup; false + LastError bila gagal.</summary>
@@ -302,6 +310,9 @@ public static class AiBridge
             ["sidecar"] = _cacheHealthy ? "online" : "offline",
             ["device"] = "cuda",
             ["model"] = _modelName,
+            // v5.16.0: model Whisper termuat? (false juga saat
+            // sidecar mati — memang belum siap transkrip).
+            ["whisperReady"] = _cacheHealthy && _whisperReady,
         };
     }
 

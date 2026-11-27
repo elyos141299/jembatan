@@ -816,6 +816,17 @@ public static class NativeInput
         return ev;
     }
 
+    /// <summary>Satu kejadian Unicode tunggal (tekan/lepas)
+    /// lewat SendInput (v5.16.0 — untuk pemutar makro):
+    /// kejadian VK_PACKET hasil ketikan /type membawa karakter
+    /// pada scan code hook; putar ulang mengirimkannya kembali
+    /// sebagai input Unicode agar teks makro tidak hilang.</summary>
+    public static void UnicodeKey(ushort codeUnit, bool keyUp)
+    {
+        var ev = new[] { UnicodeEvent(codeUnit, keyUp) };
+        SendInput(1, ev, Marshal.SizeOf<InputEvent>());
+    }
+
     private static InputEvent VkEvent(ushort vk, bool keyUp)
     {
         var ev = new InputEvent { Type = 1 };

@@ -45,6 +45,11 @@ public static class MacroRecorder
         public int Delta { get; set; }
         public int Vk { get; set; }
         public bool Inj { get; set; }
+        // v5.16.0: unit kode Unicode untuk kejadian VK_PACKET
+        // (ketikan /type lewat KEYEVENTF_UNICODE) — hook tingkat
+        // rendah melaporkannya sebagai scan code. 0 = bukan
+        // kejadian Unicode (termasuk semua makro lama).
+        public int Ch { get; set; }
     }
 
     public sealed class MacroFile
@@ -266,6 +271,10 @@ public static class MacroRecorder
                         {
                             Kind = down ? "keydown" : "keyup",
                             Vk = (int)kb.VkCode,
+                            // VK_PACKET: karakter Unicode hidup di
+                            // scan code — simpan agar putar ulang
+                            // bisa mengetiknya kembali (v5.16.0).
+                            Ch = kb.VkCode == VkPacket ? (int)kb.ScanCode : 0,
                             Inj = (kb.Flags & LlkhfInjected) != 0,
                         });
                 }
@@ -404,6 +413,7 @@ public static class MacroRecorder
     {
         var heldButtons = new HashSet<string>();
         var heldKeys = new HashSet<ushort>();
+        var heldUnicode = new HashSet<ushort>();
         string endReason = "done";
         bool StopReason()
         {
@@ -427,7 +437,7 @@ public static class MacroRecorder
                     Thread.Sleep((int)Math.Min(50, Math.Max(1, sisa)));
                 }
                 if (StopReason()) break;
-                ExecuteEvent(ev, heldButtons, heldKeys);
+                ExecuteEvent(ev, heldButtons, heldKeys, heldUnicode);
             }
         }
         catch { /* putar ulang tidak boleh menjatuhkan aplikasi */ }
@@ -436,12 +446,14 @@ public static class MacroRecorder
             // Jaring pengaman: tidak ada tombol boleh tertahan.
             foreach (var b in heldButtons) { try { NativeInput.ButtonUp(b); } catch { } }
             foreach (var k in heldKeys) { try { NativeInput.KeyUp(k); } catch { } }
+            foreach (var u in heldUnicode) { try { NativeInput.UnicodeKey(u, true); } catch { } }
             lock (_lock) { _playThread = null; _playName = ""; }
             try { onEnd?.Invoke(endReason); } catch { }
         }
     }
 
-    private static void ExecuteEvent(MacroEvent ev, HashSet<string> heldButtons, HashSet<ushort> heldKeys)
+    private static void ExecuteEvent(MacroEvent ev, HashSet<string> heldButtons,
+        HashSet<ushort> heldKeys, HashSet<ushort> heldUnicode)
     {
         switch (ev.Kind)
         {
@@ -454,8 +466,20 @@ public static class MacroRecorder
             case "mup": NativeInput.ButtonUp("middle"); heldButtons.Remove("middle"); break;
             case "wheel": NativeInput.Scroll(ev.X, ev.Y, ev.Delta); break;
             case "hwheel": NativeInput.ScrollH(ev.X, ev.Y, ev.Delta); break;
-            case "keydown": NativeInput.KeyDown((ushort)ev.Vk); heldKeys.Add((ushort)ev.Vk); break;
-            case "keyup": NativeInput.KeyUp((ushort)ev.Vk); heldKeys.Remove((ushort)ev.Vk); break;
+            // v5.16.0: kejadian VK_PACKET berkarakter (hasil
+            // ketikan /type) diputar sebagai input Unicode;
+            // VK_PACKET tanpa karakter (makro lama) jatuh ke
+            // jalur VK lama persis seperti sebelumnya.
+            case "keydown":
+                if (ev.Vk == VkPacket && ev.Ch != 0)
+                { NativeInput.UnicodeKey((ushort)ev.Ch, false); heldUnicode.Add((ushort)ev.Ch); }
+                else { NativeInput.KeyDown((ushort)ev.Vk); heldKeys.Add((ushort)ev.Vk); }
+                break;
+            case "keyup":
+                if (ev.Vk == VkPacket && ev.Ch != 0)
+                { NativeInput.UnicodeKey((ushort)ev.Ch, true); heldUnicode.Remove((ushort)ev.Ch); }
+                else { NativeInput.KeyUp((ushort)ev.Vk); heldKeys.Remove((ushort)ev.Vk); }
+                break;
         }
     }
 
@@ -506,6 +530,7 @@ public static class MacroRecorder
     private const int WmMouseHWheel = 0x020B;
     private const uint LlmhfInjected = 0x00000001;
     private const uint LlkhfInjected = 0x00000010;
+    private const uint VkPacket = 0xE7; // 231 — bungkus input Unicode (KEYEVENTF_UNICODE)
 
     private delegate IntPtr LowLevelProc(int nCode, IntPtr wParam, IntPtr lParam);
 

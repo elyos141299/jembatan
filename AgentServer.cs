@@ -165,15 +165,19 @@ public sealed class AgentServer
             }
         }) { IsBackground = true, Name = "RelayWarmer" };
         warmer.Start();
-        // Mesin jadwal (v5.6.0): tilik tiap 20 detik; slot yang
+        // Mesin jadwal (v5.6.0): tilik berkala; slot yang
         // terlewat jauh (PC mati) dicatat "terlewat", tidak dikejar.
+        // v5.16.0: jeda tilik 20 -> 5 detik (utas khusus ini —
+        // SchedulerTick sendiri murah: satu kueri SQLite) agar
+        // jadwal "once" tidak telat sampai ±21 detik seperti
+        // terukur di program eksperimen Ronde 6.
         _schedOn = true;
         var sched = new Thread(() =>
         {
             while (_schedOn)
             {
                 SchedulerTick();
-                for (int i = 0; i < 20 && _schedOn; i++) Thread.Sleep(1000);
+                for (int i = 0; i < 5 && _schedOn; i++) Thread.Sleep(1000);
             }
         }) { IsBackground = true, Name = "Scheduler" };
         sched.Start();

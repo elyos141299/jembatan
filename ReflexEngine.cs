@@ -11,7 +11,8 @@ namespace Jembatan;
 /// Mesin Refleks (v5.13.0): aturan "bila X terjadi, lakukan Y"
 /// yang berjalan sendiri di PC tanpa menunggu perintah agent.
 ///
-/// Pemicu: window (jendela baru yang judulnya cocok), process
+/// Pemicu: window (jendela baru ATAU judul berubah di jendela
+/// lama — v5.16.0, model tab Win11 — yang judulnya cocok), process
 /// (proses mulai/berhenti), file (berkas baru/berubah di folder
 /// terpantau). Aksi — aman secara bawaan: log (catat), event
 /// (masuk aliran /events), tasknote (catatan Task Memory),
@@ -61,6 +62,7 @@ internal static class ReflexEngine
     private static Thread _poll;
     private static volatile bool _on;
     private static HashSet<long> _seenHwnd = new();
+    private static readonly Dictionary<long, string> _seenTitles = new();
     private static HashSet<string> _seenProcs = new();
     private static readonly List<FileSystemWatcher> _watchers = new();
 
@@ -161,7 +163,15 @@ internal static class ReflexEngine
         lock (_lock) { EnsureLoaded(); RebuildWatchers(); }
         // Potret awal: jendela & proses yang sudah ada BUKAN
         // kejadian baru — jangan picu apa pun saat mulai.
-        try { foreach (var w in NativeInput.ListWindows()) _seenHwnd.Add((long)w.Handle); } catch { }
+        try
+        {
+            foreach (var w in NativeInput.ListWindows())
+            {
+                _seenHwnd.Add((long)w.Handle);
+                _seenTitles[(long)w.Handle] = w.Title ?? "";
+            }
+        }
+        catch { }
         try { foreach (var p in Process.GetProcesses()) _seenProcs.Add(NormProc(p.ProcessName)); } catch { }
         _on = true;
         _poll = new Thread(PollLoop) { IsBackground = true, Name = "ReflexPoll" };
@@ -194,6 +204,7 @@ internal static class ReflexEngine
     private static void PollWindows()
     {
         var kini = new HashSet<long>();
+        var judulKini = new Dictionary<long, string>();
         List<Rule> rules = Rules();
         bool adaAturan = false;
         foreach (var r in rules) if (r.Trigger == "window") { adaAturan = true; break; }
@@ -201,19 +212,39 @@ internal static class ReflexEngine
         {
             long h = (long)w.Handle;
             kini.Add(h);
+            string judul = w.Title ?? "";
+            judulKini[h] = judul;
             if (!adaAturan) continue;
-            if (_seenHwnd.Contains(h)) continue;
-            if (string.IsNullOrWhiteSpace(w.Title)) continue;
-            foreach (var r in rules)
+            if (string.IsNullOrWhiteSpace(judul)) continue;
+            if (!_seenHwnd.Contains(h))
             {
-                if (r.Trigger != "window") continue;
-                if (w.Title.IndexOf(r.Match, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                if (!string.IsNullOrEmpty(r.Pattern) &&
-                    (w.Process ?? "").IndexOf(r.Pattern, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                Fire(r, "jendela baru: '" + w.Title + "' (" + w.Process + ")", w.Handle);
+                NilaiAturanJendela(rules, w, "jendela baru: '" + judul + "' (" + w.Process + ")");
+            }
+            else if (_seenTitles.TryGetValue(h, out string lama) && lama != judul)
+            {
+                // v5.16.0: judul BERUBAH di jendela lama — model
+                // tab Win11 (berkas dibuka jadi tab, hwnd tetap,
+                // judul berganti) dulu lolos dari penilaian.
+                // Nilai ulang dengan judul baru; cooldown per
+                // aturan di Fire tetap menahan banjir.
+                NilaiAturanJendela(rules, w, "judul berubah: '" + judul + "' (" + w.Process + ")");
             }
         }
         _seenHwnd = kini;
+        _seenTitles.Clear();
+        foreach (var kv in judulKini) _seenTitles[kv.Key] = kv.Value;
+    }
+
+    private static void NilaiAturanJendela(List<Rule> rules, NativeInput.WindowInfo w, string detail)
+    {
+        foreach (var r in rules)
+        {
+            if (r.Trigger != "window") continue;
+            if (w.Title.IndexOf(r.Match, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            if (!string.IsNullOrEmpty(r.Pattern) &&
+                (w.Process ?? "").IndexOf(r.Pattern, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            Fire(r, detail, w.Handle);
+        }
     }
 
     private static void PollProcesses()
